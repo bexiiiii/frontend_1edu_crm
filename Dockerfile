@@ -1,9 +1,9 @@
 # Stage 1: deps
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
-# Use npm install (not ci) to regenerate lockfile for Linux platform
-RUN npm install --frozen-lockfile=false
+COPY package.json ./
+# Install without lockfile to resolve correct Linux binaries
+RUN npm install
 
 # Stage 2: builder
 FROM node:20-alpine AS builder
