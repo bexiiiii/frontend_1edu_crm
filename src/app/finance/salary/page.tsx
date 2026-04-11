@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Eye, Loader2, Plus, Search } from 'lucide-react';
+import Link from 'next/link';
+import { Loader2, Plus, Search } from 'lucide-react';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
-import { SalaryHistoryModal } from '@/components/features/salary/SalaryHistoryModal';
 import { Button } from '@/components/ui/Button';
 import {
   STAFF_ROLE_LABELS,
@@ -15,7 +15,6 @@ import {
   salaryService,
   staffService,
   type CreateSalaryPaymentRequest,
-  type StaffSalaryHistoryDto,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { SalaryFilters, SalaryReportItem } from '@/types/salary';
@@ -47,13 +46,6 @@ export default function SalaryPage() {
     position: 'all',
     month: getCurrentMonth(),
   });
-  const [historyState, setHistoryState] = useState<{
-    isOpen: boolean;
-    staffId: string | null;
-  }>({
-    isOpen: false,
-    staffId: null,
-  });
   const [paymentModalState, setPaymentModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -73,15 +65,6 @@ export default function SalaryPage() {
   );
 
   const { data: staffPage } = useApi(() => staffService.getAll({ page: 0, size: 1000 }), []);
-
-  const { data: historyData, loading: historyLoading, error: historyError, refetch: refetchHistory } =
-    useApi<StaffSalaryHistoryDto | null>(
-      () =>
-        historyState.staffId
-          ? salaryService.getStaffHistory(historyState.staffId)
-          : Promise.resolve({ data: null }),
-      [historyState.staffId]
-    );
 
   const createPaymentMutation = useMutation((data: CreateSalaryPaymentRequest) =>
     salaryService.createPayment(data)
@@ -181,10 +164,6 @@ export default function SalaryPage() {
     [salaries]
   );
 
-  const selectedHistoryPosition = historyState.staffId
-    ? staffMetaMap.get(historyState.staffId)?.position
-    : undefined;
-
   const openPaymentModal = (staffId = '') => {
     setPaymentModalState((prev) => ({
       key: prev.key + 1,
@@ -201,28 +180,10 @@ export default function SalaryPage() {
     }));
   };
 
-  const openHistoryModal = (staffId: string) => {
-    setHistoryState({
-      isOpen: true,
-      staffId,
-    });
-  };
-
-  const closeHistoryModal = () => {
-    setHistoryState({
-      isOpen: false,
-      staffId: null,
-    });
-  };
-
   const handleSavePayment = async (data: CreateSalaryPaymentRequest) => {
     await createPaymentMutation.mutate(data);
     closePaymentModal();
     await refetch();
-
-    if (historyState.staffId === data.staffId) {
-      await refetchHistory();
-    }
   };
 
   return (
@@ -355,22 +316,13 @@ export default function SalaryPage() {
                         {formatMoney(salary.outstandingAmount, salary.currency)}
                       </td>
                       <td className="crm-table-cell">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openHistoryModal(salary.staffId)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-sky-50 hover:text-sky-600"
-                            title="История"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => openPaymentModal(salary.staffId)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#edf3ff] hover:text-[#3568eb]"
-                            title="Зафиксировать выплату"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        </div>
+                        <Link
+                          href={`/finance/salary/${salary.staffId}`}
+                          className="inline-flex rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
+                          title="Открыть историю зарплаты"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Link>
                       </td>
                     </tr>
                   ))
@@ -396,16 +348,6 @@ export default function SalaryPage() {
         defaultStaffId={paymentModalState.defaultStaffId}
         defaultMonth={filters.month}
         isSubmitting={createPaymentMutation.loading}
-      />
-
-      <SalaryHistoryModal
-        isOpen={historyState.isOpen}
-        onClose={closeHistoryModal}
-        history={historyData}
-        loading={historyLoading}
-        error={historyError}
-        position={selectedHistoryPosition}
-        onRecordPayment={historyState.staffId ? () => openPaymentModal(historyState.staffId) : undefined}
       />
     </div>
   );
