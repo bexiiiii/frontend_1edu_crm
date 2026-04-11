@@ -19,7 +19,7 @@ export default function MetricCard({
   icon: Icon,
   iconBgColor,
   iconColor,
-  subtitle = 'From last weeks'
+  subtitle = ''
 }: MetricCardProps) {
   return (
     <div className="crm-surface flex flex-col justify-between p-5">
@@ -36,8 +36,8 @@ export default function MetricCard({
       
       <div className="space-y-1">
         <p className="text-2xl font-bold text-[#1f2530]">{value}</p>
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-gray-500">{subtitle}</p>
+        <div className={`flex items-center ${subtitle ? 'justify-between' : 'justify-end'}`}>
+          {subtitle ? <p className="text-xs text-gray-500">{subtitle}</p> : null}
           <div className={`flex items-center gap-1 ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
             {isPositive ? (
               <TrendingUp className="w-3 h-3" />
