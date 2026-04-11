@@ -14,6 +14,7 @@ type AuthState = {
   userEmail: string | null;
   user: UserDto | null;
   roles: string[];
+  permissions: string[];
   tenantId: string | null;
   loading: boolean;
   error: string | null;
@@ -45,11 +46,21 @@ function extractRoles(claims: Record<string, unknown>): string[] {
   return [];
 }
 
+function extractPermissions(claims: Record<string, unknown>): string[] {
+  const directPermissions = claims.permissions;
+  if (Array.isArray(directPermissions)) {
+    return directPermissions.filter((permission): permission is string => typeof permission === 'string');
+  }
+
+  return [];
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   userEmail: null,
   user: null,
   roles: [],
+  permissions: [],
   tenantId: null,
   loading: false,
   error: null,
@@ -69,6 +80,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const claims = decodeJwt(tokenData.access_token);
       const tenantId = extractTenantId(claims);
       const roles = extractRoles(claims);
+      const permissions = extractPermissions(claims);
 
       if (tenantId) {
         localStorage.setItem('tenant_id', tenantId);
@@ -81,6 +93,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           email: loginValue,
           tenantId,
           roles,
+          permissions,
         })
       );
 
@@ -88,6 +101,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         userEmail: loginValue,
         roles,
+        permissions,
         tenantId,
         loading: false,
         error: null,
@@ -176,6 +190,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       userEmail: null,
       user: null,
       roles: [],
+      permissions: [],
       tenantId: null,
       error: null,
     });
@@ -188,7 +203,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (token && stored) {
         try {
-          const { email, tenantId: storedTenantId, roles: storedRoles } = JSON.parse(stored);
+          const {
+            email,
+            tenantId: storedTenantId,
+            roles: storedRoles,
+            permissions: storedPermissions,
+          } = JSON.parse(stored);
 
           // Check if token is expired
           const claims = decodeJwt(token);
@@ -201,6 +221,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
           const tenantId = extractTenantId(claims) || storedTenantId || null;
           const roles = extractRoles(claims);
+          const permissions = extractPermissions(claims);
 
           if (tenantId) {
             localStorage.setItem('tenant_id', tenantId);
@@ -212,6 +233,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               email,
               tenantId,
               roles: roles.length > 0 ? roles : storedRoles || [],
+              permissions: permissions.length > 0 ? permissions : storedPermissions || [],
             })
           );
 
@@ -220,6 +242,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             userEmail: email,
             tenantId,
             roles: roles.length > 0 ? roles : storedRoles || [],
+            permissions: permissions.length > 0 ? permissions : storedPermissions || [],
           });
         } catch {
           get().logout();
@@ -234,10 +257,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await getProfile();
       if (response.success && response.data) {
+        const profilePermissions = response.data.permissions ?? get().permissions;
+
         set({
           user: response.data,
           userEmail: response.data.email,
           roles: response.data.roles,
+          permissions: profilePermissions,
         });
       }
     } catch {

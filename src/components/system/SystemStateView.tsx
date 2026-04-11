@@ -17,9 +17,9 @@ type SystemStateViewProps = {
 
 const toneClasses: Record<SystemPageTone, { badge: string; iconWrap: string; icon: string }> = {
   accent: {
-    badge: 'border-[#b9ece7] bg-[#e9faf7] text-[#138f86]',
-    iconWrap: 'bg-[#e9faf7]',
-    icon: 'text-[#138f86]',
+    badge: 'border-[#cad8ff] bg-[#edf3ff] text-[#315fd0]',
+    iconWrap: 'bg-[#edf3ff]',
+    icon: 'text-[#315fd0]',
   },
   warning: {
     badge: 'border-[#f1deba] bg-[#fff7e9] text-[#b17b2f]',
@@ -40,7 +40,7 @@ const toneClasses: Record<SystemPageTone, { badge: string; iconWrap: string; ico
 
 const toActionClass = (variant: SystemPageAction['variant']) =>
   variant === 'primary'
-    ? 'inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#25c4b8] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#1eb3a8]'
+    ? 'inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#467aff] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#3568eb]'
     : 'inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#dbe2e8] bg-white px-4 text-sm font-semibold text-[#3d4756] transition-colors hover:bg-[#f4f7f9]';
 
 export function SystemStateView({

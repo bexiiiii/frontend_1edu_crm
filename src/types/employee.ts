@@ -10,6 +10,7 @@ export interface StaffListItem {
   phone: string;
   role: StaffRole;
   status: StaffStatus;
+  customStatus: string;
   position: string;
   salary: number | null;
   salaryType: SalaryType;
@@ -32,6 +33,7 @@ export interface StaffFormValues {
   phone: string;
   role: StaffRole;
   status: StaffStatus;
+  customStatus: string;
   position: string;
   salary: string;
   salaryType: SalaryType;

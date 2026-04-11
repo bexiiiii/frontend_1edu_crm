@@ -50,7 +50,7 @@ export const PaymentReminderForm = ({ settings, onUpdate }: PaymentReminderFormP
         <p className="text-sm font-medium text-gray-700 mb-2">Доступные переменные:</p>
         <div className="flex flex-wrap gap-2">
           {AVAILABLE_VARIABLES['payment-reminder'].map(variable => (
-            <span key={variable} className="px-3 py-1 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium">
+            <span key={variable} className="rounded-lg bg-[#edf3ff] px-3 py-1 text-xs font-medium text-[#315fd0]">
               {variable}
             </span>
           ))}

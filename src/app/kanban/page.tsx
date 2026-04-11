@@ -5,6 +5,7 @@ import { Eye, Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
+import { PhoneInputWithCountry } from '@/components/ui/PhoneInputWithCountry';
 import { Select } from '@/components/ui/Select';
 import {
   leadsService,
@@ -40,6 +41,9 @@ type LeadColumn = {
   emptyLabel: string;
   leads: LeadBoardCard[];
 };
+
+const PHONE_WITH_COUNTRY_REGEX = /^\+[1-9]\d{7,14}$/;
+const EMAIL_LATIN_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 const STAGE_COLUMNS: Omit<LeadColumn, 'leads'>[] = [
   {
@@ -324,7 +328,7 @@ function LeadColumnCard({
   activeDeleteId: string | null;
 }) {
   return (
-    <section className="flex h-full w-[340px] shrink-0 flex-col rounded-2xl border border-[#dfe6ed] bg-[#f8fafc] p-3">
+    <section className="flex h-full w-72 shrink-0 flex-col rounded-2xl border border-[#dfe6ed] bg-[#f8fafc] p-3 sm:w-80 lg:w-85">
       <header className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <h2
@@ -362,7 +366,7 @@ function LeadColumnCard({
               />
             ))
           ) : (
-            <div className="flex h-full min-h-[280px] items-center justify-center rounded-lg border border-dashed border-[#d6dee8] bg-white/80 px-3 text-center text-xs text-[#8a93a3]">
+            <div className="flex h-full min-h-64 items-center justify-center rounded-lg border border-dashed border-[#d6dee8] bg-white/80 px-3 text-center text-xs text-[#8a93a3] sm:min-h-70">
               <span>{column.emptyLabel}</span>
             </div>
           )}
@@ -403,9 +407,14 @@ function LeadFormModal({
   const [notes, setNotes] = useState(initialValues.notes);
   const [stage, setStage] = useState<LeadStage>(initialValues.stage);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ phone: boolean; email: boolean }>({
+    phone: false,
+    email: false,
+  });
 
   const handleSave = async () => {
     setError(null);
+    setFieldErrors({ phone: false, email: false });
 
     if (!firstName.trim()) {
       setError('Имя лида обязательно.');
@@ -417,12 +426,27 @@ function LeadFormModal({
       return;
     }
 
+    const normalizedPhone = phone.trim().replace(/\s+/g, '');
+    const normalizedEmail = email.trim();
+
+    if (normalizedPhone && !PHONE_WITH_COUNTRY_REGEX.test(normalizedPhone)) {
+      setFieldErrors((prev) => ({ ...prev, phone: true }));
+      setError('Введите корректный номер с кодом страны (например, +998901234567).');
+      return;
+    }
+
+    if (normalizedEmail && !EMAIL_LATIN_REGEX.test(normalizedEmail)) {
+      setFieldErrors((prev) => ({ ...prev, email: true }));
+      setError('Email должен быть на латинице и в корректном формате (name@example.com).');
+      return;
+    }
+
     try {
       await onSave({
         firstName,
         lastName,
-        phone,
-        email,
+        phone: normalizedPhone,
+        email: normalizedEmail,
         source,
         courseInterest,
         assignedTo,
@@ -491,18 +515,26 @@ function LeadFormModal({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
+          <PhoneInputWithCountry
             label="Телефон"
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            placeholder="+998 90 123 45 67"
+            onChange={(nextValue) => {
+              setPhone(nextValue);
+              setFieldErrors((prev) => ({ ...prev, phone: false }));
+            }}
+            placeholder="90 123 45 67"
+            error={fieldErrors.phone}
           />
           <Input
             label="Email"
             type="email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, email: false }));
+            }}
             placeholder="lead@example.com"
+            error={fieldErrors.email}
           />
         </div>
 
@@ -784,7 +816,7 @@ export default function KanbanPage() {
           </div>
 
           <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
-            <div className="relative w-full sm:min-w-[280px]">
+            <div className="relative w-full sm:min-w-70">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a93a3]" />
               <input
                 value={search}
@@ -794,10 +826,10 @@ export default function KanbanPage() {
               />
             </div>
 
-            <Button variant="secondary" onClick={() => void refetch()} disabled={loading}>
+            <Button variant="secondary" onClick={() => void refetch()} disabled={loading} className="w-full sm:w-auto">
               Обновить
             </Button>
-            <Button icon={Plus} onClick={() => openCreateModal()}>
+            <Button icon={Plus} onClick={() => openCreateModal()} className="w-full sm:w-auto">
               Добавить лид
             </Button>
           </div>
@@ -819,7 +851,7 @@ export default function KanbanPage() {
       <div className="crm-surface flex-1 min-h-0 overflow-hidden p-3 sm:p-4">
         {loading ? (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="flex h-full min-h-0 items-stretch gap-3 overflow-x-auto overflow-y-hidden pb-2">

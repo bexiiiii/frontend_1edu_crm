@@ -163,7 +163,7 @@ export default function AttendanceLessonPage() {
 
     if (missingStudentIds.length > 0) {
       const extraStudents = await Promise.all(missingStudentIds.map((studentId) => getStudentByIdSafe(studentId)));
-      students = [...students, ...extraStudents.filter(Boolean)];
+      students = [...students, ...extraStudents.filter((student): student is StudentDto => student !== null)];
     }
 
     const staffMap = new Map(
@@ -376,7 +376,7 @@ export default function AttendanceLessonPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
       </div>
     );
   }
@@ -578,26 +578,19 @@ export default function AttendanceLessonPage() {
                       </span>
                     </td>
                     <td className="crm-table-cell">
-                      <div className="flex flex-col gap-2">
-                        <select
-                          value={student.status}
-                          onChange={(event) =>
-                            handleStatusChange(student.id, event.target.value as AttendanceStatus)
-                          }
-                          className="crm-select h-9"
-                        >
-                          {ATTENDANCE_STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <span
-                          className={`inline-flex w-fit rounded-md border px-2 py-0.5 text-xs font-semibold ${ATTENDANCE_STATUS_COLORS[student.status]}`}
-                        >
-                          {ATTENDANCE_STATUS_LABELS[student.status]}
-                        </span>
-                      </div>
+                      <select
+                        value={student.status}
+                        onChange={(event) =>
+                          handleStatusChange(student.id, event.target.value as AttendanceStatus)
+                        }
+                        className="crm-select h-9"
+                      >
+                        {ATTENDANCE_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                   </tr>
                 ))

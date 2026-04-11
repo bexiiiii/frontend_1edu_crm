@@ -182,7 +182,7 @@ export const AddAttendanceStatusModal = ({
                   type="button"
                   onClick={() => setColor(item)}
                   className={`h-8 w-8 rounded-lg border-2 transition-colors ${
-                    isSelected ? 'border-[#25c4b8]' : 'border-gray-200 hover:border-teal-500'
+                    isSelected ? 'border-[#467aff]' : 'border-gray-200 hover:border-[#467aff]'
                   }`}
                   style={{ backgroundColor: item }}
                   aria-label={`Выбрать цвет ${item}`}

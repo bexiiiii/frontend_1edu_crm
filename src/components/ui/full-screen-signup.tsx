@@ -1,7 +1,8 @@
 "use client";
 
 import { GraduationCap, Loader2, Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { PhoneInputWithCountry } from '@/components/ui/PhoneInputWithCountry';
 
 type AuthMode = "login" | "signup";
 
@@ -82,6 +83,34 @@ interface RegisterData {
   confirmPassword: string;
 }
 
+function resolveTenantSubdomain(hostname: string): string | null {
+  const normalizedHostname = hostname.trim().toLowerCase();
+
+  if (!normalizedHostname || normalizedHostname === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(normalizedHostname)) {
+    return null;
+  }
+
+  if (
+    normalizedHostname === '1edu.kz' ||
+    normalizedHostname === 'www.1edu.kz' ||
+    normalizedHostname === 'app.1edu.kz'
+  ) {
+    return null;
+  }
+
+  const rootDomainSuffix = '.1edu.kz';
+  if (!normalizedHostname.endsWith(rootDomainSuffix)) {
+    return null;
+  }
+
+  const subdomain = normalizedHostname.slice(0, -rootDomainSuffix.length);
+  if (!subdomain || subdomain === 'app' || subdomain === 'www') {
+    return null;
+  }
+
+  return subdomain;
+}
+
 export const FullScreenSignup = ({
   onLogin,
   onRegister,
@@ -94,6 +123,7 @@ export const FullScreenSignup = ({
   serverError?: string | null;
 }) => {
   const [mode, setMode] = useState<AuthMode>("login");
+  const [tenantSubdomain, setTenantSubdomain] = useState<string | null>(null);
 
   // Login fields
   const [loginUsername, setLoginUsername] = useState("");
@@ -112,6 +142,14 @@ export const FullScreenSignup = ({
   // UI state
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    setTenantSubdomain(resolveTenantSubdomain(window.location.hostname));
+  }, []);
 
   const validateLogin = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -198,33 +236,32 @@ export const FullScreenSignup = ({
   return (
     <div className="flex min-h-screen items-center justify-center overflow-hidden bg-[#f3f5f7] p-4">
       <div className="relative flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl shadow-xl md:flex-row">
-        {/* Left decorative panel */}
-        <div className="absolute z-2 h-full w-full bg-linear-to-t from-transparent to-[#0f2b2a]" />
-        <div className="absolute z-2 flex overflow-hidden backdrop-blur-2xl">
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-          <div className="z-2 h-160 w-16 overflow-hidden bg-linear-to-r from-transparent via-[#0a302e] via-69% to-[#ffffff30] opacity-30" />
-        </div>
-        <div className="absolute bottom-0 z-1 h-60 w-60 rounded-full bg-[#21bfb3]" />
-        <div className="absolute bottom-0 z-1 h-20 w-32 rounded-full bg-white" />
-
         {/* Left branding */}
-        <div className="relative overflow-hidden rounded-bl-3xl bg-[#0f2b2a] p-8 text-white md:w-1/2 md:p-12">
-          <h1 className="relative z-10 text-2xl font-bold leading-tight tracking-tight md:text-3xl">
+        <div className="relative isolate min-h-52.5 overflow-hidden bg-[#14254d] px-6 py-7 text-white md:w-1/2 md:min-h-0 md:px-12 md:py-10">
+          <div className="pointer-events-none absolute inset-0 z-10 bg-linear-to-t from-transparent to-[#14254d]" />
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-20 hidden overflow-hidden backdrop-blur-2xl md:flex">
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+            <div className="h-full w-12 overflow-hidden bg-linear-to-r from-transparent via-[#17346a] via-69% to-[#ffffff30] opacity-30" />
+          </div>
+          <div className="pointer-events-none absolute -bottom-6 -left-6 z-0 h-28 w-40 rounded-full bg-[#467aff] md:bottom-0 md:left-0 md:h-60 md:w-60" />
+          <div className="pointer-events-none absolute -bottom-1 -left-1 z-0 h-16 w-24 rounded-full bg-white md:bottom-0 md:left-0 md:h-20 md:w-32" />
+
+          <h1 className="relative z-30 max-w-[30ch] text-[34px] font-bold leading-[1.1] tracking-tight md:text-5xl">
             Управляйте учебным центром эффективно
           </h1>
-          <p className="relative z-10 mt-4 text-sm leading-relaxed text-white/70">
+          <p className="relative z-30 mt-3 max-w-[38ch] text-sm leading-relaxed text-white/70 md:mt-4 md:text-base">
             Расписание, посещения, финансы, аналитика — всё в одном месте.
           </p>
         </div>
 
         {/* Right form panel */}
-        <div className="z-99 flex flex-col bg-[#fbfcfd] p-8 text-[#1f2530] md:w-1/2 md:p-12">
+        <div className="relative z-10 flex flex-col bg-[#fbfcfd] p-6 text-[#1f2530] md:w-1/2 md:p-12">
           <div className="mb-6 flex flex-col items-start">
-            <div className="mb-3 text-[#21bfb3]">
+            <div className="mb-3 text-[#467aff]">
               <GraduationCap className="h-10 w-10" />
             </div>
             <h2 className="mb-1 text-3xl font-bold tracking-tight">
@@ -232,9 +269,14 @@ export const FullScreenSignup = ({
             </h2>
             <p className="text-left text-sm text-[#798292]">
               {mode === "login"
-                ? "Добро пожаловать в EduCRM"
+                ? "Добро пожаловать в 1edu crm"
                 : "Зарегистрируйте учебный центр"}
             </p>
+            {mode === "login" && tenantSubdomain ? (
+              <p className="mt-2 rounded-lg bg-[#edf3ff] px-3 py-2 text-left text-xs font-semibold text-[#315fd0]">
+                Добро пожаловать в кабинет центра: {tenantSubdomain}
+              </p>
+            ) : null}
           </div>
 
           {/* Server error */}
@@ -323,7 +365,7 @@ export const FullScreenSignup = ({
                   loading={loading}
                 />
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <InputField
                     id="email"
                     label="Email"
@@ -335,17 +377,18 @@ export const FullScreenSignup = ({
                     autoComplete="email"
                     loading={loading}
                   />
-                  <InputField
-                    id="phone"
-                    label="Телефон"
-                    type="tel"
-                    placeholder="+998901234567"
-                    value={phone}
-                    onChange={setPhone}
-                    error={errors.phone}
-                    autoComplete="tel"
-                    loading={loading}
-                  />
+                  <div>
+                    <PhoneInputWithCountry
+                      label="Телефон"
+                      value={phone}
+                      onChange={setPhone}
+                      placeholder="777 123 45 67"
+                      disabled={loading}
+                    />
+                    {errors.phone && (
+                      <p className="mt-1 text-xs text-red-500">{errors.phone}</p>
+                    )}
+                  </div>
                 </div>
 
                 <InputField
@@ -381,7 +424,7 @@ export const FullScreenSignup = ({
             <button
               type="submit"
               disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#21bfb3] px-4 py-2.5 font-semibold text-white transition-colors hover:bg-[#149e94] disabled:opacity-60 disabled:cursor-not-allowed"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#467aff] px-4 py-2.5 font-semibold text-white transition-colors hover:bg-[#3568eb] disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {mode === "login"
@@ -396,7 +439,7 @@ export const FullScreenSignup = ({
                   <button
                     type="button"
                     onClick={toggleMode}
-                    className="font-semibold text-[#21bfb3] underline hover:text-[#149e94]"
+                    className="font-semibold text-[#467aff] underline hover:text-[#3568eb]"
                   >
                     Зарегистрироваться
                   </button>
@@ -407,7 +450,7 @@ export const FullScreenSignup = ({
                   <button
                     type="button"
                     onClick={toggleMode}
-                    className="font-semibold text-[#21bfb3] underline hover:text-[#149e94]"
+                    className="font-semibold text-[#467aff] underline hover:text-[#3568eb]"
                   >
                     Войти
                   </button>

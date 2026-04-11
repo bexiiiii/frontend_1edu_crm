@@ -2,10 +2,10 @@
 
 import { Eye, Loader2, Plus, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
-import { StudentPaymentHistoryModal } from '@/components/features/finance/StudentPaymentHistoryModal';
 import {
   STUDENT_PAYMENT_STATUS_COLORS,
   STUDENT_PAYMENT_STATUS_LABELS,
@@ -24,14 +24,11 @@ import { useApi, useMutation } from '@/hooks/useApi';
 
 type StudentPaymentsTab = 'OVERVIEW' | 'DEBTORS';
 
-interface HistoryState {
-  studentId: string;
-  studentName: string;
-}
-
-interface PaymentModalState extends HistoryState {
+interface PaymentModalState {
   key: number;
   isOpen: boolean;
+  studentId: string;
+  studentName: string;
   lockStudent?: boolean;
   subscriptionId?: string;
 }
@@ -71,7 +68,6 @@ export default function StudentPaymentsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StudentPaymentMonthStatus | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
-  const [historyState, setHistoryState] = useState<HistoryState | null>(null);
   const [paymentModalState, setPaymentModalState] = useState<PaymentModalState>({
     key: 0,
     isOpen: false,
@@ -94,21 +90,8 @@ export default function StudentPaymentsPage() {
     error: debtorsError,
     refetch: refetchDebtors,
   } = useApi(() => studentPaymentsService.getDebtors(), []);
-  const {
-    data: historyData,
-    loading: historyLoading,
-    error: historyError,
-    refetch: refetchHistory,
-  } = useApi(
-    () =>
-      historyState?.studentId
-        ? studentPaymentsService.getByStudent(historyState.studentId)
-        : Promise.resolve({ data: null as StudentPaymentHistoryResponse | null }),
-    [historyState?.studentId]
-  );
 
   const createPaymentMutation = useMutation((data: CreateStudentPaymentRequest) => studentPaymentsService.create(data));
-  const deletePaymentMutation = useMutation((id: string) => studentPaymentsService.delete(id));
 
   const studentMap = useMemo(
     () =>
@@ -170,19 +153,9 @@ export default function StudentPaymentsPage() {
         });
       });
 
-      if (historyData) {
-        historyData.subscriptions.forEach((subscription) => {
-          options.set(subscription.subscriptionId, {
-            id: subscription.subscriptionId,
-            studentId: historyData.studentId,
-            label: `${courseMap.get(subscription.courseId || '') || 'Без курса'} · ${formatMoney(subscription.totalAmount)} · ${subscription.subscriptionStatus}`,
-          });
-        });
-      }
-
       return Array.from(options.values());
     },
-    [courseMap, historyData, subscriptionsPage]
+    [courseMap, subscriptionsPage]
   );
   const studentOptions = useMemo(
     () =>
@@ -193,24 +166,13 @@ export default function StudentPaymentsPage() {
     [studentsPage]
   );
 
-  const openHistory = (studentId: string) => {
-    setHistoryState({
-      studentId,
-      studentName: studentMap.get(studentId) || studentId,
-    });
-  };
-
-  const closeHistory = () => {
-    setHistoryState(null);
-  };
-
   const openAddPayment = (subscriptionId?: string) => {
     setPaymentModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
-      studentId: historyState?.studentId || '',
-      studentName: historyState?.studentName || '',
-      lockStudent: Boolean(historyState?.studentId),
+      studentId: '',
+      studentName: '',
+      lockStudent: false,
       subscriptionId,
     }));
   };
@@ -226,16 +188,7 @@ export default function StudentPaymentsPage() {
   const handleCreatePayment = async (data: CreateStudentPaymentRequest) => {
     await createPaymentMutation.mutate(data);
     closeAddPayment();
-    await Promise.all([refetchOverview(), refetchDebtors(), refetchHistory()]);
-  };
-
-  const handleDeletePayment = async (payment: StudentPaymentDto) => {
-    if (!confirm('Удалить этот платёж?')) {
-      return;
-    }
-
-    await deletePaymentMutation.mutate(payment.id);
-    await Promise.all([refetchOverview(), refetchDebtors(), refetchHistory()]);
+    await Promise.all([refetchOverview(), refetchDebtors()]);
   };
 
   const isTableLoading = activeTab === 'OVERVIEW' ? overviewLoading : debtorsLoading;
@@ -243,6 +196,12 @@ export default function StudentPaymentsPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button icon={Plus} onClick={() => openAddPayment()}>
+          Записать платёж
+        </Button>
+      </div>
+
       <div className="crm-surface p-4">
         <Tabs
           tabs={[
@@ -254,12 +213,6 @@ export default function StudentPaymentsPage() {
           aria-label="Вкладки платежей студентов"
           className="w-fit"
         />
-      </div>
-
-      <div className="flex justify-end">
-        <Button icon={Plus} onClick={() => openAddPayment()}>
-          Записать платёж
-        </Button>
       </div>
 
       <div className="crm-surface p-6">
@@ -346,7 +299,7 @@ export default function StudentPaymentsPage() {
 
         {isTableLoading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -387,14 +340,13 @@ export default function StudentPaymentsPage() {
                             </span>
                           </td>
                           <td className="crm-table-cell">
-                            <button
-                              type="button"
-                              onClick={() => openHistory(item.studentId)}
-                              className="rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
+                            <Link
+                              href={`/finance/student-payments/${item.studentId}`}
+                              className="inline-flex rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
                               title="Открыть историю"
                             >
                               <Eye className="h-4 w-4" />
-                            </button>
+                            </Link>
                           </td>
                         </tr>
                       );
@@ -438,14 +390,13 @@ export default function StudentPaymentsPage() {
                           <td className="crm-table-cell">{item.debtMonths}</td>
                           <td className="crm-table-cell">{formatMoney(item.monthlyExpected)}</td>
                           <td className="crm-table-cell">
-                            <button
-                              type="button"
-                              onClick={() => openHistory(item.studentId)}
-                              className="rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
+                            <Link
+                              href={`/finance/student-payments/${item.studentId}`}
+                              className="inline-flex rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
                               title="Открыть историю"
                             >
                               <Eye className="h-4 w-4" />
-                            </button>
+                            </Link>
                           </td>
                         </tr>
                       );
@@ -463,19 +414,6 @@ export default function StudentPaymentsPage() {
           </div>
         )}
       </div>
-
-      <StudentPaymentHistoryModal
-        isOpen={Boolean(historyState)}
-        onClose={closeHistory}
-        studentName={historyState?.studentName || '—'}
-        history={historyData}
-        loading={historyLoading}
-        error={historyError}
-        onAddPayment={openAddPayment}
-        onDeletePayment={(payment) => void handleDeletePayment(payment)}
-        getCourseName={(courseId) => courseMap.get(courseId) || courseId}
-        isMutating={deletePaymentMutation.loading}
-      />
 
       <AddStudentPaymentModal
         key={paymentModalState.key}

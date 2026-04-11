@@ -36,5 +36,5 @@ export const EVENT_COLORS = [
   '#f59e0b', // orange
   '#ef4444', // red
   '#ec4899', // pink
-  '#14b8a6', // teal
+  '#467aff', // brand blue
 ];

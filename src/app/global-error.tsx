@@ -49,7 +49,7 @@ export default function GlobalError({ error, reset }: GlobalErrorPageProps) {
               <button
                 type="button"
                 onClick={reset}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#25c4b8] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#1eb3a8]"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#467aff] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#3568eb]"
               >
                 <RotateCcw className="h-4 w-4" />
                 Повторить

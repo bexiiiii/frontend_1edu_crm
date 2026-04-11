@@ -297,14 +297,16 @@ export interface ScheduleDto {
 export interface CreateScheduleRequest {
   name: string;
   courseId?: string;
-  teacherId?: string;
   roomId?: string;
   daysOfWeek: DayOfWeek[];
   startTime: string;
   endTime: string;
   startDate: string;
   endDate?: string;
-  maxStudents?: number;
+}
+
+export interface UpdateScheduleRequest extends Partial<CreateScheduleRequest> {
+  status?: ScheduleStatus;
 }
 
 // ─── Room ───────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ const periodOptions: { id: RetentionPeriodPreset; label: string }[] = [
 
 const toToggleClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 export default function RetentionPage() {
@@ -209,7 +209,7 @@ export default function RetentionPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : (
       <>

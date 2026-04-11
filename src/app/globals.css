@@ -8,8 +8,12 @@
   --crm-border-soft: #ebeff3;
   --crm-text-main: #1f2530;
   --crm-text-muted: #798292;
-  --crm-accent: #21bfb3;
-  --crm-accent-dark: #149e94;
+  --crm-accent: #467aff;
+  --crm-accent-dark: #3568eb;
+  --crm-accent-soft: #edf3ff;
+  --crm-accent-soft-border: #cad8ff;
+  --crm-accent-ink: #315fd0;
+  --crm-accent-ring: #c7d7ff;
 }
 
 @layer base {
@@ -45,11 +49,16 @@
   }
 
   .crm-tab-btn-active {
-    @apply bg-[#25c4b8] text-white hover:bg-[#1db2a7];
+    background-color: var(--crm-accent);
+    color: #ffffff;
+  }
+
+  .crm-tab-btn-active:hover {
+    background-color: var(--crm-accent-dark);
   }
 
   .crm-input {
-    @apply h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-4 text-sm text-[#334155] placeholder:text-[#96a0af] focus:border-[#2ac7bc] focus:outline-none;
+    @apply h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-4 text-sm text-[#334155] placeholder:text-[#96a0af] focus:border-[#467aff] focus:outline-none;
   }
 
   .crm-input-with-icon {
@@ -57,11 +66,23 @@
   }
 
   .crm-textarea {
-    @apply w-full rounded-xl border border-[#dbe2e8] bg-white px-4 py-2.5 text-sm text-[#334155] placeholder:text-[#96a0af] focus:border-[#2ac7bc] focus:outline-none;
+    @apply w-full rounded-xl border border-[#dbe2e8] bg-white px-4 py-2.5 text-sm text-[#334155] placeholder:text-[#96a0af] focus:border-[#467aff] focus:outline-none;
   }
 
   .crm-select {
-    @apply h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-4 text-sm text-[#334155] focus:border-[#2ac7bc] focus:outline-none;
+    @apply h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-4 text-sm text-[#334155] focus:border-[#467aff] focus:outline-none;
+  }
+
+  .crm-input[aria-invalid='true'],
+  .crm-select[aria-invalid='true'],
+  .crm-textarea[aria-invalid='true'] {
+    @apply border-red-400 bg-red-50/40 text-red-900 placeholder:text-red-300 focus:border-red-500;
+  }
+
+  .crm-input:required:invalid,
+  .crm-select:required:invalid,
+  .crm-textarea:required:invalid {
+    @apply border-red-300;
   }
 
   .crm-table-wrap {
@@ -89,6 +110,49 @@
   }
 }
 
+@media (max-width: 767px) {
+  .crm-input,
+  .crm-select,
+  .crm-textarea {
+    font-size: 16px;
+  }
+
+  .crm-page-title {
+    @apply text-2xl;
+  }
+
+  .crm-surface,
+  .crm-surface-soft,
+  .crm-tab-shell,
+  .crm-table-wrap {
+    @apply rounded-xl;
+  }
+
+  .crm-table-th {
+    @apply px-3 py-2 text-[11px];
+  }
+
+  .crm-table-cell {
+    @apply px-3 py-3 text-xs;
+  }
+
+  .fc .fc-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .fc .fc-toolbar-title {
+    font-size: 1rem;
+  }
+
+  .fc .fc-button {
+    padding: 0.375rem 0.625rem;
+    border-radius: 0.625rem;
+    font-size: 0.75rem;
+  }
+}
+
 /* FullCalendar Custom Styles */
 .fc {
   font-family: inherit;
@@ -112,8 +176,8 @@
 
 .fc .fc-button-primary:not(:disabled):active,
 .fc .fc-button-primary:not(:disabled).fc-button-active {
-  background-color: #14b8a6 !important;
-  border-color: #14b8a6 !important;
+  background-color: #467aff !important;
+  border-color: #467aff !important;
   color: white !important;
 }
 
@@ -161,21 +225,21 @@
 }
 
 .fc .fc-day-today {
-  background-color: #f0fdfa !important;
+  background-color: #edf3ff !important;
 }
 
 .fc .fc-day-today .fc-col-header-cell-cushion {
-  color: #14b8a6;
+  color: #3568eb;
   font-weight: 700;
 }
 
 .fc .fc-timegrid-now-indicator-line {
-  border-color: #14b8a6;
+  border-color: #3568eb;
   border-width: 2px;
 }
 
 .fc .fc-timegrid-now-indicator-arrow {
-  border-color: #14b8a6;
+  border-color: #3568eb;
 }
 
 .fc .fc-timegrid-axis {

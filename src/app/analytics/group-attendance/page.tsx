@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Loader2 } from 'lucide-react';
-import { analyticsService } from '@/lib/api';
+import { analyticsService, schedulesService, type GroupAttendanceResponse } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 
 type Horizon = 6 | 12;
@@ -15,7 +15,7 @@ const horizonOptions: { id: Horizon; label: string }[] = [
 
 const toToggleClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 const toAverageToneClass = (value: number) => {
@@ -24,28 +24,56 @@ const toAverageToneClass = (value: number) => {
   return 'text-[#b17b2f]';
 };
 
+function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getRangeByMonths(months: Horizon): { from: string; to: string } {
+  const now = new Date();
+  const fromDate = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
+
+  return {
+    from: toIsoDate(fromDate),
+    to: toIsoDate(now),
+  };
+}
+
 export default function GroupAttendanceAnalyticsPage() {
   const [horizon, setHorizon] = useState<Horizon>(6);
+  const [groupId, setGroupId] = useState('');
 
-  const { data: attendanceData, loading } = useApi(
-    () => analyticsService.getAllGroupAttendance({}),
+  const dateRange = useMemo(() => getRangeByMonths(horizon), [horizon]);
+
+  const { data: schedulesData, loading: schedulesLoading } = useApi(
+    () => schedulesService.getAll({ page: 0, size: 500 }),
     [],
   );
 
   const groups = useMemo(() => {
-    if (!attendanceData) return [];
-    const list = Array.isArray(attendanceData) ? attendanceData : [];
-    return list.map((g) => ({
-      id: g.groupId,
-      label: g.groupName,
-      points: (g.monthly ?? []).map((m: { month: string; rate: number }) => ({
-        month: m.month,
-        attendance: Math.round(m.rate * 100) / 100,
-      })),
-    }));
-  }, [attendanceData]);
+    return (schedulesData?.content || [])
+      .map((schedule) => ({ id: schedule.id, label: schedule.name }))
+      .sort((left, right) => left.label.localeCompare(right.label, 'ru-RU'));
+  }, [schedulesData]);
 
-  const [groupId, setGroupId] = useState<string>('');
+  useEffect(() => {
+    if (!groupId && groups.length > 0) {
+      setGroupId(groups[0].id);
+    }
+  }, [groupId, groups]);
+
+  const { data: attendanceData, loading: attendanceLoading, error: attendanceError } = useApi<GroupAttendanceResponse | null>(
+    () => (
+      groupId
+        ? analyticsService.getGroupAttendance(groupId, dateRange)
+        : Promise.resolve({ data: null })
+    ),
+    [groupId, dateRange.from, dateRange.to],
+  );
+
+  const loading = schedulesLoading || attendanceLoading;
 
   const selectedGroup = useMemo(() => {
     if (groups.length === 0) return null;
@@ -53,9 +81,14 @@ export default function GroupAttendanceAnalyticsPage() {
   }, [groups, groupId]);
 
   const chartData = useMemo(() => {
-    if (!selectedGroup) return [];
-    return selectedGroup.points.slice(-horizon);
-  }, [selectedGroup, horizon]);
+    if (!attendanceData?.monthly) return [];
+    return attendanceData.monthly
+      .slice(-horizon)
+      .map((item) => ({
+        month: item.month,
+        attendance: Math.round(item.rate * 100) / 100,
+      }));
+  }, [attendanceData, horizon]);
 
   const averageAttendance = useMemo(() => {
     if (chartData.length === 0) return 0;
@@ -89,13 +122,14 @@ export default function GroupAttendanceAnalyticsPage() {
             ))}
           </div>
 
-          <div className="lg:max-w-[420px] lg:justify-self-end">
+          <div className="lg:max-w-105 lg:justify-self-end">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#7a8391]">Выберите группу</p>
             <select
               value={groupId}
               onChange={(event) => setGroupId(event.target.value)}
               className="crm-select"
             >
+              {groups.length === 0 ? <option value="">Группы не найдены</option> : null}
               {groups.map((group) => (
                 <option key={group.id} value={group.id}>
                   {group.label}
@@ -108,7 +142,11 @@ export default function GroupAttendanceAnalyticsPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
+        </div>
+      ) : attendanceError ? (
+        <div className="crm-surface rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+          Не удалось загрузить посещаемость группы: {attendanceError}
         </div>
       ) : selectedGroup ? (
       <div className="crm-surface p-5">
@@ -117,7 +155,7 @@ export default function GroupAttendanceAnalyticsPage() {
         </h3>
         <p className="mt-2 text-sm text-[#7f8794]">Период: {periodLabel}</p>
 
-        <div className="mt-4 h-[460px]">
+        <div className="mt-4 h-115">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 16, right: 20, left: 0, bottom: 32 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" />

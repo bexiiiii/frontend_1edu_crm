@@ -24,7 +24,7 @@ export const IntegrationModal = ({ isOpen, onClose, integration }: IntegrationMo
     >
       <div className="space-y-5">
         <p className="text-sm text-gray-600">
-          Для этой интеграции в текущей backend-документации нет публичного endpoint-а сохранения токена или настройки подключения.
+          Для этой интеграции настройка и сохранение параметров пока недоступны.
         </p>
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           Как только backend добавит контракт для интеграций, эту модалку можно будет подключить к API без локальных заглушек.

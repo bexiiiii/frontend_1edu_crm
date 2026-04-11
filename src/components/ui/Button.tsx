@@ -29,7 +29,7 @@ export const Button = ({
     md: 'h-10 px-4 text-sm',
   };
   const variants = {
-    primary: 'bg-[#25c4b8] text-white hover:bg-[#1eb3a8] shadow-[0_1px_2px_rgba(14,23,38,0.08)]',
+    primary: 'bg-[#467aff] text-white hover:bg-[#3568eb] shadow-[0_1px_2px_rgba(14,23,38,0.08)]',
     secondary: 'border border-[#dbe2e8] bg-white text-[#3d4756] hover:bg-[#f4f7f9]',
     outline: 'border border-[#dbe2e8] bg-white text-[#3d4756] hover:bg-[#f4f7f9]',
     ghost: 'bg-[#edf2f5] text-[#4c5665] hover:bg-[#e3eaef]',

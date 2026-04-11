@@ -33,11 +33,11 @@ const financeTabs: { id: FinanceTab; label: string }[] = [
   { id: 'expense', label: 'Расходы' },
 ];
 
-const PIE_COLORS = ['#25c4b8', '#4f9cff', '#f59e0b', '#ef6b6b', '#8b5cf6', '#ec4899'];
+const PIE_COLORS = ['#467aff', '#4f9cff', '#f59e0b', '#ef6b6b', '#8b5cf6', '#ec4899'];
 
 const toTabClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 const toMoney = (value: number) =>
@@ -58,17 +58,17 @@ export default function FinanceReportPage() {
   );
 
   const d = reportData;
-  const totalRevenue = d?.totalRevenue ?? 0;
-  const totalExpenses = d?.totalExpenses ?? 0;
+  const totalRevenue = d?.revenue ?? 0;
+  const totalExpenses = d?.expenses ?? 0;
   const profit = d?.profit ?? 0;
 
   const monthlyDynamics = useMemo(() => {
-    if (!d?.revenueByMonth) return [];
-    return d.revenueByMonth.map((m: { month: string; amount: number }) => ({
-      month: m.month,
-      income: m.amount ?? 0,
-      expense: 0,
-      profit: m.amount ?? 0,
+    if (!d?.monthly) return [];
+    return d.monthly.map((m) => ({
+      month: m.label || m.month,
+      income: m.revenue ?? 0,
+      expense: m.expenses ?? 0,
+      profit: m.profit ?? 0,
     }));
   }, [d]);
 
@@ -81,8 +81,8 @@ export default function FinanceReportPage() {
   }, [d]);
 
   const incomeCategoryData = useMemo(() => {
-    if (!d?.revenueByMonth) return [{ name: 'Доходы', value: totalRevenue, color: '#25c4b8' }];
-    return [{ name: 'Доходы', value: totalRevenue, color: '#25c4b8' }];
+    if (!d?.revenueByCategory?.length) return [{ name: 'Доходы', value: totalRevenue, color: '#467aff' }];
+    return d.revenueByCategory.map((c) => ({ name: c.category, value: c.amount, color: '#467aff' }));
   }, [d, totalRevenue]);
 
   const statCards = useMemo(() => [
@@ -148,7 +148,7 @@ export default function FinanceReportPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : (
       <>
@@ -194,7 +194,7 @@ export default function FinanceReportPage() {
                 <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <Tooltip formatter={(value) => toMoney(Number(value))} />
                 {activeFinanceTab === 'income' ? (
-                  <Line type="monotone" dataKey="income" stroke="#25c4b8" strokeWidth={3} name="Доходы" />
+                  <Line type="monotone" dataKey="income" stroke="#467aff" strokeWidth={3} name="Доходы" />
                 ) : (
                   <Line type="monotone" dataKey="expense" stroke="#ef6b6b" strokeWidth={3} name="Расходы" />
                 )}

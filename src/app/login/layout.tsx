@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Вход — EduCRM',
+  title: 'Вход — 1edu crm',
   description: 'Войдите в систему управления учебным центром',
 };
 

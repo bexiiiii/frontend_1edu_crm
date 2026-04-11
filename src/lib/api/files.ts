@@ -9,9 +9,7 @@ export const filesService = {
     if (folder) {
       formData.append('folder', folder);
     }
-    const response = await api.post<ApiResponse<FileUploadResponse>>('/api/v1/files/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const response = await api.post<ApiResponse<FileUploadResponse>>('/api/v1/files/upload', formData);
     return response.data;
   },
 

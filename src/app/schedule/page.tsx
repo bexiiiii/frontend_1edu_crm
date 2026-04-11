@@ -19,11 +19,12 @@ import {
   staffService,
   type CreateScheduleRequest,
   type DayOfWeek,
+  type UpdateScheduleRequest,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { ScheduleCalendarItem, ScheduleFormValues } from '@/types/schedule';
 
-const EVENT_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6'];
+const EVENT_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#ec4899', '#467aff'];
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
   MONDAY: 'Пн',
@@ -115,14 +116,12 @@ function toFormValues(schedule: ScheduleCalendarItem): ScheduleFormValues {
   return {
     name: schedule.name,
     courseId: schedule.courseId || '',
-    teacherId: schedule.teacherId || '',
     roomId: schedule.roomId || '',
     daysOfWeek: schedule.daysOfWeek,
     startTime: toInputTime(schedule.startTime),
     endTime: toInputTime(schedule.endTime),
     startDate: schedule.startDate,
     endDate: schedule.endDate || '',
-    maxStudents: schedule.maxStudents ? String(schedule.maxStudents) : '',
   };
 }
 
@@ -133,14 +132,12 @@ function buildSelectionDefaults(selection: DateSelectArg): ScheduleFormValues {
   return {
     name: '',
     courseId: '',
-    teacherId: '',
     roomId: '',
     daysOfWeek: [JS_DAY_TO_API_DAY[selection.start.getDay()]],
     startTime,
     endTime,
     startDate: formatLocalDate(selection.start),
     endDate: '',
-    maxStudents: '',
   };
 }
 
@@ -172,11 +169,8 @@ export default function Schedule() {
       schedulesService.getAll({
         page: 0,
         size: 1000,
-        teacherId: teacherFilter || undefined,
-        courseId: courseFilter || undefined,
-        status: statusFilter || undefined,
       }),
-    [teacherFilter, courseFilter, statusFilter]
+    []
   );
   const { data: coursesData, loading: coursesLoading } = useApi(
     () => coursesService.getAll({ page: 0, size: 500 }),
@@ -192,7 +186,7 @@ export default function Schedule() {
   );
 
   const createMutation = useMutation((data: CreateScheduleRequest) => schedulesService.create(data));
-  const updateMutation = useMutation(({ id, data }: { id: string; data: Partial<CreateScheduleRequest> }) =>
+  const updateMutation = useMutation(({ id, data }: { id: string; data: UpdateScheduleRequest }) =>
     schedulesService.update(id, data)
   );
   const deleteMutation = useMutation((id: string) => schedulesService.delete(id));
@@ -215,12 +209,26 @@ export default function Schedule() {
 
   const filteredSchedules = useMemo(() => {
     const list = schedulesData?.content ?? [];
-    if (!roomFilter) {
-      return list;
-    }
+    return list.filter((schedule) => {
+      if (teacherFilter && schedule.teacherId !== teacherFilter) {
+        return false;
+      }
 
-    return list.filter((schedule) => schedule.roomId === roomFilter);
-  }, [roomFilter, schedulesData]);
+      if (courseFilter && schedule.courseId !== courseFilter) {
+        return false;
+      }
+
+      if (roomFilter && schedule.roomId !== roomFilter) {
+        return false;
+      }
+
+      if (statusFilter && schedule.status !== statusFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [courseFilter, roomFilter, schedulesData, statusFilter, teacherFilter]);
 
   const scheduleItems = useMemo<ScheduleCalendarItem[]>(
     () =>
@@ -296,7 +304,13 @@ export default function Schedule() {
   );
 
   const courseOptions = useMemo(
-    () => (coursesData?.content ?? []).map((course) => ({ id: course.id, name: course.name })),
+    () =>
+      (coursesData?.content ?? []).map((course) => ({
+        id: course.id,
+        name: course.name,
+        teacherId: course.teacherId,
+        enrollmentLimit: course.enrollmentLimit,
+      })),
     [coursesData]
   );
   const teacherOptions = useMemo(
@@ -304,7 +318,12 @@ export default function Schedule() {
     [teachersData]
   );
   const roomOptions = useMemo(
-    () => (roomsData?.content ?? []).map((room) => ({ id: room.id, name: room.name })),
+    () =>
+      (roomsData?.content ?? []).map((room) => ({
+        id: room.id,
+        name: room.name,
+        capacity: room.capacity,
+      })),
     [roomsData]
   );
 
@@ -413,7 +432,7 @@ export default function Schedule() {
 
         {isLoading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <FullCalendar

@@ -9,7 +9,7 @@ import { auditService, type SystemAuditLog, type TenantAuditLog } from '@/lib/ap
 import { usePaginatedApi } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
 
-const PAGE_SIZE_OPTIONS = [20, 50, 100];
+const TABLE_PAGE_SIZE = 20;
 
 type LogSource = 'tenant' | 'system';
 type LogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
@@ -23,6 +23,12 @@ function formatDateTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getTodayDateInputValue(): string {
+  const now = new Date();
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 10);
 }
 
 function categoryToLevel(category: string, action: string): LogLevel {
@@ -59,15 +65,18 @@ export default function LogsPage() {
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
 
   const [activeSource, setActiveSource] = useState<LogSource>('tenant');
-  const [pageSize, setPageSize] = useState(20);
-  const [filters, setFilters] = useState({
-    search: '',
-    category: '',
-    action: '',
-    actorId: '',
-    tenantId: '',
-    from: '',
-    to: '',
+  const [filters, setFilters] = useState(() => {
+    const today = getTodayDateInputValue();
+
+    return {
+      search: '',
+      category: '',
+      action: '',
+      actorId: '',
+      tenantId: '',
+      from: today,
+      to: today,
+    };
   });
   const [selectedLog, setSelectedLog] = useState<AuditLogRow | null>(null);
 
@@ -101,8 +110,8 @@ export default function LogsPage() {
       return auditService.getTenantLog(commonParams);
     },
     0,
-    pageSize,
-    [activeSource, filters.category, filters.action, filters.actorId, filters.tenantId, filters.from, filters.to, pageSize, isSuperAdmin]
+    TABLE_PAGE_SIZE,
+    [activeSource, filters.category, filters.action, filters.actorId, filters.tenantId, filters.from, filters.to, isSuperAdmin]
   );
 
   const filteredLogs = useMemo(() => {
@@ -135,8 +144,8 @@ export default function LogsPage() {
     [filteredLogs, totalElements]
   );
 
-  const rangeStart = totalElements === 0 ? 0 : page * pageSize + 1;
-  const rangeEnd = Math.min((page + 1) * pageSize, totalElements);
+  const rangeStart = totalElements === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
+  const rangeEnd = Math.min((page + 1) * TABLE_PAGE_SIZE, totalElements);
 
   return (
     <div className="space-y-6">
@@ -144,9 +153,6 @@ export default function LogsPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-[#202938]">Audit Logs</h2>
-            <p className="mt-1 text-sm text-[#7f8794]">
-              Страница работает по `GET /api/v1/audit/tenant`, а для `SUPER_ADMIN` ещё и по `GET /api/v1/audit/system`.
-            </p>
           </div>
           {isSuperAdmin ? (
             <Tabs
@@ -258,26 +264,7 @@ export default function LogsPage() {
               }}
               className="crm-input"
             />
-          ) : (
-            <div className="rounded-2xl border border-[#dbe2e8] bg-[#f8fafc] px-4 py-3 text-sm text-[#556070]">
-              Используется tenant log текущего тенанта из JWT.
-            </div>
-          )}
-
-          <select
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value));
-              setPage(0);
-            }}
-            className="crm-select"
-          >
-            {PAGE_SIZE_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option} на странице
-              </option>
-            ))}
-          </select>
+          ) : null}
         </div>
       </div>
 
@@ -299,7 +286,7 @@ export default function LogsPage() {
           </div>
         ) : loading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -326,7 +313,7 @@ export default function LogsPage() {
 
                     return (
                       <tr key={log.id} className="crm-table-row">
-                        <td className="crm-table-cell">{page * pageSize + index + 1}</td>
+                        <td className="crm-table-cell">{page * TABLE_PAGE_SIZE + index + 1}</td>
                         <td className="crm-table-cell">{formatDateTime(log.timestamp)}</td>
                         <td className="crm-table-cell">
                           <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${getLevelClass(level)}`}>

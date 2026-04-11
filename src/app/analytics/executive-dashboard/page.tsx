@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Activity,
   CheckCircle2,
@@ -48,7 +49,7 @@ const classTypeOptions: { id: ClassTypeFilter; label: string }[] = [
 
 const toClassButtonClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 const flowToneClass: Record<string, string> = {
@@ -61,6 +62,7 @@ const flowToneClass: Record<string, string> = {
 const toMoney = (value: number) => `${value.toLocaleString('ru-RU')} ₸`;
 
 export default function ExecutiveDashboardPage() {
+  const router = useRouter();
   const periodOptions = useMemo(() => getAnalyticsPeriodOptions(), []);
   const periodPresets = useMemo(() => getAnalyticsPeriodPresets(), []);
   const defaultRange = periodPresets.month;
@@ -78,7 +80,7 @@ export default function ExecutiveDashboardPage() {
   const d = execData;
 
   const studentTypeData = useMemo(() => [
-    { name: 'Групповые', value: d?.activeGroupStudents ?? 0, color: '#25c4b8' },
+    { name: 'Групповые', value: d?.activeGroupStudents ?? 0, color: '#467aff' },
     { name: 'Индивидуальные', value: d?.activeIndividualStudents ?? 0, color: '#4f9cff' },
   ], [d]);
 
@@ -122,13 +124,18 @@ export default function ExecutiveDashboardPage() {
 
   const joinedStudents = useMemo(() => {
     if (!d?.joinedStudents) return [];
-    return d.joinedStudents.map((s: { fullName: string }) => s.fullName);
+    return d.joinedStudents;
   }, [d]);
 
   const leftStudents = useMemo(() => {
     if (!d?.leftStudents) return [];
-    return d.leftStudents.map((s: { fullName: string }) => s.fullName);
+    return d.leftStudents;
   }, [d]);
+
+  const openStudentProfile = (studentId: string) => {
+    if (!studentId) return;
+    router.push(`/students/${studentId}`);
+  };
 
   const applyPreset = (preset: AnalyticsPeriodPreset) => {
     const range = periodPresets[preset];
@@ -209,7 +216,7 @@ export default function ExecutiveDashboardPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : (
       <>
@@ -298,7 +305,7 @@ export default function ExecutiveDashboardPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[#7f8794]">Активные уч-ки</span>
-                <span className="font-semibold text-[#1f2530]">{d?.topEmployee?.studentsCount ?? 0}</span>
+                <span className="font-semibold text-[#1f2530]">{d?.topEmployee?.activeStudents ?? 0}</span>
               </div>
             </div>
           </div>
@@ -333,7 +340,7 @@ export default function ExecutiveDashboardPage() {
                 <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <Tooltip />
                 <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                  <Cell fill="#25c4b8" />
+                  <Cell fill="#467aff" />
                   <Cell fill="#4f9cff" />
                 </Bar>
               </BarChart>
@@ -370,7 +377,7 @@ export default function ExecutiveDashboardPage() {
                 <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <YAxis domain={[85, 100]} tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <Tooltip formatter={(value) => [`${value}%`, 'Посещаемость']} />
-                <Line type="monotone" dataKey="attendance" stroke="#25c4b8" strokeWidth={3} />
+                <Line type="monotone" dataKey="attendance" stroke="#467aff" strokeWidth={3} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -387,14 +394,16 @@ export default function ExecutiveDashboardPage() {
                 <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-[#d5dee8] bg-white text-sm text-[#8a93a3]">
                   Нет данных
                 </div>
-              ) : joinedStudents.map((name: string) => (
+              ) : joinedStudents.map((student) => (
                 <div
-                  key={name}
+                  key={student.studentId || student.fullName}
                   className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2"
                 >
-                  <span className="text-sm text-[#273142]">{name}</span>
+                  <span className="text-sm text-[#273142]">{student.fullName}</span>
                   <button
                     type="button"
+                    onClick={() => openStudentProfile(student.studentId)}
+                    disabled={!student.studentId}
                     className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0]"
                   >
                     Открыть
@@ -411,14 +420,16 @@ export default function ExecutiveDashboardPage() {
                 <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-[#d5dee8] bg-white text-sm text-[#8a93a3]">
                   Нет данных
                 </div>
-              ) : leftStudents.map((name: string) => (
+              ) : leftStudents.map((student) => (
                 <div
-                  key={name}
+                  key={student.studentId || student.fullName}
                   className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2"
                 >
-                  <span className="text-sm text-[#273142]">{name}</span>
+                  <span className="text-sm text-[#273142]">{student.fullName}</span>
                   <button
                     type="button"
+                    onClick={() => openStudentProfile(student.studentId)}
+                    disabled={!student.studentId}
                     className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0]"
                   >
                     Открыть

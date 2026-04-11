@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { COLORS, YES_NO_OPTIONS } from '@/constants/settings-data';
 
 export interface ExpenseCategoryFormPayload {
   id?: string;
   name: string;
+  color: string;
   sortOrder: number;
   active: boolean;
 }
@@ -26,18 +29,23 @@ export const AddExpenseCategoryModal = ({
   isSubmitting = false,
 }: AddExpenseCategoryModalProps) => {
   const [name, setName] = useState(initialValue?.name ?? '');
+  const [color, setColor] = useState(initialValue?.color ?? COLORS[0]);
   const [sortOrder, setSortOrder] = useState(String(initialValue?.sortOrder ?? 0));
+  const [active, setActive] = useState(initialValue?.active ?? true ? 'yes' : 'no');
 
   const handleSave = async () => {
     if (!name.trim()) return;
     await onSave({
       id: initialValue?.id,
       name: name.trim(),
+      color,
       sortOrder: Number(sortOrder) || 0,
-      active: initialValue?.active ?? true,
+      active: active === 'yes',
     });
     setName('');
+    setColor(COLORS[0]);
     setSortOrder('0');
+    setActive('yes');
   };
 
   return (
@@ -70,6 +78,36 @@ export const AddExpenseCategoryModal = ({
           value={sortOrder}
           onChange={(e) => setSortOrder(e.target.value)}
         />
+
+        <Select label="Активность" value={active} onChange={(event) => setActive(event.target.value)}>
+          {YES_NO_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-700">Цвет</label>
+          <div className="flex flex-wrap gap-2">
+            {COLORS.map((item) => {
+              const isSelected = color === item;
+
+              return (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setColor(item)}
+                  className={`h-8 w-8 rounded-lg border-2 transition-colors ${
+                    isSelected ? 'border-[#467aff]' : 'border-gray-200 hover:border-[#467aff]'
+                  }`}
+                  style={{ backgroundColor: item }}
+                  aria-label={`Выбрать цвет ${item}`}
+                />
+              );
+            })}
+          </div>
+        </div>
       </div>
     </Modal>
   );

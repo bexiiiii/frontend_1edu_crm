@@ -28,9 +28,7 @@ export const settingsService = {
   async uploadLogo(file: File) {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post<ApiResponse<SettingsDto>>('/api/v1/settings/logo', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const response = await api.post<ApiResponse<SettingsDto>>('/api/v1/settings/logo', formData);
     return response.data;
   },
 
@@ -130,13 +128,13 @@ export const settingsService = {
   },
 
   /** Create custom staff status */
-  async createStaffStatus(data: Omit<StaffStatusConfigDto, 'id'>) {
+  async createStaffStatus(data: { name: string; color?: string | null; sortOrder?: number; active?: boolean }) {
     const response = await api.post<ApiResponse<StaffStatusConfigDto>>('/api/v1/settings/staff-statuses', data);
     return response.data;
   },
 
   /** Update custom staff status */
-  async updateStaffStatus(id: string, data: Partial<Omit<StaffStatusConfigDto, 'id'>>) {
+  async updateStaffStatus(id: string, data: Partial<{ name: string; color: string | null; sortOrder: number; active: boolean }>) {
     const response = await api.put<ApiResponse<StaffStatusConfigDto>>(`/api/v1/settings/staff-statuses/${id}`, data);
     return response.data;
   },
@@ -156,13 +154,13 @@ export const settingsService = {
   },
 
   /** Create income category */
-  async createIncomeCategory(data: Omit<FinanceCategoryConfigDto, 'id'>) {
+  async createIncomeCategory(data: { name: string; color?: string | null; sortOrder?: number; active?: boolean }) {
     const response = await api.post<ApiResponse<FinanceCategoryConfigDto>>('/api/v1/settings/income-categories', data);
     return response.data;
   },
 
   /** Update income category */
-  async updateIncomeCategory(id: string, data: Partial<Omit<FinanceCategoryConfigDto, 'id'>>) {
+  async updateIncomeCategory(id: string, data: Partial<{ name: string; color: string | null; sortOrder: number; active: boolean }>) {
     const response = await api.put<ApiResponse<FinanceCategoryConfigDto>>(`/api/v1/settings/income-categories/${id}`, data);
     return response.data;
   },
@@ -182,13 +180,13 @@ export const settingsService = {
   },
 
   /** Create expense category */
-  async createExpenseCategory(data: Omit<FinanceCategoryConfigDto, 'id'>) {
+  async createExpenseCategory(data: { name: string; color?: string | null; sortOrder?: number; active?: boolean }) {
     const response = await api.post<ApiResponse<FinanceCategoryConfigDto>>('/api/v1/settings/expense-categories', data);
     return response.data;
   },
 
   /** Update expense category */
-  async updateExpenseCategory(id: string, data: Partial<Omit<FinanceCategoryConfigDto, 'id'>>) {
+  async updateExpenseCategory(id: string, data: Partial<{ name: string; color: string | null; sortOrder: number; active: boolean }>) {
     const response = await api.put<ApiResponse<FinanceCategoryConfigDto>>(`/api/v1/settings/expense-categories/${id}`, data);
     return response.data;
   },

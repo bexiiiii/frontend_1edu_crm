@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { pushToast } from '@/lib/toast';
 
 export interface UserFormPayload {
   id?: string;
@@ -15,11 +16,20 @@ export interface UserFormPayload {
   permissions?: string[];
 }
 
+interface AvailableStaffOption {
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
 interface AddUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: UserFormPayload) => Promise<void>;
   roleOptions: Array<{ value: string; label: string }>;
+  availableStaff: AvailableStaffOption[];
   availablePermissions: string[];
   initialValue?: UserFormPayload | null;
   permissionsLoaded?: boolean;
@@ -46,12 +56,14 @@ export const AddUserModal = ({
   onClose,
   onSave,
   roleOptions,
+  availableStaff,
   availablePermissions,
   initialValue = null,
   permissionsLoaded = true,
   isSubmitting = false,
 }: AddUserModalProps) => {
   const isEditing = Boolean(initialValue?.id);
+  const [selectedStaffId, setSelectedStaffId] = useState('');
   const [username, setUsername] = useState(initialValue?.username ?? '');
   const [firstName, setFirstName] = useState(initialValue?.firstName ?? '');
   const [lastName, setLastName] = useState(initialValue?.lastName ?? '');
@@ -60,7 +72,17 @@ export const AddUserModal = ({
   const [role, setRole] = useState(initialValue?.role ?? 'TEACHER');
   const [permissions, setPermissions] = useState<string[]>(initialValue?.permissions ?? []);
   const [permissionsTouched, setPermissionsTouched] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    firstName?: boolean;
+    lastName?: boolean;
+    email?: boolean;
+    password?: boolean;
+  }>({});
+
+  const staffById = useMemo(
+    () => new Map(availableStaff.map((staff) => [staff.id, staff] as const)),
+    [availableStaff]
+  );
 
   const togglePermission = (permission: string) => {
     setPermissionsTouched(true);
@@ -72,15 +94,21 @@ export const AddUserModal = ({
   };
 
   const handleSave = async () => {
-    setError(null);
+    setFieldErrors({});
 
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
-      setError('Имя, фамилия и email обязательны.');
+      setFieldErrors({
+        firstName: !firstName.trim(),
+        lastName: !lastName.trim(),
+        email: !email.trim(),
+      });
+      pushToast({ message: 'Имя, фамилия и email обязательны.', tone: 'error' });
       return;
     }
 
     if (!isEditing && !password.trim()) {
-      setError('Пароль обязателен при создании пользователя.');
+      setFieldErrors({ password: true });
+      pushToast({ message: 'Пароль обязателен при создании пользователя.', tone: 'error' });
       return;
     }
 
@@ -105,9 +133,30 @@ export const AddUserModal = ({
       setPassword('');
       setRole('TEACHER');
       setPermissions([]);
+      setSelectedStaffId('');
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      pushToast({ message: getErrorMessage(submitError), tone: 'error' });
     }
+  };
+
+  const handleSelectStaff = (staffId: string) => {
+    setSelectedStaffId(staffId);
+
+    const selectedStaff = staffById.get(staffId);
+    if (!selectedStaff) {
+      return;
+    }
+
+    setFirstName(selectedStaff.firstName || '');
+    setLastName(selectedStaff.lastName || '');
+    setEmail(selectedStaff.email || '');
+    setUsername((selectedStaff.email || '').trim());
+    setFieldErrors((prev) => ({
+      ...prev,
+      firstName: false,
+      lastName: false,
+      email: false,
+    }));
   };
 
   return (
@@ -127,18 +176,42 @@ export const AddUserModal = ({
       }
     >
       <div className="space-y-5">
+        {!isEditing ? (
+          <Select
+            label="Сотрудник"
+            value={selectedStaffId}
+            onChange={(event) => handleSelectStaff(event.target.value)}
+          >
+            <option value="">Выберите сотрудника (опционально)</option>
+            {availableStaff.map((staff) => (
+              <option key={staff.id} value={staff.id}>
+                {staff.fullName}
+                {staff.email ? ` • ${staff.email}` : ''}
+              </option>
+            ))}
+          </Select>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
             label="Имя"
             value={firstName}
-            onChange={(event) => setFirstName(event.target.value)}
+            onChange={(event) => {
+              setFirstName(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, firstName: false }));
+            }}
             placeholder="Введите имя"
+            error={Boolean(fieldErrors.firstName)}
           />
           <Input
             label="Фамилия"
             value={lastName}
-            onChange={(event) => setLastName(event.target.value)}
+            onChange={(event) => {
+              setLastName(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, lastName: false }));
+            }}
             placeholder="Введите фамилию"
+            error={Boolean(fieldErrors.lastName)}
           />
         </div>
 
@@ -147,8 +220,12 @@ export const AddUserModal = ({
             label="Email"
             type="email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, email: false }));
+            }}
             placeholder="Введите email"
+            error={Boolean(fieldErrors.email)}
           />
           <Input
             label="Логин"
@@ -171,8 +248,12 @@ export const AddUserModal = ({
               label="Пароль"
               type="password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setFieldErrors((prev) => ({ ...prev, password: false }));
+              }}
               placeholder="Введите пароль"
+              error={Boolean(fieldErrors.password)}
             />
           ) : (
             <div />
@@ -205,7 +286,7 @@ export const AddUserModal = ({
                     type="checkbox"
                     checked={permissions.includes(permission)}
                     onChange={() => togglePermission(permission)}
-                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                   />
                   <span className="text-sm text-gray-700">{permission}</span>
                 </label>
@@ -216,11 +297,6 @@ export const AddUserModal = ({
           </div>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
       </div>
     </Modal>
   );

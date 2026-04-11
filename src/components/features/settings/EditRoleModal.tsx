@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { pushToast } from '@/lib/toast';
 import type { Role } from '@/types/settings';
 
 export interface RoleFormPayload {
@@ -46,7 +47,7 @@ export const EditRoleModal = ({
   const [name, setName] = useState(role?.name || '');
   const [description, setDescription] = useState(role?.description || '');
   const [permissions, setPermissions] = useState<string[]>(role?.permissions || []);
-  const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState(false);
 
   const togglePermission = (permission: string) => {
     setPermissions((prev) =>
@@ -57,10 +58,11 @@ export const EditRoleModal = ({
   };
 
   const handleSave = async () => {
-    setError(null);
+    setNameError(false);
 
     if (!name.trim()) {
-      setError('Название роли обязательно.');
+      setNameError(true);
+      pushToast({ message: 'Название роли обязательно.', tone: 'error' });
       return;
     }
 
@@ -72,7 +74,7 @@ export const EditRoleModal = ({
         permissions,
       });
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      pushToast({ message: getErrorMessage(submitError), tone: 'error' });
     }
   };
 
@@ -96,7 +98,11 @@ export const EditRoleModal = ({
         <Input
           label="Название"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setNameError(false);
+          }}
+          error={nameError}
         />
 
         <div>
@@ -118,7 +124,7 @@ export const EditRoleModal = ({
                   type="checkbox"
                   checked={permissions.includes(permission)}
                   onChange={() => togglePermission(permission)}
-                  className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                  className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                 />
                 <span className="text-sm text-gray-700">{permission}</span>
               </label>
@@ -126,11 +132,6 @@ export const EditRoleModal = ({
           </div>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
       </div>
     </Modal>
   );

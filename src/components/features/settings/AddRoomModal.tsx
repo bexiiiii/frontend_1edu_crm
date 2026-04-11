@@ -3,6 +3,7 @@ import type { CreateRoomRequest } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { pushToast } from '@/lib/toast';
 
 interface AddRoomModalProps {
   isOpen: boolean;
@@ -37,21 +38,23 @@ export const AddRoomModal = ({
   const [name, setName] = useState(initialValue?.name ?? '');
   const [capacity, setCapacity] = useState(initialValue?.capacity == null ? '' : String(initialValue.capacity));
   const [description, setDescription] = useState(initialValue?.description ?? '');
-  const [color, setColor] = useState(initialValue?.color ?? '#25c4b8');
-  const [error, setError] = useState<string | null>(null);
+  const [color, setColor] = useState(initialValue?.color ?? '#467aff');
+  const [fieldErrors, setFieldErrors] = useState<{ name?: boolean; capacity?: boolean }>({});
   const isEditing = Boolean(initialValue?.id);
 
   const handleSave = async () => {
-    setError(null);
+    setFieldErrors({});
 
     if (!name.trim()) {
-      setError('Название помещения обязательно.');
+      setFieldErrors({ name: true });
+      pushToast({ message: 'Название помещения обязательно.', tone: 'error' });
       return;
     }
 
     const parsedCapacity = capacity ? Number(capacity) : undefined;
     if (parsedCapacity !== undefined && (!Number.isFinite(parsedCapacity) || parsedCapacity <= 0)) {
-      setError('Вместимость должна быть положительным числом.');
+      setFieldErrors({ capacity: true });
+      pushToast({ message: 'Вместимость должна быть положительным числом.', tone: 'error' });
       return;
     }
 
@@ -62,9 +65,8 @@ export const AddRoomModal = ({
         description: description.trim() || undefined,
         color: color || undefined,
       });
-      setError(null);
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      pushToast({ message: getErrorMessage(submitError), tone: 'error' });
     }
   };
 
@@ -88,16 +90,24 @@ export const AddRoomModal = ({
         <Input
           label="Название"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setFieldErrors((prev) => ({ ...prev, name: false }));
+          }}
           placeholder="Введите название"
+          error={Boolean(fieldErrors.name)}
         />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
             label="Вместимость"
             type="number"
             value={capacity}
-            onChange={(event) => setCapacity(event.target.value)}
+            onChange={(event) => {
+              setCapacity(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, capacity: false }));
+            }}
             placeholder="Например, 20"
+            error={Boolean(fieldErrors.capacity)}
           />
           <Input
             label="Цвет"
@@ -116,11 +126,6 @@ export const AddRoomModal = ({
             className="crm-textarea resize-none"
           />
         </div>
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
       </div>
     </Modal>
   );

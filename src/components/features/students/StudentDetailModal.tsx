@@ -7,6 +7,7 @@ import {
   STUDENT_STATUS_COLORS,
   STUDENT_STATUS_LABELS,
 } from '@/constants/student';
+import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
 import type { StudentListItem } from '@/types/student';
 
 interface StudentDetailModalProps {
@@ -38,6 +39,8 @@ export const StudentDetailModal = ({
   onDelete,
   isMutating = false,
 }: StudentDetailModalProps) => {
+  const studentPhotoUrl = useResolvedFileUrl(student?.studentPhoto);
+
   if (!student) {
     return null;
   }
@@ -66,9 +69,9 @@ export const StudentDetailModal = ({
             <p className="mt-1 text-sm text-gray-500">{student.customer || 'Без заказчика'}</p>
           </div>
 
-          {student.studentPhoto ? (
+          {studentPhotoUrl ? (
             <img
-              src={student.studentPhoto}
+              src={studentPhotoUrl}
               alt={student.fullName}
               className="h-20 w-20 rounded-2xl object-cover"
             />

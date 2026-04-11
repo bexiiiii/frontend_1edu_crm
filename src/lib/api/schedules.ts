@@ -1,5 +1,13 @@
 import api from '../api';
-import type { ApiResponse, PageResponse, PaginationParams, ScheduleDto, CreateScheduleRequest, ScheduleStatus } from './types';
+import type {
+  ApiResponse,
+  PageResponse,
+  PaginationParams,
+  ScheduleDto,
+  CreateScheduleRequest,
+  ScheduleStatus,
+  UpdateScheduleRequest,
+} from './types';
 
 // ─── Schedules Service ──────────────────────────────────────────
 
@@ -23,7 +31,7 @@ export const schedulesService = {
   },
 
   /** Update schedule */
-  async update(id: string, data: Partial<CreateScheduleRequest> & { status?: ScheduleStatus }) {
+  async update(id: string, data: UpdateScheduleRequest) {
     const response = await api.put<ApiResponse<ScheduleDto>>(`/api/v1/schedules/${id}`, data);
     return response.data;
   },

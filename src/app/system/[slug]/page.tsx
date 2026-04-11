@@ -48,11 +48,11 @@ export async function generateMetadata({ params }: SystemPageProps): Promise<Met
   const config = SYSTEM_PAGES_BY_SLUG[slug];
 
   if (!config) {
-    return { title: 'Страница не найдена | EduCRM' };
+    return { title: 'Страница не найдена | 1edu crm' };
   }
 
   return {
-    title: `${config.badge} | EduCRM`,
+    title: `${config.badge} | 1edu crm`,
     description: config.description,
   };
 }

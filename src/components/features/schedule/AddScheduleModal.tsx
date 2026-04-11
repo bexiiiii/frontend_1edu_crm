@@ -11,13 +11,22 @@ interface SelectOption {
   name: string;
 }
 
+interface CourseOption extends SelectOption {
+  teacherId: string | null;
+  enrollmentLimit: number | null;
+}
+
+interface RoomOption extends SelectOption {
+  capacity: number | null;
+}
+
 interface AddScheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: CreateScheduleRequest) => Promise<void>;
-  courses: SelectOption[];
+  courses: CourseOption[];
   teachers: SelectOption[];
-  rooms: SelectOption[];
+  rooms: RoomOption[];
   initialValues?: ScheduleFormValues;
   isSubmitting?: boolean;
   title?: string;
@@ -43,14 +52,12 @@ function getDefaultValues(): ScheduleFormValues {
   return {
     name: '',
     courseId: '',
-    teacherId: '',
     roomId: '',
     daysOfWeek: [],
     startTime: '09:00',
     endTime: '10:30',
     startDate: getTodayDate(),
     endDate: '',
-    maxStudents: '',
   };
 }
 
@@ -97,9 +104,34 @@ function getErrorMessage(error: unknown): string {
   }
 
   if (error && typeof error === 'object' && 'response' in error) {
-    const response = (error as { response?: { data?: { message?: string } } }).response;
-    if (response?.data?.message) {
-      return response.data.message;
+    const response = (
+      error as {
+        response?: {
+          data?: {
+            code?: string;
+            errorCode?: string;
+            message?: string;
+            error?: string;
+            error_description?: string;
+          };
+        };
+      }
+    ).response;
+    const payload = response?.data;
+    const code = payload?.code || payload?.errorCode || payload?.error || '';
+    const message = payload?.message || payload?.error_description || '';
+    const normalized = `${code} ${message}`.toUpperCase();
+
+    if (normalized.includes('COURSE_BOUND_FIELD_IMMUTABLE')) {
+      return 'Преподаватель и лимит группы теперь подставляются из курса автоматически. Измените курс, а не эти поля.';
+    }
+
+    if (normalized.includes('ROOM_CAPACITY_EXCEEDED')) {
+      return 'Лимит курса превышает вместимость выбранной аудитории. Выберите другую аудиторию или уменьшите лимит на стороне курса.';
+    }
+
+    if (message) {
+      return message;
     }
   }
 
@@ -121,15 +153,26 @@ export const AddScheduleModal = ({
 
   const [name, setName] = useState(defaults.name);
   const [courseId, setCourseId] = useState(defaults.courseId);
-  const [teacherId, setTeacherId] = useState(defaults.teacherId);
   const [roomId, setRoomId] = useState(defaults.roomId);
   const [daysOfWeek, setDaysOfWeek] = useState<DayOfWeek[]>(defaults.daysOfWeek);
   const [startTime, setStartTime] = useState(defaults.startTime);
   const [endTime, setEndTime] = useState(defaults.endTime);
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
-  const [maxStudents, setMaxStudents] = useState(defaults.maxStudents);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedCourse = courses.find((course) => course.id === courseId) ?? null;
+  const selectedRoom = rooms.find((room) => room.id === roomId) ?? null;
+  const selectedTeacher =
+    selectedCourse?.teacherId
+      ? teachers.find((teacher) => teacher.id === selectedCourse.teacherId)?.name ?? 'Назначен в курсе'
+      : 'Не указан в курсе';
+  const selectedCourseLimit = selectedCourse?.enrollmentLimit ?? null;
+  const selectedRoomCapacity = selectedRoom?.capacity ?? null;
+  const isRoomCapacityExceeded =
+    selectedCourseLimit != null &&
+    selectedRoomCapacity != null &&
+    selectedCourseLimit > selectedRoomCapacity;
 
   const toggleDay = (day: DayOfWeek) => {
     setDaysOfWeek((prev) =>
@@ -165,12 +208,10 @@ export const AddScheduleModal = ({
       return;
     }
 
-    const parsedMaxStudents = maxStudents ? Number(maxStudents) : undefined;
-    if (
-      parsedMaxStudents !== undefined &&
-      (!Number.isFinite(parsedMaxStudents) || parsedMaxStudents <= 0)
-    ) {
-      setError('Лимит студентов должен быть положительным числом.');
+    if (isRoomCapacityExceeded) {
+      setError(
+        `Лимит курса (${selectedCourseLimit}) превышает вместимость аудитории (${selectedRoomCapacity}). Backend отклонит сохранение с ROOM_CAPACITY_EXCEEDED.`
+      );
       return;
     }
 
@@ -178,14 +219,12 @@ export const AddScheduleModal = ({
       await onSave({
         name: name.trim(),
         courseId: courseId || undefined,
-        teacherId: teacherId || undefined,
         roomId: roomId || undefined,
         daysOfWeek,
         startTime: normalizeTime(startTime),
         endTime: normalizeTime(endTime),
         startDate,
         endDate: endDate || undefined,
-        maxStudents: parsedMaxStudents,
       });
     } catch (submitError) {
       setError(getErrorMessage(submitError));
@@ -228,19 +267,12 @@ export const AddScheduleModal = ({
             </option>
           ))}
         </Select>
-
-        <Select
+        <Input
           label="Преподаватель"
-          value={teacherId}
-          onChange={(event) => setTeacherId(event.target.value)}
-        >
-          <option value="">Не выбрано</option>
-          {teachers.map((teacher) => (
-            <option key={teacher.id} value={teacher.id}>
-              {teacher.name}
-            </option>
-          ))}
-        </Select>
+          value={courseId ? selectedTeacher : ''}
+          placeholder="Подтянется из курса"
+          disabled
+        />
       </div>
 
       <div>
@@ -255,7 +287,7 @@ export const AddScheduleModal = ({
               onClick={() => toggleDay(day.value)}
               className={`rounded-xl px-4 py-2 text-sm font-medium transition-all ${
                 daysOfWeek.includes(day.value)
-                  ? 'bg-teal-600 text-white'
+                  ? 'bg-[#467aff] text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -268,7 +300,7 @@ export const AddScheduleModal = ({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Input
           label="Время с"
           type="time"
@@ -283,10 +315,9 @@ export const AddScheduleModal = ({
         />
         <Input
           label="Лимит студентов"
-          type="number"
-          value={maxStudents}
-          onChange={(event) => setMaxStudents(event.target.value)}
-          placeholder="Например, 12"
+          value={courseId ? String(selectedCourseLimit ?? 'Не задан') : ''}
+          placeholder="Подтянется из курса"
+          disabled
         />
       </div>
 

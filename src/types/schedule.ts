@@ -63,12 +63,10 @@ export interface ScheduleFormData {
 export interface ScheduleFormValues {
   name: string;
   courseId: string;
-  teacherId: string;
   roomId: string;
   daysOfWeek: DayOfWeek[];
   startTime: string;
   endTime: string;
   startDate: string;
   endDate: string;
-  maxStudents: string;
 }

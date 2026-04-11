@@ -22,7 +22,7 @@ type LoadRow = {
 
 const toToggleClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 const calcLoadPercent = (students: number, capacity: number) => {
@@ -140,7 +140,7 @@ export default function GroupLoadAnalyticsPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : (
       <>
@@ -191,7 +191,7 @@ export default function GroupLoadAnalyticsPage() {
                 <Tooltip formatter={(value) => `${value}%`} />
                 <Bar dataKey="load" name="Загрузка %" radius={[8, 8, 0, 0]}>
                   {chartData.map((row) => (
-                    <Cell key={row.name} fill={row.load > 100 ? '#4f96d8' : '#25c4b8'} />
+                    <Cell key={row.name} fill={row.load > 100 ? '#4f96d8' : '#467aff'} />
                   ))}
                 </Bar>
               </BarChart>

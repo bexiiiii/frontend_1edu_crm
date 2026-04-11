@@ -13,11 +13,11 @@ export const Modal = ({ isOpen, onClose, title, children, footer }: ModalProps) 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6 backdrop-blur-[1px]">
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#e2e8ee] bg-[#fbfcfd] shadow-[0_24px_50px_rgba(15,23,42,0.16)]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-[1px] sm:p-6">
+      <div className="max-h-[92svh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#e2e8ee] bg-[#fbfcfd] shadow-[0_24px_50px_rgba(15,23,42,0.16)]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#e6ebf0] p-6">
-          <h2 className="text-xl font-bold text-[#1f2530]">{title}</h2>
+        <div className="flex items-center justify-between border-b border-[#e6ebf0] p-4 sm:p-6">
+          <h2 className="text-lg font-bold text-[#1f2530] sm:text-xl">{title}</h2>
           <button
             onClick={onClose}
             className="rounded-lg p-1 text-[#96a0af] transition-colors hover:bg-[#eef2f5] hover:text-[#4f5b6b]"
@@ -27,11 +27,11 @@ export const Modal = ({ isOpen, onClose, title, children, footer }: ModalProps) 
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5">{children}</div>
+        <div className="space-y-5 p-4 sm:p-6">{children}</div>
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-3 border-t border-[#e6ebf0] p-6">
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[#e6ebf0] p-4 sm:p-6">
             {footer}
           </div>
         )}

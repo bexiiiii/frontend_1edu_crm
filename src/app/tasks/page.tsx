@@ -340,7 +340,7 @@ export default function Tasks() {
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="mt-4 flex gap-4 overflow-x-auto pb-2">

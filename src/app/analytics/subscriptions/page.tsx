@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { reportsService, subscriptionsService } from '@/lib/api';
+import { analyticsService, reportsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { downloadBlob } from '@/lib/download';
 import { pushToast } from '@/lib/toast';
@@ -20,7 +20,7 @@ const toMoney = (value: number) => `${value.toLocaleString('ru-RU')} ₸`;
 
 const toTabClass = (active: boolean) =>
   `rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-    active ? 'bg-[#25c4b8] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
+    active ? 'bg-[#467aff] text-white' : 'bg-[#eef3f7] text-[#5f6a7a] hover:bg-[#e2eaf1]'
   }`;
 
 export default function SubscriptionsReportPage() {
@@ -33,19 +33,28 @@ export default function SubscriptionsReportPage() {
   const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: subsData, loading } = useApi(
-    () => subscriptionsService.getAll({ page: 0, size: 200 }),
-    [],
+    () => analyticsService.getSubscriptions({ from: fromDate || undefined, to: toDate || undefined }),
+    [fromDate, toDate],
   );
 
   const subscriptions = useMemo(() => {
-    if (!subsData?.content) return [];
-    return subsData.content.map((s, i) => ({
-      id: s.id || String(i + 1),
-      client: s.studentId || '—',
-      service: s.courseId || '—',
+    if (!subsData?.rows) return [];
+    return subsData.rows.map((s, i) => ({
+      id: s.subscriptionId || String(i + 1),
+      client: s.studentName || s.studentId || '—',
+      service: s.serviceName || '—',
       amount: s.amount ?? 0,
-      status: s.status === 'ACTIVE' ? 'Активен' : s.status,
-      createdAt: s.createdAt ? new Date(s.createdAt).toLocaleDateString('ru-RU') : '—',
+      status:
+        s.status === 'ACTIVE'
+          ? 'Активен'
+          : s.status === 'EXPIRED'
+            ? 'Истек'
+            : s.status === 'CANCELLED'
+              ? 'Отменен'
+              : s.status === 'FROZEN'
+                ? 'Заморожен'
+                : s.status,
+      createdAt: s.createdDate ? new Date(s.createdDate).toLocaleDateString('ru-RU') : '—',
       startsAt: s.startDate ? new Date(s.startDate).toLocaleDateString('ru-RU') : '—',
     }));
   }, [subsData]);
@@ -127,7 +136,7 @@ export default function SubscriptionsReportPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-[#25c4b8]" />
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : (
       <>

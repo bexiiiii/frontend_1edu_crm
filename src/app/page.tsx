@@ -9,6 +9,13 @@ import CourseReachChart from '@/components/CourseReachChart';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 
+const SUBSCRIPTION_STATUS_META: Record<string, { label: string; color: string }> = {
+  ACTIVE: { label: 'Активные', color: '#467aff' },
+  EXPIRED: { label: 'Истекли', color: '#f59e0b' },
+  CANCELLED: { label: 'Отменены', color: '#ef4444' },
+  FROZEN: { label: 'Заморожены', color: '#8b5cf6' },
+};
+
 export default function Dashboard() {
   const { from, to } = useMemo(() => {
     const now = new Date();
@@ -21,6 +28,58 @@ export default function Dashboard() {
 
   const { data: dashboard, loading } = useApi(() => analyticsService.getDashboard({ from, to }), [from, to]);
   const { data: today } = useApi(() => analyticsService.getToday(), []);
+  const { data: financeReport, loading: financeLoading } = useApi(
+    () => analyticsService.getFinanceReport({ from, to }),
+    [from, to]
+  );
+  const { data: subscriptionsReport, loading: subscriptionsLoading } = useApi(
+    () => analyticsService.getSubscriptions({ from, to }),
+    [from, to]
+  );
+  const { data: leadConversions, loading: leadConversionsLoading } = useApi(
+    () => analyticsService.getLeadConversions({ from, to }),
+    [from, to]
+  );
+
+  const salesChartData = useMemo(
+    () =>
+      (financeReport?.monthly ?? []).map((item) => ({
+        label: item.label || item.month,
+        value: item.revenue ?? 0,
+      })),
+    [financeReport]
+  );
+
+  const subscriptionChartData = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const row of subscriptionsReport?.rows ?? []) {
+      counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries())
+      .map(([status, value]) => ({
+        name: SUBSCRIPTION_STATUS_META[status]?.label ?? status,
+        value,
+        color: SUBSCRIPTION_STATUS_META[status]?.color ?? '#94a3b8',
+      }))
+      .sort((left, right) => right.value - left.value);
+  }, [subscriptionsReport]);
+
+  const reachChartData = useMemo(
+    () =>
+      (leadConversions?.bySource ?? [])
+        .filter((item) => item.leads > 0 || item.contracts > 0)
+        .sort((left, right) => right.leads - left.leads)
+        .slice(0, 5)
+        .map((item) => ({
+          source: item.source || 'Без источника',
+          leads: item.leads,
+          contracts: item.contracts,
+          conversion: item.conversionPct,
+        })),
+    [leadConversions]
+  );
 
   return (
     <div className="space-y-5">
@@ -32,8 +91,8 @@ export default function Dashboard() {
             change={`${dashboard?.revenueDeltaPct ?? 0}%`}
             isPositive={(dashboard?.revenueDeltaPct ?? 0) >= 0}
             icon={ReceiptText}
-            iconBgColor="bg-teal-50"
-            iconColor="text-teal-600"
+            iconBgColor="bg-[#edf3ff]"
+            iconColor="text-[#467aff]"
           />
           <MetricCard
             title="Средний чек"
@@ -65,7 +124,11 @@ export default function Dashboard() {
         </div>
 
         <div className="xl:col-span-1">
-          <OrdersChart />
+          <OrdersChart
+            data={subscriptionChartData}
+            total={subscriptionsReport?.totalCount ?? 0}
+            loading={subscriptionsLoading}
+          />
         </div>
       </div>
 
@@ -92,10 +155,10 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         <div className="xl:col-span-2">
-          <SalesChart />
+          <SalesChart data={salesChartData} loading={financeLoading} />
         </div>
         <div className="xl:col-span-1">
-          <CourseReachChart />
+          <CourseReachChart data={reachChartData} loading={leadConversionsLoading} />
         </div>
       </div>
     </div>

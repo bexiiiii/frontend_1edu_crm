@@ -1,10 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Edit2, Eye, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { Edit2, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AddEmployeeModal } from '@/components/features/employees/AddEmployeeModal';
-import { EmployeeDetailModal } from '@/components/features/employees/EmployeeDetailModal';
 import {
   STAFF_ROLE_LABELS,
   STAFF_ROLE_OPTIONS,
@@ -28,6 +28,7 @@ function toFormValues(employee: StaffListItem): StaffFormValues {
     phone: employee.phone,
     role: employee.role,
     status: employee.status,
+    customStatus: employee.customStatus,
     position: employee.position,
     salary: employee.salary !== null ? String(employee.salary) : '',
     salaryType: employee.salaryType,
@@ -43,8 +44,6 @@ export default function Employees() {
     role: 'all',
     status: 'all',
   });
-  const [selectedEmployee, setSelectedEmployee] = useState<StaffListItem | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [modalState, setModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -93,6 +92,7 @@ export default function Employees() {
         phone: staff.phone || '',
         role: staff.role,
         status: staff.status,
+        customStatus: staff.customStatus || '',
         position: staff.position || '',
         salary: staff.salary,
         salaryType: staff.salaryType,
@@ -152,8 +152,6 @@ export default function Employees() {
   };
 
   const openEditModal = (employee: StaffListItem) => {
-    setSelectedEmployee(employee);
-    setIsDetailModalOpen(false);
     setModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
@@ -176,20 +174,13 @@ export default function Employees() {
     await refetch();
   };
 
-  const handleViewEmployee = (employee: StaffListItem) => {
-    setSelectedEmployee(employee);
-    setIsDetailModalOpen(true);
-  };
-
   const handleDeleteEmployee = async (employee?: StaffListItem | null) => {
-    const target = employee ?? selectedEmployee;
+    const target = employee;
     if (!target || !confirm('Вы уверены, что хотите удалить сотрудника?')) {
       return;
     }
 
     await deleteMutation.mutate(target.id);
-    setIsDetailModalOpen(false);
-    setSelectedEmployee(null);
     await refetch();
   };
 
@@ -279,7 +270,7 @@ export default function Employees() {
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -291,6 +282,7 @@ export default function Employees() {
                   <th className="crm-table-th">Телефон</th>
                   <th className="crm-table-th">Email</th>
                   <th className="crm-table-th">Роль</th>
+                  <th className="crm-table-th">Кастомный статус</th>
                   <th className="crm-table-th">Должность</th>
                   <th className="crm-table-th">Оплата</th>
                   <th className="crm-table-th">Дата найма</th>
@@ -310,6 +302,7 @@ export default function Employees() {
                       <td className="crm-table-cell">{employee.phone || '—'}</td>
                       <td className="crm-table-cell">{employee.email || '—'}</td>
                       <td className="crm-table-cell">{STAFF_ROLE_LABELS[employee.role]}</td>
+                      <td className="crm-table-cell">{employee.customStatus || '—'}</td>
                       <td className="crm-table-cell">{employee.position || '—'}</td>
                       <td className="crm-table-cell">
                         <div className="text-sm text-gray-900">{STAFF_SALARY_TYPE_LABELS[employee.salaryType]}</div>
@@ -331,19 +324,19 @@ export default function Employees() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-2">
+                          <Link
+                            href={`/staff/${employee.id}`}
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
+                            title="Карточка сотрудника"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Link>
                           <button
                             onClick={() => openEditModal(employee)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-teal-50 hover:text-teal-600"
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#edf3ff] hover:text-[#3568eb]"
                             title="Редактировать"
                           >
                             <Edit2 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleViewEmployee(employee)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-sky-50 hover:text-sky-600"
-                            title="Просмотр"
-                          >
-                            <Eye className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteEmployee(employee)}
@@ -358,7 +351,7 @@ export default function Employees() {
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Сотрудники не найдены
                     </td>
                   </tr>
@@ -402,19 +395,6 @@ export default function Employees() {
         isSubmitting={createMutation.loading || updateMutation.loading}
         title={modalState.employeeId ? 'Редактировать сотрудника' : 'Добавить сотрудника'}
         includeStatus={Boolean(modalState.employeeId)}
-      />
-
-      <EmployeeDetailModal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        employee={selectedEmployee}
-        onEdit={() => {
-          if (selectedEmployee) {
-            openEditModal(selectedEmployee);
-          }
-        }}
-        onDelete={() => handleDeleteEmployee()}
-        isMutating={deleteMutation.loading}
       />
     </div>
   );

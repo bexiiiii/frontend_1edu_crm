@@ -10,8 +10,13 @@ const nunito = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: 'EduCRM - Система управления учебным центром',
+  title: '1edu crm - Система управления учебным центром',
   description: 'CRM система для управления учебными центрами',
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+    apple: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({

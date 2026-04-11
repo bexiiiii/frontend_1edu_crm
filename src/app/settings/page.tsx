@@ -1,9 +1,11 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Edit2, KeyRound, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
+import { PhoneInputWithCountry } from '@/components/ui/PhoneInputWithCountry';
 import { Select } from '@/components/ui/Select';
 import {
   AddUserModal,
@@ -36,6 +38,7 @@ import {
 import { ResetUserPasswordModal } from '@/components/features/settings/ResetUserPasswordModal';
 import {
   SETTINGS_TABS,
+  TARIFFS,
   LANGUAGES,
   CURRENCIES,
   TIMEZONES,
@@ -52,6 +55,7 @@ import {
   resetUserPassword,
   roomsService,
   settingsService,
+  staffService,
   tenantsService,
   updateProfile,
   updateUser,
@@ -59,11 +63,12 @@ import {
   type CreateUserRequest,
   type SettingsDto,
   type TenantDto,
-  type UpdateTenantRequest,
   type UserDto,
 } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useApi';
+import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
+import { canAccessSettingsTab } from '@/lib/rbac';
 import { pushToast } from '@/lib/toast';
 import { useAuthStore } from '@/store/authStore';
 import type { SettingsTab, Role } from '@/types/settings';
@@ -149,6 +154,11 @@ interface TenantFormValues {
   notes: string;
 }
 
+interface CompanyValidationErrors {
+  centerName?: boolean;
+  workingDays?: boolean;
+}
+
 interface EditableUser {
   id: string;
   username: string;
@@ -171,8 +181,9 @@ const AUTH_USER_ROLE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'RECEPTIONIST', label: STAFF_ROLE_LABELS.RECEPTIONIST },
   { value: 'TEACHER', label: STAFF_ROLE_LABELS.TEACHER },
   { value: 'ACCOUNTANT', label: STAFF_ROLE_LABELS.ACCOUNTANT },
-  { value: 'ADMIN', label: STAFF_ROLE_LABELS.ADMIN },
 ];
+
+const BUILT_IN_AUTH_ROLE_VALUES = new Set(AUTH_USER_ROLE_OPTIONS.map((option) => option.value));
 
 const TENANT_STATUS_OPTIONS = [
   { value: 'TRIAL', label: 'Триал' },
@@ -221,7 +232,7 @@ function normalizeDateValue(value: string | null | undefined): string {
 
 function parseWorkingDays(value: string | null | undefined): WorkingDayValue[] {
   if (!value?.trim()) {
-    return ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
+    return ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
   }
 
   const normalized = value.trim();
@@ -267,21 +278,21 @@ function buildCompanySettingsForm(settings?: SettingsDto | null): CompanySetting
     timezone: settings?.timezone || 'Asia/Almaty',
     currency: settings?.currency || 'KZT',
     language: settings?.language || 'ru',
-    workingHoursStart: normalizeTimeValue(settings?.workingHoursStart, '08:00'),
-    workingHoursEnd: normalizeTimeValue(settings?.workingHoursEnd, '23:00'),
+    workingHoursStart: normalizeTimeValue(settings?.workingHoursStart, '09:00'),
+    workingHoursEnd: normalizeTimeValue(settings?.workingHoursEnd, '21:00'),
     slotDurationMin: String(settings?.slotDurationMin ?? 30),
     workingDays: parseWorkingDays(settings?.workingDays),
-    defaultLessonDurationMin: String(settings?.defaultLessonDurationMin ?? 90),
-    trialLessonDurationMin: String(settings?.trialLessonDurationMin ?? 60),
-    maxGroupSize: String(settings?.maxGroupSize ?? 10),
+    defaultLessonDurationMin: String(settings?.defaultLessonDurationMin ?? 60),
+    trialLessonDurationMin: String(settings?.trialLessonDurationMin ?? 45),
+    maxGroupSize: String(settings?.maxGroupSize ?? 20),
     autoMarkAttendance: settings?.autoMarkAttendance ?? false,
-    attendanceWindowDays: String(settings?.attendanceWindowDays ?? 1),
+    attendanceWindowDays: String(settings?.attendanceWindowDays ?? 7),
     smsEnabled: settings?.smsEnabled ?? false,
     emailEnabled: settings?.emailEnabled ?? true,
     smsSenderName: settings?.smsSenderName ?? '',
     latePaymentReminderDays: String(settings?.latePaymentReminderDays ?? 3),
-    subscriptionExpiryReminderDays: String(settings?.subscriptionExpiryReminderDays ?? 7),
-    brandColor: settings?.brandColor || '#25c4b8',
+    subscriptionExpiryReminderDays: String(settings?.subscriptionExpiryReminderDays ?? 3),
+    brandColor: settings?.brandColor || '#467aff',
   };
 }
 
@@ -325,21 +336,21 @@ function mapCompanyFormToPayload(form: CompanySettingsFormValues): SettingsUpdat
     timezone: form.timezone || 'Asia/Almaty',
     currency: form.currency || 'KZT',
     language: form.language || 'ru',
-    workingHoursStart: `${form.workingHoursStart || '08:00'}:00`,
-    workingHoursEnd: `${form.workingHoursEnd || '23:00'}:00`,
+    workingHoursStart: `${form.workingHoursStart || '09:00'}:00`,
+    workingHoursEnd: `${form.workingHoursEnd || '21:00'}:00`,
     slotDurationMin: toRequiredNumber(form.slotDurationMin, 30),
     workingDays: JSON.stringify(form.workingDays),
-    defaultLessonDurationMin: toRequiredNumber(form.defaultLessonDurationMin, 90),
-    trialLessonDurationMin: toRequiredNumber(form.trialLessonDurationMin, 60),
-    maxGroupSize: toRequiredNumber(form.maxGroupSize, 10),
+    defaultLessonDurationMin: toRequiredNumber(form.defaultLessonDurationMin, 60),
+    trialLessonDurationMin: toRequiredNumber(form.trialLessonDurationMin, 45),
+    maxGroupSize: toRequiredNumber(form.maxGroupSize, 20),
     autoMarkAttendance: form.autoMarkAttendance,
-    attendanceWindowDays: toRequiredNumber(form.attendanceWindowDays, 1),
+    attendanceWindowDays: toRequiredNumber(form.attendanceWindowDays, 7),
     smsEnabled: form.smsEnabled,
     emailEnabled: form.emailEnabled,
     smsSenderName: toNullableString(form.smsSenderName),
     latePaymentReminderDays: toRequiredNumber(form.latePaymentReminderDays, 3),
-    subscriptionExpiryReminderDays: toRequiredNumber(form.subscriptionExpiryReminderDays, 7),
-    brandColor: form.brandColor || '#25c4b8',
+    subscriptionExpiryReminderDays: toRequiredNumber(form.subscriptionExpiryReminderDays, 3),
+    brandColor: form.brandColor || '#467aff',
   };
 }
 
@@ -386,6 +397,14 @@ function formatIsoDate(value: string | null | undefined): string {
   }).format(date);
 }
 
+function formatKztAmount(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'KZT',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 function getVisibleRoles(roles: string[]): string[] {
   return roles.filter(
     (role) => !['offline_access', 'uma_authorization', 'default-roles-ondeedu'].includes(role)
@@ -411,6 +430,7 @@ function getDisplayRole(roles: string[]): string {
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('user');
+  const [usersSearch, setUsersSearch] = useState('');
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<EditableUser | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -427,6 +447,7 @@ export default function Settings() {
   const [selectedAttendanceStatus, setSelectedAttendanceStatus] = useState<AttendanceStatusFormPayload | null>(null);
   const [selectedPaymentSource, setSelectedPaymentSource] = useState<PaymentSourceFormPayload | null>(null);
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
+  const [isTariffModalOpen, setIsTariffModalOpen] = useState(false);
   const [isAddStaffStatusModalOpen, setIsAddStaffStatusModalOpen] = useState(false);
   const [selectedStaffStatus, setSelectedStaffStatus] = useState<StaffStatusFormPayload | null>(null);
   const [isAddIncomeCategoryModalOpen, setIsAddIncomeCategoryModalOpen] = useState(false);
@@ -435,11 +456,8 @@ export default function Settings() {
   const [selectedExpenseCategory, setSelectedExpenseCategory] = useState<ExpenseCategoryFormPayload | null>(null);
   const [companyFormDraft, setCompanyFormDraft] = useState<CompanySettingsFormValues | null>(null);
   const [companyLogoFile, setCompanyLogoFile] = useState<File | null>(null);
-  const [companyError, setCompanyError] = useState<string | null>(null);
-  const [companySuccess, setCompanySuccess] = useState<string | null>(null);
-  const [tenantFormDraft, setTenantFormDraft] = useState<TenantFormValues | null>(null);
-  const [tenantError, setTenantError] = useState<string | null>(null);
-  const [tenantSuccess, setTenantSuccess] = useState<string | null>(null);
+  const [companyLogoPreviewUrl, setCompanyLogoPreviewUrl] = useState<string | null>(null);
+  const [companyValidationErrors, setCompanyValidationErrors] = useState<CompanyValidationErrors>({});
   const [profileFormDraft, setProfileFormDraft] = useState<PersonalProfileFormValues | null>(null);
   const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -452,7 +470,22 @@ export default function Settings() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const tenantId = useAuthStore((state) => state.tenantId);
+  const authRoles = useAuthStore((state) => state.roles);
+  const authPermissions = useAuthStore((state) => state.permissions);
   const refreshAuthProfile = useAuthStore((state) => state.fetchProfile);
+
+  const visibleSettingsTabs = useMemo(
+    () => SETTINGS_TABS.filter((tab) => canAccessSettingsTab(tab.value, authRoles, authPermissions)),
+    [authPermissions, authRoles]
+  );
+
+  useEffect(() => {
+    if (visibleSettingsTabs.some((tab) => tab.value === activeTab)) {
+      return;
+    }
+
+    setActiveTab((visibleSettingsTabs[0]?.value as SettingsTab) ?? 'user');
+  }, [activeTab, visibleSettingsTabs]);
 
   // ─── API Data ─────────────────────────────────────────────────
   const { data: companySettingsData, loading: companySettingsLoading, error: companySettingsLoadError, refetch: refetchCompanySettings } = useApi(() => settingsService.get(), []);
@@ -463,8 +496,16 @@ export default function Settings() {
     error: usersError,
     refetch: refetchUsers,
   } = useApi(
-    () => (tenantId ? getUsers({ page: 0, size: 200 }) : Promise.resolve({ data: [] as UserDto[] })),
-    [tenantId]
+    () => (
+      tenantId
+        ? getUsers({
+            page: 0,
+            size: 200,
+            ...(usersSearch.trim() ? { search: usersSearch.trim() } : {}),
+          })
+        : Promise.resolve({ data: [] as UserDto[] })
+    ),
+    [tenantId, usersSearch]
   );
   const { data: rolesData, loading: rolesLoading, error: rolesError, refetch: refetchRoles } = useApi(() => settingsService.getRoles(), []);
   const { data: permissionsData, loading: permissionsLoading, error: permissionsError } = useApi(() => settingsService.getPermissions(), []);
@@ -483,6 +524,7 @@ export default function Settings() {
     error: roomsError,
     refetch: refetchRooms,
   } = useApi(() => roomsService.getAll({ page: 0, size: 200 }), []);
+  const { data: staffData } = useApi(() => staffService.getAll({ page: 0, size: 500 }), []);
   const {
     data: attendanceStatusesData,
     loading: attendanceStatusesLoading,
@@ -545,6 +587,35 @@ export default function Settings() {
     }));
   }, [rolesData]);
 
+  const authUserRoleOptions = useMemo(() => {
+    const customRoleOptions = roles
+      .filter((role) => role.name && !BUILT_IN_AUTH_ROLE_VALUES.has(role.name))
+      .map((role) => ({ value: role.name, label: role.name }));
+
+    return [...AUTH_USER_ROLE_OPTIONS, ...customRoleOptions];
+  }, [roles]);
+
+  const availableStaffForAuth = useMemo(() => {
+    const list = staffData?.content || [];
+
+    return list
+      .map((staff) => ({
+        id: staff.id,
+        fullName:
+          staff.fullName ||
+          [staff.lastName, staff.firstName, staff.middleName]
+            .filter(Boolean)
+            .join(' ')
+            .trim() ||
+          staff.email ||
+          'Без имени',
+        firstName: staff.firstName,
+        lastName: staff.lastName,
+        email: staff.email || '',
+      }))
+      .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU'));
+  }, [staffData]);
+
   // Map API rooms → local Room type
   const rooms = useMemo(() => {
     const roomsList = roomsData?.content || [];
@@ -586,8 +657,9 @@ export default function Settings() {
     return list.map((s) => ({
       id: s.id,
       name: s.name,
-      color: s.color,
+      color: s.color || '#94a3b8',
       sortOrder: s.sortOrder,
+      active: s.active,
     }));
   }, [staffStatusesData]);
 
@@ -606,6 +678,7 @@ export default function Settings() {
     return (incomeCategoriesData || []).map((c) => ({
       id: c.id,
       name: c.name,
+      color: c.color || '#94a3b8',
       sortOrder: c.sortOrder,
       active: c.active,
     }));
@@ -615,21 +688,32 @@ export default function Settings() {
     return (expenseCategoriesData || []).map((c) => ({
       id: c.id,
       name: c.name,
+      color: c.color || '#94a3b8',
       sortOrder: c.sortOrder,
       active: c.active,
     }));
   }, [expenseCategoriesData]);
-  const tenantBaseForm = useMemo(() => buildTenantForm(tenantData), [tenantData]);
-  const tenantForm = tenantFormDraft ?? tenantBaseForm;
+  const tenantForm = useMemo(() => buildTenantForm(tenantData), [tenantData]);
   const companyBaseForm = useMemo(() => buildCompanySettingsForm(companySettingsData), [companySettingsData]);
   const companyForm = companyFormDraft ?? companyBaseForm;
   const personalProfileBaseForm = useMemo(() => buildPersonalProfileForm(personalProfileData), [personalProfileData]);
   const personalProfileForm = profileFormDraft ?? personalProfileBaseForm;
+  const resolvedProfilePhotoUrl = useResolvedFileUrl(personalProfileForm.photoUrl);
+  const resolvedCompanyLogoUrl = useResolvedFileUrl(companyForm.logoUrl);
+
+  useEffect(() => {
+    if (!companyLogoFile) {
+      setCompanyLogoPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(companyLogoFile);
+    setCompanyLogoPreviewUrl(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [companyLogoFile]);
 
   // Mutations
-  const updateTenantMutation = useMutation((payload: { id: string; data: UpdateTenantRequest }) =>
-    tenantsService.update(payload.id, payload.data)
-  );
   const createUserMutation = useMutation((data: CreateUserRequest) => createUser(data));
   const updateUserMutation = useMutation((payload: { id: string; data: {
     email?: string;
@@ -696,70 +780,38 @@ export default function Settings() {
     settingsService.createStaffStatus(data)
   );
   const updateStaffStatusMutation = useMutation((data: StaffStatusFormPayload) =>
-    settingsService.updateStaffStatus(data.id!, { name: data.name, color: data.color, sortOrder: data.sortOrder })
+    settingsService.updateStaffStatus(data.id!, {
+      name: data.name,
+      color: data.color,
+      sortOrder: data.sortOrder,
+      active: data.active,
+    })
   );
   const deleteStaffStatusMutation = useMutation((id: string) => settingsService.deleteStaffStatus(id));
   const createIncomeCategoryMutation = useMutation((data: Omit<IncomeCategoryFormPayload, 'id'>) =>
     settingsService.createIncomeCategory(data)
   );
   const updateIncomeCategoryMutation = useMutation((data: IncomeCategoryFormPayload) =>
-    settingsService.updateIncomeCategory(data.id!, { name: data.name, sortOrder: data.sortOrder, active: data.active })
+    settingsService.updateIncomeCategory(data.id!, {
+      name: data.name,
+      color: data.color,
+      sortOrder: data.sortOrder,
+      active: data.active,
+    })
   );
   const deleteIncomeCategoryMutation = useMutation((id: string) => settingsService.deleteIncomeCategory(id));
   const createExpenseCategoryMutation = useMutation((data: Omit<ExpenseCategoryFormPayload, 'id'>) =>
     settingsService.createExpenseCategory(data)
   );
   const updateExpenseCategoryMutation = useMutation((data: ExpenseCategoryFormPayload) =>
-    settingsService.updateExpenseCategory(data.id!, { name: data.name, sortOrder: data.sortOrder, active: data.active })
+    settingsService.updateExpenseCategory(data.id!, {
+      name: data.name,
+      color: data.color,
+      sortOrder: data.sortOrder,
+      active: data.active,
+    })
   );
   const deleteExpenseCategoryMutation = useMutation((id: string) => settingsService.deleteExpenseCategory(id));
-
-  const clearTenantMessages = useCallback(() => {
-    setTenantError(null);
-    setTenantSuccess(null);
-  }, []);
-
-  const updateTenantForm = useCallback((patch: Partial<TenantFormValues>) => {
-    clearTenantMessages();
-    setTenantFormDraft((prev) => ({
-      ...(prev ?? tenantBaseForm),
-      ...patch,
-    }));
-  }, [clearTenantMessages, tenantBaseForm]);
-
-  const handleSaveTenant = useCallback(async () => {
-    const currentTenantId = tenantData?.id || tenantId;
-    if (!currentTenantId) {
-      setTenantError('Tenant context не найден. Перезайдите в систему и попробуйте ещё раз.');
-      return;
-    }
-
-    clearTenantMessages();
-
-    try {
-      await updateTenantMutation.mutate({
-        id: currentTenantId,
-        data: {
-          name: toNullableString(tenantForm.name),
-          email: toNullableString(tenantForm.email),
-          phone: toNullableString(tenantForm.phone),
-          status: tenantForm.status,
-          plan: tenantForm.plan,
-          timezone: tenantForm.timezone || 'Asia/Almaty',
-          maxStudents: toOptionalNumber(tenantForm.maxStudents),
-          maxStaff: toOptionalNumber(tenantForm.maxStaff),
-          trialEndsAt: tenantForm.trialEndsAt.trim() ? tenantForm.trialEndsAt.trim() : null,
-          contactPerson: toNullableString(tenantForm.contactPerson),
-          notes: toNullableString(tenantForm.notes),
-        },
-      });
-      await refetchTenant();
-      setTenantFormDraft(null);
-      setTenantSuccess('Настройки тенанта обновлены.');
-    } catch (error) {
-      setTenantError(getErrorMessage(error, 'Не удалось обновить настройки тенанта.'));
-    }
-  }, [clearTenantMessages, refetchTenant, tenantData?.id, tenantForm, tenantId, updateTenantMutation]);
 
   const handleCreateUser = useCallback(() => {
     setSelectedUser(null);
@@ -990,7 +1042,12 @@ export default function Settings() {
       await updateStaffStatusMutation.mutate(status);
       pushToast({ message: 'Статус сотрудника обновлён.', tone: 'success' });
     } else {
-      await createStaffStatusMutation.mutate({ name: status.name, color: status.color, sortOrder: status.sortOrder });
+      await createStaffStatusMutation.mutate({
+        name: status.name,
+        color: status.color,
+        sortOrder: status.sortOrder,
+        active: status.active,
+      });
       pushToast({ message: 'Статус сотрудника создан.', tone: 'success' });
     }
     await refetchStaffStatuses();
@@ -1010,7 +1067,12 @@ export default function Settings() {
       await updateIncomeCategoryMutation.mutate(category);
       pushToast({ message: 'Статья дохода обновлена.', tone: 'success' });
     } else {
-      await createIncomeCategoryMutation.mutate({ name: category.name, sortOrder: category.sortOrder, active: category.active });
+      await createIncomeCategoryMutation.mutate({
+        name: category.name,
+        color: category.color,
+        sortOrder: category.sortOrder,
+        active: category.active,
+      });
       pushToast({ message: 'Статья дохода создана.', tone: 'success' });
     }
     await refetchIncomeCategories();
@@ -1030,7 +1092,12 @@ export default function Settings() {
       await updateExpenseCategoryMutation.mutate(category);
       pushToast({ message: 'Статья расхода обновлена.', tone: 'success' });
     } else {
-      await createExpenseCategoryMutation.mutate({ name: category.name, sortOrder: category.sortOrder, active: category.active });
+      await createExpenseCategoryMutation.mutate({
+        name: category.name,
+        color: category.color,
+        sortOrder: category.sortOrder,
+        active: category.active,
+      });
       pushToast({ message: 'Статья расхода создана.', tone: 'success' });
     }
     await refetchExpenseCategories();
@@ -1071,7 +1138,7 @@ export default function Settings() {
           file: profilePhotoFile,
           folder: 'avatars',
         });
-        nextPhotoUrl = uploadResult.url;
+        nextPhotoUrl = uploadResult.fileName;
       }
 
       await updatePersonalProfileMutation.mutate({
@@ -1137,13 +1204,16 @@ export default function Settings() {
   }, [changeOwnPasswordMutation, passwordForm]);
 
   const clearCompanyMessages = useCallback(() => {
-    setCompanyError(null);
-    setCompanySuccess(null);
+    setCompanyValidationErrors({});
   }, []);
 
   const updateCompanyForm = useCallback((patch: Partial<CompanySettingsFormValues>) => {
     clearCompanyMessages();
     setCompanyFormDraft((prev) => ({ ...(prev ?? companyBaseForm), ...patch }));
+    setCompanyValidationErrors((prev) => ({
+      ...prev,
+      ...(patch.centerName !== undefined ? { centerName: false } : {}),
+    }));
   }, [clearCompanyMessages, companyBaseForm]);
 
   const handleWorkingDayToggle = useCallback((day: WorkingDayValue) => {
@@ -1161,18 +1231,21 @@ export default function Settings() {
           .filter((value) => selectedDays.includes(value)),
       };
     });
+    setCompanyValidationErrors((prev) => ({ ...prev, workingDays: false }));
   }, [clearCompanyMessages, companyBaseForm]);
 
   const handleSaveCompanySettings = useCallback(async () => {
     clearCompanyMessages();
 
     if (!companyForm.centerName.trim()) {
-      setCompanyError('Укажите название центра.');
+      setCompanyValidationErrors({ centerName: true });
+      pushToast({ message: 'Укажите название центра.', tone: 'error' });
       return;
     }
 
     if (companyForm.workingDays.length === 0) {
-      setCompanyError('Выберите хотя бы один рабочий день.');
+      setCompanyValidationErrors({ workingDays: true });
+      pushToast({ message: 'Выберите хотя бы один рабочий день.', tone: 'error' });
       return;
     }
 
@@ -1181,7 +1254,7 @@ export default function Settings() {
 
       if (companyLogoFile) {
         const uploadResult = await uploadCompanyLogoMutation.mutate(companyLogoFile);
-        nextLogoUrl = uploadResult.url;
+        nextLogoUrl = uploadResult.logoUrl ?? nextLogoUrl;
       }
 
       await updateCompanyMutation.mutate(
@@ -1191,16 +1264,20 @@ export default function Settings() {
         })
       );
 
+      setCompanyFormDraft((prev) => ({ ...(prev ?? companyBaseForm), logoUrl: nextLogoUrl }));
       await refetchCompanySettings();
       setCompanyFormDraft(null);
       setCompanyLogoFile(null);
-      setCompanySuccess('Настройки компании сохранены.');
-    } catch (error) {
-      setCompanyError(getErrorMessage(error, 'Не удалось сохранить настройки компании. Попробуйте ещё раз.'));
+      setCompanyLogoPreviewUrl(null);
+      setCompanyValidationErrors({});
+      pushToast({ message: 'Настройки компании сохранены.', tone: 'success' });
+    } catch {
+      // API interceptor and mutation hooks already show error toasts.
     }
   }, [
     clearCompanyMessages,
     companyForm,
+    companyBaseForm,
     companyLogoFile,
     refetchCompanySettings,
     updateCompanyMutation,
@@ -1224,15 +1301,22 @@ export default function Settings() {
     setIsIntegrationModalOpen(true);
   };
 
-  const companyLogoDisplayUrl = companyForm.logoUrl;
+  const companyLogoDisplayUrl = companyLogoPreviewUrl || resolvedCompanyLogoUrl;
   const isCompanySubmitting = updateCompanyMutation.loading || uploadCompanyLogoMutation.loading;
+  const tenantStatusLabel = TENANT_STATUS_OPTIONS.find((option) => option.value === tenantForm.status)?.label || tenantForm.status || 'Не указано';
+  const tenantPlanLabel = TENANT_PLAN_OPTIONS.find((option) => option.value === tenantForm.plan)?.label || tenantForm.plan || 'Не указано';
+  const tenantSubdomain = tenantData?.subdomain?.trim() || '';
+  const tenantDomainHost = tenantSubdomain ? `${tenantSubdomain}.1edu.kz` : '';
+  const tenantDomainUrl = tenantDomainHost ? `https://${tenantDomainHost}` : '';
+  const hasUnlimitedStudents = tenantData?.maxStudents == null;
+  const hasUnlimitedStaff = tenantData?.maxStaff == null;
 
   return (
     <div className="space-y-6">
       {/* Tabs */}
       <div className="crm-tab-shell">
         <div className="flex gap-2 flex-wrap">
-          {SETTINGS_TABS.map(tab => (
+          {visibleSettingsTabs.map(tab => (
             <button
               key={tab.value}
               onClick={() => setActiveTab(tab.value as SettingsTab)}
@@ -1248,168 +1332,124 @@ export default function Settings() {
       {activeTab === 'user' && (
         <div className="space-y-6">
           <div className="crm-surface p-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Текущий тенант и тариф</h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Данные читаются и сохраняются через `GET/PUT /api/v1/tenants/{'{id}'}` для текущего tenant context.
-                </p>
-              </div>
+            <div className="flex justify-end">
               <div className="flex flex-wrap gap-2">
                 {tenantId ? (
-                  <Button variant="outline" onClick={() => void refetchTenant()} disabled={tenantLoading || updateTenantMutation.loading}>
+                  <Button variant="outline" onClick={() => void refetchTenant()} disabled={tenantLoading}>
                     {tenantLoading ? 'Обновляем...' : 'Обновить'}
                   </Button>
                 ) : null}
-                <Button onClick={() => void handleSaveTenant()} disabled={!tenantId || tenantLoading || updateTenantMutation.loading}>
-                  {updateTenantMutation.loading ? 'Сохраняем...' : 'Сохранить'}
-                </Button>
+                <Button onClick={() => setIsTariffModalOpen(true)}>Обновить тариф</Button>
               </div>
             </div>
 
-            {(tenantLoadError || tenantError || tenantSuccess) && (
+            {tenantLoadError && (
               <div className="mt-4 space-y-2">
                 {tenantLoadError && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
                     Не удалось загрузить данные тенанта: {tenantLoadError}
                   </div>
                 )}
-                {tenantError && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {tenantError}
-                  </div>
-                )}
-                {tenantSuccess && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    {tenantSuccess}
-                  </div>
-                )}
               </div>
             )}
 
-            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div>
-                <p className="text-sm text-gray-500">Tenant ID</p>
-                <p className="text-sm font-semibold text-gray-900 break-all">
-                  {tenantData?.id || tenantId || 'Не найден'}
-                </p>
+            <div className="mt-6 rounded-2xl border border-[#dbe2e8] bg-linear-to-br from-[#f7faff] to-white p-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#5d6676]">Текущий план</p>
+                  <p className="mt-1 text-2xl font-bold text-[#1f2530]">{tenantPlanLabel}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-[#edf3ff] px-3 py-1 text-xs font-semibold text-[#315fd0]">Статус: {tenantStatusLabel}</span>
+                  <span className="rounded-full bg-[#f0fdf4] px-3 py-1 text-xs font-semibold text-[#2d7a4b]">{TIMEZONES.find((option) => option.value === tenantForm.timezone)?.label || tenantForm.timezone || 'Часовой пояс не указан'}</span>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-gray-500">Субдомен</p>
-                <p className="text-lg font-semibold text-gray-900">{tenantData?.subdomain || 'Не указано'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Триал до</p>
-                <p className="text-lg font-semibold text-gray-900">{formatIsoDate(tenantData?.trialEndsAt)}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Лимит учеников</p>
-                <p className="text-lg font-semibold text-gray-900">{tenantData?.maxStudents ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Лимит сотрудников</p>
-                <p className="text-lg font-semibold text-gray-900">{tenantData?.maxStaff ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Создан</p>
-                <p className="text-lg font-semibold text-gray-900">{formatIsoDate(tenantData?.createdAt)}</p>
+
+              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div>
+                  <p className="text-xs text-[#7c8796]">Tenant ID</p>
+                  <p className="mt-1 text-sm font-semibold text-[#1f2530] break-all">{tenantData?.id || tenantId || 'Не найден'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[#7c8796]">Субдомен</p>
+                  <div className="mt-1">
+                    {tenantDomainUrl ? (
+                      <a
+                        href={tenantDomainUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex rounded-full bg-[#edf3ff] px-3 py-1 text-sm font-semibold text-[#1d4ed8] underline-offset-2 transition-colors hover:bg-[#dbe8ff] hover:underline"
+                      >
+                        {tenantDomainHost}
+                      </a>
+                    ) : (
+                      <p className="text-sm font-semibold text-[#1f2530]">Не указано</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-[#7c8796]">Создан</p>
+                  <p className="mt-1 text-sm font-semibold text-[#1f2530]">{formatIsoDate(tenantData?.createdAt)}</p>
+                </div>
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-              <Input
-                label="Название тенанта"
-                value={tenantForm.name}
-                onChange={(event) => updateTenantForm({ name: event.target.value })}
-                placeholder="Введите название"
-              />
-              <Input
-                label="Email"
-                type="email"
-                value={tenantForm.email}
-                onChange={(event) => updateTenantForm({ email: event.target.value })}
-                placeholder="Введите email"
-              />
-              <Input
-                label="Телефон"
-                value={tenantForm.phone}
-                onChange={(event) => updateTenantForm({ phone: event.target.value })}
-                placeholder="Введите телефон"
-              />
-              <Input
-                label="Контактное лицо"
-                value={tenantForm.contactPerson}
-                onChange={(event) => updateTenantForm({ contactPerson: event.target.value })}
-                placeholder="Введите контактное лицо"
-              />
-              <Select
-                label="Статус"
-                value={tenantForm.status}
-                onChange={(event) => updateTenantForm({ status: event.target.value })}
-              >
-                {TENANT_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Тариф"
-                value={tenantForm.plan}
-                onChange={(event) => updateTenantForm({ plan: event.target.value })}
-              >
-                {TENANT_PLAN_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Часовой пояс"
-                value={tenantForm.timezone}
-                onChange={(event) => updateTenantForm({ timezone: event.target.value })}
-              >
-                {TIMEZONES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <Input
-                label="Триал до"
-                type="date"
-                value={tenantForm.trialEndsAt}
-                onChange={(event) => updateTenantForm({ trialEndsAt: event.target.value })}
-              />
-              <Input
-                label="Лимит учеников"
-                type="number"
-                value={tenantForm.maxStudents}
-                onChange={(event) => updateTenantForm({ maxStudents: event.target.value })}
-                placeholder="Например, 1000"
-              />
-              <Input
-                label="Лимит сотрудников"
-                type="number"
-                value={tenantForm.maxStaff}
-                onChange={(event) => updateTenantForm({ maxStaff: event.target.value })}
-                placeholder="Например, 50"
-              />
-            </div>
+            <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <div className="rounded-2xl border border-[#dbe2e8] bg-white p-5">
+                <h3 className="text-sm font-semibold text-[#1f2530]">Контактные данные</h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Название тенанта</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">{tenantForm.name || 'Не указано'}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Email</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">{tenantForm.email || 'Не указано'}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Телефон</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">{tenantForm.phone || 'Не указано'}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Контактное лицо</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">{tenantForm.contactPerson || 'Не указано'}</dd>
+                  </div>
+                </dl>
+              </div>
 
-            <div className="mt-5">
-              <label className="mb-2 block text-sm font-medium text-gray-700">Заметки</label>
-              <textarea
-                value={tenantForm.notes}
-                onChange={(event) => updateTenantForm({ notes: event.target.value })}
-                rows={4}
-                className="w-full rounded-xl border border-[#dbe2e8] bg-white px-4 py-3 text-sm text-gray-900 outline-none transition-colors focus:border-[#25c4b8] focus:ring-2 focus:ring-[#b9f0ea]"
-                placeholder="Внутренние заметки по тенанту"
-              />
+              <div className="rounded-2xl border border-[#dbe2e8] bg-white p-5">
+                <h3 className="text-sm font-semibold text-[#1f2530]">Лимиты и период</h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Триал до</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">{formatIsoDate(tenantData?.trialEndsAt)}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Лимит учеников</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">
+                      {hasUnlimitedStudents ? (
+                        <span className="inline-flex rounded-full bg-[#fff3dc] px-3 py-1 text-xs font-semibold text-[#b45309]">Безлимит</span>
+                      ) : (
+                        tenantData?.maxStudents
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[#7c8796]">Лимит сотрудников</dt>
+                    <dd className="text-right font-medium text-[#1f2530]">
+                      {hasUnlimitedStaff ? (
+                        <span className="inline-flex rounded-full bg-[#fff3dc] px-3 py-1 text-xs font-semibold text-[#b45309]">Безлимит</span>
+                      ) : (
+                        tenantData?.maxStaff
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
             </div>
 
             <div className="mt-6 rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
-              Профиль тенанта теперь обновляется через `PUT /api/v1/tenants/{'{id}'}`. При этом отдельного публичного billing-flow для покупки или оплаты тарифа tenant-пользователем в документации всё ещё нет.
+              Этот блок носит информационный характер. Изменение тенанта и тарифа выполняется только через backend-процессы.
             </div>
           </div>
 
@@ -1418,7 +1458,7 @@ export default function Settings() {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Личные данные</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Профиль загружается и сохраняется через `GET/PUT /api/v1/auth/profile`.
+                  Здесь можно обновить данные профиля и сохранить изменения.
                 </p>
               </div>
               <Button
@@ -1454,10 +1494,10 @@ export default function Settings() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Фото</label>
                 <div className="flex items-center gap-4">
                   <div
-                    className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-[#dbe2e8] bg-teal-100 text-teal-700 font-semibold text-xl"
-                    style={personalProfileForm.photoUrl ? { backgroundImage: `url(${personalProfileForm.photoUrl})`, backgroundPosition: 'center', backgroundSize: 'cover' } : undefined}
+                    className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-[#dbe2e8] bg-[#edf3ff] text-[#315fd0] font-semibold text-xl"
+                    style={resolvedProfilePhotoUrl ? { backgroundImage: `url(${resolvedProfilePhotoUrl})`, backgroundPosition: 'center', backgroundSize: 'cover' } : undefined}
                   >
-                    {personalProfileForm.photoUrl ? '' : personalProfileForm.firstName.charAt(0) || personalProfileForm.email.charAt(0) || 'U'}
+                    {resolvedProfilePhotoUrl ? '' : personalProfileForm.firstName.charAt(0) || personalProfileForm.email.charAt(0) || 'U'}
                   </div>
                   <div className="space-y-2">
                     <input
@@ -1517,7 +1557,7 @@ export default function Settings() {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Смена пароля</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Пароль меняется через `POST /api/v1/auth/profile/change-password`.
+                  Используйте эту форму, чтобы сменить пароль от аккаунта.
                 </p>
               </div>
               <Button onClick={() => void handleChangeOwnPassword()} disabled={changeOwnPasswordMutation.loading}>
@@ -1571,33 +1611,18 @@ export default function Settings() {
       {activeTab === 'company' && (
         <div className="space-y-6">
           <div className="crm-surface p-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Настройки компании</h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Данные этой вкладки теперь читаются и сохраняются через `GET/PUT /api/v1/settings`.
-                </p>
-              </div>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">Настройки компании</h2>
               <Button onClick={() => void handleSaveCompanySettings()} disabled={isCompanySubmitting}>
                 {isCompanySubmitting ? 'Сохраняем...' : 'Сохранить настройки'}
               </Button>
             </div>
 
-            {(companySettingsLoadError || companyError || companySuccess) && (
+            {companySettingsLoadError && (
               <div className="mt-4 space-y-2">
                 {companySettingsLoadError && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
                     Не удалось загрузить текущие настройки: {companySettingsLoadError}
-                  </div>
-                )}
-                {companyError && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {companyError}
-                  </div>
-                )}
-                {companySuccess && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    {companySuccess}
                   </div>
                 )}
               </div>
@@ -1614,6 +1639,7 @@ export default function Settings() {
                 label="Название центра"
                 value={companyForm.centerName}
                 onChange={(event) => updateCompanyForm({ centerName: event.target.value })}
+                error={Boolean(companyValidationErrors.centerName)}
               />
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700">Логотип компании</label>
@@ -1656,10 +1682,10 @@ export default function Settings() {
                 value={companyForm.directorName}
                 onChange={(event) => updateCompanyForm({ directorName: event.target.value })}
               />
-              <Input
+              <PhoneInputWithCountry
                 label="Рабочий телефон"
                 value={companyForm.workPhone}
-                onChange={(event) => updateCompanyForm({ workPhone: event.target.value })}
+                onChange={(nextValue) => updateCompanyForm({ workPhone: nextValue })}
               />
               <Input
                 label="Корпоративный email"
@@ -1813,13 +1839,17 @@ export default function Settings() {
 
             <div className="mt-5">
               <p className="mb-2 text-sm font-medium text-[#5d6676]">Рабочие дни</p>
-              <div className="flex flex-wrap gap-2">
+              <div className={`flex flex-wrap gap-2 rounded-xl border p-3 transition-colors ${
+                companyValidationErrors.workingDays
+                  ? 'border-red-300 bg-red-50/30'
+                  : 'border-transparent'
+              }`}>
                 {WORKING_DAY_OPTIONS.map((day) => (
                   <label
                     key={day.value}
                     className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
                       companyForm.workingDays.includes(day.value)
-                        ? 'border-[#25c4b8] bg-[#ecfbf8] text-[#16877f]'
+                        ? 'border-[#467aff] bg-[#edf3ff] text-[#315fd0]'
                         : 'border-[#dbe2e8] bg-white text-[#5d6676]'
                     }`}
                   >
@@ -1827,7 +1857,7 @@ export default function Settings() {
                       type="checkbox"
                       checked={companyForm.workingDays.includes(day.value)}
                       onChange={() => handleWorkingDayToggle(day.value)}
-                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                     />
                     {day.label}
                   </label>
@@ -1848,7 +1878,7 @@ export default function Settings() {
                     type="checkbox"
                     checked={companyForm.autoMarkAttendance}
                     onChange={(event) => updateCompanyForm({ autoMarkAttendance: event.target.checked })}
-                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                   />
                   <span className="text-sm font-medium text-gray-700">
                     Автоматически отмечать посещаемость по умолчанию
@@ -1875,7 +1905,7 @@ export default function Settings() {
                       type="checkbox"
                       checked={companyForm.smsEnabled}
                       onChange={(event) => updateCompanyForm({ smsEnabled: event.target.checked })}
-                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                     />
                     <span className="text-sm font-medium text-gray-700">SMS включены</span>
                   </label>
@@ -1884,7 +1914,7 @@ export default function Settings() {
                       type="checkbox"
                       checked={companyForm.emailEnabled}
                       onChange={(event) => updateCompanyForm({ emailEnabled: event.target.checked })}
-                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                      className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                     />
                     <span className="text-sm font-medium text-gray-700">Email включён</span>
                   </label>
@@ -1912,11 +1942,6 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="flex justify-end">
-            <Button onClick={() => void handleSaveCompanySettings()} disabled={isCompanySubmitting}>
-              {isCompanySubmitting ? 'Сохраняем...' : 'Сохранить настройки'}
-            </Button>
-          </div>
         </div>
       )}
 
@@ -1924,11 +1949,16 @@ export default function Settings() {
       {activeTab === 'access' && (
         <div className="crm-table-wrap overflow-hidden">
           <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
-            <div>
+            <div className="flex-1 pr-4">
               <h2 className="text-lg font-semibold text-gray-900">Пользователи</h2>
-              <p className="mt-1 text-sm text-[#6b7280]">
-                Показываются только пользователи текущего учебного центра.
-              </p>
+              <div className="mt-3 max-w-md">
+                <Input
+                  label="Поиск"
+                  value={usersSearch}
+                  onChange={(event) => setUsersSearch(event.target.value)}
+                  placeholder="Имя, логин или email"
+                />
+              </div>
             </div>
             <Button icon={Plus} onClick={handleCreateUser} disabled={!tenantId}>
               Добавить пользователя
@@ -1950,6 +1980,7 @@ export default function Settings() {
                 <tr>
                   <th className="crm-table-th">#</th>
                   <th className="crm-table-th">ФИО</th>
+                  <th className="crm-table-th">Логин</th>
                   <th className="crm-table-th">Email</th>
                   <th className="crm-table-th">Роль</th>
                   <th className="crm-table-th">Действия</th>
@@ -1958,13 +1989,13 @@ export default function Settings() {
               <tbody className="crm-table-body">
                 {usersLoading ? (
                   <tr className="crm-table-row">
-                    <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                    <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                       Загружаем пользователей текущего УЦ...
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr className="crm-table-row">
-                    <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                    <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                       {tenantId
                         ? 'Пользователи этого учебного центра не найдены.'
                         : 'Нет tenant-контекста для выборки пользователей.'}
@@ -1975,9 +2006,10 @@ export default function Settings() {
                     <tr key={user.id} className="crm-table-row">
                       <td className="px-6 py-4 text-sm text-gray-700">{index + 1}</td>
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.name}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700">{user.username}</td>
                       <td className="px-6 py-4 text-sm text-gray-700">{user.email}</td>
                       <td className="px-6 py-4">
-                        <span className="rounded-lg bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700">
+                        <span className="rounded-lg bg-[#edf3ff] px-3 py-1 text-xs font-semibold text-[#315fd0]">
                           {user.displayRole}
                         </span>
                       </td>
@@ -1990,7 +2022,7 @@ export default function Settings() {
                             className={`${
                               editingUserId === user.id
                                 ? 'cursor-wait text-gray-300'
-                                : 'text-teal-600 hover:text-teal-700'
+                                : 'text-[#3568eb] hover:text-[#2f5fd0]'
                             }`}
                             title="Редактировать пользователя"
                           >
@@ -2081,7 +2113,7 @@ export default function Settings() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleEditRole(role)}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
@@ -2153,7 +2185,7 @@ export default function Settings() {
                         <button
                           type="button"
                           onClick={() => handleEditRoom(room)}
-                          className="text-teal-600 hover:text-teal-700"
+                          className="text-[#3568eb] hover:text-[#2f5fd0]"
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -2244,7 +2276,7 @@ export default function Settings() {
                               });
                               setIsAddAttendanceStatusModalOpen(true);
                             }}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                             title="Редактировать статус"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -2291,19 +2323,20 @@ export default function Settings() {
                     <th className="crm-table-th">Название</th>
                     <th className="crm-table-th">Цвет</th>
                     <th className="crm-table-th">Порядок</th>
+                    <th className="crm-table-th">Активен</th>
                     <th className="crm-table-th">Действия</th>
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
                   {staffStatusesLoading ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Загружаем статусы сотрудников...
                       </td>
                     </tr>
                   ) : staffStatuses.length === 0 ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Кастомные статусы сотрудников пока не настроены.
                       </td>
                     </tr>
@@ -2319,14 +2352,21 @@ export default function Settings() {
                           />
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-700">{status.sortOrder}</td>
+                        <td className="px-6 py-4 text-sm text-gray-700">{status.active ? 'Да' : 'Нет'}</td>
                         <td className="flex items-center gap-2 px-6 py-4">
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedStaffStatus({ id: status.id, name: status.name, color: status.color, sortOrder: status.sortOrder });
+                              setSelectedStaffStatus({
+                                id: status.id,
+                                name: status.name,
+                                color: status.color,
+                                sortOrder: status.sortOrder,
+                                active: status.active,
+                              });
                               setIsAddStaffStatusModalOpen(true);
                             }}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                             title="Редактировать статус"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -2408,7 +2448,7 @@ export default function Settings() {
                               });
                               setIsAddPaymentSourceModalOpen(true);
                             }}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                             title="Редактировать источник"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -2449,6 +2489,7 @@ export default function Settings() {
                   <tr>
                     <th className="crm-table-th">#</th>
                     <th className="crm-table-th">Название</th>
+                    <th className="crm-table-th">Цвет</th>
                     <th className="crm-table-th">Порядок</th>
                     <th className="crm-table-th">Активна</th>
                     <th className="crm-table-th">Действия</th>
@@ -2457,13 +2498,13 @@ export default function Settings() {
                 <tbody className="crm-table-body">
                   {incomeCategoriesLoading ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Загружаем статьи доходов...
                       </td>
                     </tr>
                   ) : incomeCategories.length === 0 ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Статьи доходов пока не настроены.
                       </td>
                     </tr>
@@ -2472,16 +2513,28 @@ export default function Settings() {
                       <tr key={category.id} className="crm-table-row">
                         <td className="px-6 py-4 text-sm text-gray-700">{index + 1}</td>
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">{category.name}</td>
+                        <td className="px-6 py-4">
+                          <span
+                            className="inline-block h-5 w-5 rounded"
+                            style={{ backgroundColor: category.color }}
+                          />
+                        </td>
                         <td className="px-6 py-4 text-sm text-gray-700">{category.sortOrder}</td>
                         <td className="px-6 py-4 text-sm text-gray-700">{category.active ? 'Да' : 'Нет'}</td>
                         <td className="flex items-center gap-2 px-6 py-4">
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedIncomeCategory({ id: category.id, name: category.name, sortOrder: category.sortOrder, active: category.active });
+                              setSelectedIncomeCategory({
+                                id: category.id,
+                                name: category.name,
+                                color: category.color,
+                                sortOrder: category.sortOrder,
+                                active: category.active,
+                              });
                               setIsAddIncomeCategoryModalOpen(true);
                             }}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                             title="Редактировать статью"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -2522,6 +2575,7 @@ export default function Settings() {
                   <tr>
                     <th className="crm-table-th">#</th>
                     <th className="crm-table-th">Название</th>
+                    <th className="crm-table-th">Цвет</th>
                     <th className="crm-table-th">Порядок</th>
                     <th className="crm-table-th">Активна</th>
                     <th className="crm-table-th">Действия</th>
@@ -2530,13 +2584,13 @@ export default function Settings() {
                 <tbody className="crm-table-body">
                   {expenseCategoriesLoading ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Загружаем статьи расходов...
                       </td>
                     </tr>
                   ) : expenseCategories.length === 0 ? (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="px-6 py-6 text-sm text-[#556070]">
+                      <td colSpan={6} className="px-6 py-6 text-sm text-[#556070]">
                         Статьи расходов пока не настроены.
                       </td>
                     </tr>
@@ -2545,16 +2599,28 @@ export default function Settings() {
                       <tr key={category.id} className="crm-table-row">
                         <td className="px-6 py-4 text-sm text-gray-700">{index + 1}</td>
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">{category.name}</td>
+                        <td className="px-6 py-4">
+                          <span
+                            className="inline-block h-5 w-5 rounded"
+                            style={{ backgroundColor: category.color }}
+                          />
+                        </td>
                         <td className="px-6 py-4 text-sm text-gray-700">{category.sortOrder}</td>
                         <td className="px-6 py-4 text-sm text-gray-700">{category.active ? 'Да' : 'Нет'}</td>
                         <td className="flex items-center gap-2 px-6 py-4">
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedExpenseCategory({ id: category.id, name: category.name, sortOrder: category.sortOrder, active: category.active });
+                              setSelectedExpenseCategory({
+                                id: category.id,
+                                name: category.name,
+                                color: category.color,
+                                sortOrder: category.sortOrder,
+                                active: category.active,
+                              });
                               setIsAddExpenseCategoryModalOpen(true);
                             }}
-                            className="text-teal-600 hover:text-teal-700"
+                            className="text-[#3568eb] hover:text-[#2f5fd0]"
                             title="Редактировать статью"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -2582,14 +2648,14 @@ export default function Settings() {
         <div className="crm-surface p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-3">Рекомендованные</h2>
           <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            В текущей backend-документации нет публичных endpoints для сохранения интеграций. Вкладка оставлена как каталог доступных подключений без ложной локальной “сохранённости”.
+            Подключения в этом разделе пока доступны только для просмотра. Сохранение параметров интеграций будет добавлено после расширения серверной части.
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {INTEGRATIONS.map(integration => (
               <button
                 key={integration.id}
                 onClick={() => handleIntegrationClick(integration)}
-                className="p-4 border-2 border-gray-200 rounded-2xl hover:border-teal-500 transition-colors text-left"
+                className="p-4 border-2 border-gray-200 rounded-2xl transition-colors text-left hover:border-[#467aff]"
               >
                 <h3 className="font-semibold text-gray-900 mb-2">{integration.name}</h3>
                 <p className="text-sm text-gray-600">{integration.description}</p>
@@ -2598,6 +2664,50 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <Modal
+        isOpen={isTariffModalOpen}
+        onClose={() => setIsTariffModalOpen(false)}
+        title="Тарифы и цены"
+        footer={
+          <Button variant="outline" onClick={() => setIsTariffModalOpen(false)}>
+            Закрыть
+          </Button>
+        }
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {TARIFFS.map((tariff) => (
+            <div
+              key={tariff.id}
+              className={`rounded-2xl border p-4 ${
+                tariff.isPopular ? 'border-[#467aff] bg-[#edf3ff]' : 'border-[#dbe2e8] bg-white'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-[#1f2530]">{tariff.name}</h3>
+                  <p className="mt-1 text-sm text-[#5d6676]">{tariff.description}</p>
+                </div>
+                {tariff.isPopular ? (
+                  <span className="rounded-full bg-[#467aff] px-2.5 py-1 text-xs font-semibold text-white">Популярный</span>
+                ) : null}
+              </div>
+              <p className="mt-4 text-2xl font-bold text-[#1f2530]">{formatKztAmount(tariff.price)}</p>
+              <p className="text-xs text-[#5d6676]">в месяц • скидка до {tariff.discount}%</p>
+
+              <ul className="mt-4 space-y-1.5 text-sm text-[#3d4654]">
+                {tariff.features.map((feature) => (
+                  <li key={feature}>• {feature}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
+          Для смены тарифа обратитесь к администратору или в поддержку. Эта кнопка показывает доступные планы и цены.
+        </div>
+      </Modal>
 
       <AddUserModal
         key={`user-${selectedUser?.id ?? 'new'}-${isAddUserModalOpen ? 'open' : 'closed'}`}
@@ -2609,7 +2719,8 @@ export default function Settings() {
         onSave={handleSaveUser}
         initialValue={selectedUser}
         permissionsLoaded={selectedUser?.permissionsLoaded ?? true}
-        roleOptions={AUTH_USER_ROLE_OPTIONS}
+        roleOptions={authUserRoleOptions}
+        availableStaff={availableStaffForAuth}
         availablePermissions={availablePermissions}
         isSubmitting={createUserMutation.loading || updateUserMutation.loading}
       />

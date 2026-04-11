@@ -1,26 +1,42 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Edit2, Eye, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+/* eslint-disable @next/next/no-img-element */
+import { useEffect, useMemo, useState } from 'react';
+import { Edit2, FileText, Loader2, Plus, Search, Trash2, User } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
-import { StudentDetailModal } from '@/components/features/students/StudentDetailModal';
 import {
   STUDENT_GENDER_LABELS,
   STUDENT_STATUS_COLORS,
   STUDENT_STATUS_LABELS,
   STUDENT_STATUS_OPTIONS,
 } from '@/constants/student';
+import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
 import { studentsService, type CreateStudentRequest, type UpdateStudentRequest } from '@/lib/api';
 import { useApi, useMutation, usePaginatedApi } from '@/hooks/useApi';
 import type { StudentFilters, StudentFormValues, StudentListItem } from '@/types/student';
 
+function splitFullName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+
+  return {
+    lastName: parts[0] ?? '',
+    firstName: parts[1] ?? '',
+    middleName: parts.slice(2).join(' '),
+  };
+}
+
 function toFormValues(student: StudentListItem): StudentFormValues {
+  const parsedName = (!student.firstName && !student.lastName && student.fullName)
+    ? splitFullName(student.fullName)
+    : null;
+
   return {
     fullName: student.fullName,
-    firstName: student.firstName,
-    lastName: student.lastName,
-    middleName: student.middleName,
+    firstName: student.firstName || parsedName?.firstName || '',
+    lastName: student.lastName || parsedName?.lastName || '',
+    middleName: student.middleName || parsedName?.middleName || '',
     customer: student.customer,
     studentPhoto: student.studentPhoto,
     email: student.email,
@@ -67,13 +83,40 @@ function getDisplayName(student: {
   return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim();
 }
 
+function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullName: string }) {
+  const studentPhotoUrl = useResolvedFileUrl(studentPhoto);
+  const [hasImageError, setHasImageError] = useState(false);
+
+  useEffect(() => {
+    setHasImageError(false);
+  }, [studentPhotoUrl]);
+
+  if (studentPhotoUrl && !hasImageError) {
+    return (
+      <img
+        src={studentPhotoUrl}
+        alt={fullName || 'Фото ученика'}
+        className="h-10 w-10 rounded-full border border-gray-200 object-cover"
+        onError={() => setHasImageError(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-gray-100 text-gray-400"
+      aria-label={fullName ? `Нет фото: ${fullName}` : 'Нет фото'}
+    >
+      <User className="h-4 w-4" />
+    </div>
+  );
+}
+
 export default function Students() {
   const [filters, setFilters] = useState<StudentFilters>({
     search: '',
     status: 'all',
   });
-  const [selectedStudent, setSelectedStudent] = useState<StudentListItem | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [modalState, setModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -190,19 +233,12 @@ export default function Students() {
   };
 
   const openEditModal = (student: StudentListItem) => {
-    setSelectedStudent(student);
-    setIsDetailModalOpen(false);
     setModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
       studentId: student.id,
       initialValues: toFormValues(student),
     }));
-  };
-
-  const handleViewStudent = (student: StudentListItem) => {
-    setSelectedStudent(student);
-    setIsDetailModalOpen(true);
   };
 
   const handleSaveStudent = async (data: CreateStudentRequest | UpdateStudentRequest) => {
@@ -219,15 +255,12 @@ export default function Students() {
     await refetch();
   };
 
-  const handleDeleteStudent = async (student?: StudentListItem | null) => {
-    const target = student ?? selectedStudent;
-    if (!target || !confirm('Вы уверены, что хотите удалить ученика?')) {
+  const handleDeleteStudent = async (student: StudentListItem) => {
+    if (!confirm('Вы уверены, что хотите удалить ученика?')) {
       return;
     }
 
-    await deleteMutation.mutate(target.id);
-    setIsDetailModalOpen(false);
-    setSelectedStudent(null);
+    await deleteMutation.mutate(student.id);
     await refetch();
   };
 
@@ -290,7 +323,7 @@ export default function Students() {
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -298,6 +331,7 @@ export default function Students() {
               <thead className="crm-table-head">
                 <tr>
                   <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Фото</th>
                   <th className="crm-table-th">Ученик</th>
                   <th className="crm-table-th">Контакты</th>
                   <th className="crm-table-th">Заказчик / родитель</th>
@@ -312,6 +346,9 @@ export default function Students() {
                   students.map((student, index) => (
                     <tr key={student.id} className="crm-table-row">
                       <td className="crm-table-cell">{page * 20 + index + 1}</td>
+                      <td className="crm-table-cell">
+                        <StudentAvatar studentPhoto={student.studentPhoto} fullName={student.fullName} />
+                      </td>
                       <td className="crm-table-cell">
                         <div className="text-sm font-medium text-gray-900">{student.fullName}</div>
                         <div className="text-xs text-gray-500">
@@ -354,19 +391,19 @@ export default function Students() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-2">
+                          <Link
+                            href={`/students/${student.id}`}
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
+                            title="Карточка ученика"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Link>
                           <button
                             onClick={() => openEditModal(student)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-teal-50 hover:text-teal-600"
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#edf3ff] hover:text-[#3568eb]"
                             title="Редактировать"
                           >
                             <Edit2 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleViewStudent(student)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-sky-50 hover:text-sky-600"
-                            title="Просмотр"
-                          >
-                            <Eye className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => void handleDeleteStudent(student)}
@@ -381,7 +418,7 @@ export default function Students() {
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Ученики не найдены
                     </td>
                   </tr>
@@ -425,19 +462,6 @@ export default function Students() {
         isSubmitting={createMutation.loading || updateMutation.loading}
         title={modalState.studentId ? 'Редактировать ученика' : 'Добавить ученика'}
         includeStatus={Boolean(modalState.studentId)}
-      />
-
-      <StudentDetailModal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        student={selectedStudent}
-        onEdit={() => {
-          if (selectedStudent) {
-            openEditModal(selectedStudent);
-          }
-        }}
-        onDelete={() => void handleDeleteStudent()}
-        isMutating={deleteMutation.loading}
       />
     </div>
   );

@@ -127,7 +127,7 @@ export default function AttendancePage() {
     ]);
 
     const lessons = lessonsResponse.data.content ?? [];
-    const groupIds = Array.from(new Set(lessons.map((lesson) => lesson.groupId).filter(Boolean)));
+    const groupIds = Array.from(new Set(lessons.map((lesson) => lesson.groupId).filter((groupId): groupId is string => Boolean(groupId))));
 
     const [groupEntries, attendanceEntries] = await Promise.all([
       Promise.all(
@@ -342,7 +342,7 @@ export default function AttendancePage() {
       <div className="crm-table-wrap overflow-hidden">
         {loading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <table className="min-w-full border-collapse">

@@ -1,14 +1,18 @@
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { ImagePlus, Upload } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
+import { PhoneInputWithCountry } from '@/components/ui/PhoneInputWithCountry';
 import {
   STUDENT_GENDER_OPTIONS,
   STUDENT_STATUS_OPTIONS,
 } from '@/constants/student';
+import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
 import { filesService, type CreateStudentRequest, type UpdateStudentRequest } from '@/lib/api';
+import { pushToast } from '@/lib/toast';
 import type { StudentFormValues } from '@/types/student';
 
 interface AddStudentModalProps {
@@ -44,10 +48,8 @@ function getDefaultValues(): StudentFormValues {
     grade: '',
     additionalInfo: '',
     contract: '',
-    discount: '',
     comment: '',
     stateOrderParticipant: false,
-    loyalty: '',
     additionalPhones: '',
     notes: '',
   };
@@ -79,16 +81,15 @@ export const AddStudentModal = ({
   includeStatus = false,
 }: AddStudentModalProps) => {
   const defaults = initialValues ?? getDefaultValues();
+  const photoInputId = useId();
 
-  const [fullName, setFullName] = useState(defaults.fullName);
   const [firstName, setFirstName] = useState(defaults.firstName);
   const [lastName, setLastName] = useState(defaults.lastName);
   const [middleName, setMiddleName] = useState(defaults.middleName);
   const [customer, setCustomer] = useState(defaults.customer);
-  const [studentPhoto] = useState(defaults.studentPhoto);
+  const studentPhoto = defaults.studentPhoto;
   const [email, setEmail] = useState(defaults.email);
   const [phone, setPhone] = useState(defaults.phone);
-  const [studentPhone, setStudentPhone] = useState(defaults.studentPhone);
   const [birthDate, setBirthDate] = useState(defaults.birthDate);
   const [gender, setGender] = useState(defaults.gender);
   const [status, setStatus] = useState(defaults.status);
@@ -100,23 +101,24 @@ export const AddStudentModal = ({
   const [grade, setGrade] = useState(defaults.grade);
   const [additionalInfo, setAdditionalInfo] = useState(defaults.additionalInfo);
   const [contract, setContract] = useState(defaults.contract);
-  const [discount, setDiscount] = useState(defaults.discount);
   const [comment, setComment] = useState(defaults.comment);
   const [stateOrderParticipant, setStateOrderParticipant] = useState(defaults.stateOrderParticipant);
-  const [loyalty, setLoyalty] = useState(defaults.loyalty);
   const [additionalPhones, setAdditionalPhones] = useState(defaults.additionalPhones);
   const [notes, setNotes] = useState(defaults.notes);
-  const [error, setError] = useState<string | null>(null);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
+  const resolvedStudentPhotoUrl = useResolvedFileUrl(studentPhoto);
+  const isLastNameInvalid = showValidationErrors && !lastName.trim();
+  const isFirstNameInvalid = showValidationErrors && !firstName.trim();
 
   const photoPreviewUrl = useMemo(() => {
     if (!selectedPhotoFile) {
-      return studentPhoto || '';
+      return resolvedStudentPhotoUrl;
     }
 
     return URL.createObjectURL(selectedPhotoFile);
-  }, [selectedPhotoFile, studentPhoto]);
+  }, [resolvedStudentPhotoUrl, selectedPhotoFile]);
 
   useEffect(() => {
     if (!selectedPhotoFile) {
@@ -128,6 +130,12 @@ export const AddStudentModal = ({
     };
   }, [photoPreviewUrl, selectedPhotoFile]);
 
+  useEffect(() => {
+    if (isOpen) {
+      setShowValidationErrors(false);
+    }
+  }, [isOpen]);
+
   const buildPayload = async (): Promise<CreateStudentRequest | UpdateStudentRequest> => {
     let uploadedPhotoUrl = studentPhoto.trim() || undefined;
 
@@ -135,7 +143,7 @@ export const AddStudentModal = ({
       setIsUploadingPhoto(true);
       try {
         const uploadResponse = await filesService.upload(selectedPhotoFile, 'avatars');
-        uploadedPhotoUrl = uploadResponse.data.url;
+        uploadedPhotoUrl = uploadResponse.data.fileName;
       } catch (uploadError) {
         throw new Error(getErrorMessage(uploadError) || 'Не удалось загрузить фото ученика.');
       } finally {
@@ -144,7 +152,7 @@ export const AddStudentModal = ({
     }
 
     return {
-      fullName: fullName.trim() || undefined,
+      fullName: [lastName.trim(), firstName.trim(), middleName.trim()].filter(Boolean).join(' ') || undefined,
       firstName: firstName.trim() || undefined,
       lastName: lastName.trim() || undefined,
       middleName: middleName.trim() || undefined,
@@ -153,7 +161,6 @@ export const AddStudentModal = ({
       studentPhoto: uploadedPhotoUrl,
       email: email.trim() || undefined,
       phone: phone.trim() || undefined,
-      studentPhone: studentPhone.trim() || undefined,
       birthDate: birthDate || undefined,
       gender: gender || undefined,
       parentName: parentName.trim() || undefined,
@@ -164,10 +171,8 @@ export const AddStudentModal = ({
       grade: grade.trim() || undefined,
       additionalInfo: additionalInfo.trim() || undefined,
       contract: contract.trim() || undefined,
-      discount: discount.trim() || undefined,
       comment: comment.trim() || undefined,
       stateOrderParticipant,
-      loyalty: loyalty.trim() || undefined,
       additionalPhones: additionalPhones
         .split(',')
         .map((value) => value.trim())
@@ -177,18 +182,25 @@ export const AddStudentModal = ({
   };
 
   const submit = async (handler: (data: CreateStudentRequest | UpdateStudentRequest) => Promise<void> | void) => {
-    setError(null);
-
-    if (!fullName.trim() && (!firstName.trim() || !lastName.trim())) {
-      setError('Укажите либо полное ФИО, либо отдельно имя и фамилию.');
+    if (!firstName.trim() || !lastName.trim()) {
+      setShowValidationErrors(true);
+      pushToast({
+        message: 'Заполните обязательные поля: фамилия и имя.',
+        tone: 'error',
+      });
       return;
     }
+
+    setShowValidationErrors(false);
 
     try {
       const payload = await buildPayload();
       await handler(payload);
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      pushToast({
+        message: getErrorMessage(submitError),
+        tone: 'error',
+      });
     }
   };
 
@@ -232,95 +244,92 @@ export const AddStudentModal = ({
           </Select>
         ) : null}
 
-        <Input
-          label="Полное ФИО"
-          value={fullName}
-          onChange={(event) => setFullName(event.target.value)}
-          placeholder="Можно указать полное ФИО одной строкой"
-        />
-
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Input
             label="Фамилия"
             value={lastName}
-            onChange={(event) => setLastName(event.target.value)}
+            onChange={(event) => {
+              setLastName(event.target.value);
+            }}
             placeholder="Иванов"
+            error={isLastNameInvalid}
           />
           <Input
             label="Имя"
             value={firstName}
-            onChange={(event) => setFirstName(event.target.value)}
+            onChange={(event) => {
+              setFirstName(event.target.value);
+            }}
             placeholder="Иван"
+            error={isFirstNameInvalid}
           />
           <Input
             label="Отчество"
+            labelSuffix="(опционально)"
             value={middleName}
             onChange={(event) => setMiddleName(event.target.value)}
             placeholder="Иванович"
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
-            label="Заказчик / customer"
-            value={customer}
-            onChange={(event) => setCustomer(event.target.value)}
-            placeholder="Заказчик или плательщик"
+        <div>
+          <label className="mb-2 block text-sm font-medium text-[#5d6676]">
+            Фото ученика
+            <span className="ml-1 text-[#8c95a3]">(опционально)</span>
+          </label>
+          <input
+            id={photoInputId}
+            type="file"
+            accept="image/*"
+            onChange={(event) => setSelectedPhotoFile(event.target.files?.[0] ?? null)}
+            className="sr-only"
           />
-          <div>
-            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Фото ученика</label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(event) => setSelectedPhotoFile(event.target.files?.[0] ?? null)}
-              className="block h-11 w-full rounded-xl border border-[#dbe2e8] bg-white px-3 py-2 text-sm text-[#3d4756] file:mr-3 file:rounded-lg file:border-0 file:bg-[#eef4f8] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-[#3d4756]"
-            />
-            {photoPreviewUrl ? (
-              <div className="mt-3 flex items-center gap-3 rounded-xl border border-[#e2e8ee] bg-[#f8fbfd] p-3">
+          <label
+            htmlFor={photoInputId}
+            className="flex min-h-34 cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#cad8ff] bg-[#f8fbff] p-4 transition-colors hover:border-[#467aff] hover:bg-[#f1f6ff]"
+          >
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[#dbe2e8] bg-white">
+              {photoPreviewUrl ? (
                 <img
                   src={photoPreviewUrl}
                   alt="Фото ученика"
-                  className="h-16 w-16 rounded-xl object-cover"
+                  className="h-full w-full object-cover"
                 />
-                <div className="text-sm text-[#5d6676]">
-                  <p className="font-medium text-[#273142]">
-                    {selectedPhotoFile ? selectedPhotoFile.name : 'Текущее фото'}
-                  </p>
-                  <p className="mt-1 text-xs text-[#7f8794]">
-                    Новое фото будет загружено при сохранении формы.
-                  </p>
-                </div>
+              ) : (
+                <ImagePlus className="h-8 w-8 text-[#7f92c4]" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-[#273142]">
+                {photoPreviewUrl ? 'Обновить фотографию' : 'Загрузить фотографию'}
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#467aff] px-3 py-2 text-sm font-semibold text-white">
+                <Upload className="h-4 w-4" />
+                Выбрать файл
               </div>
-            ) : (
-              <p className="mt-2 text-xs text-[#7f8794]">Фото пока не выбрано.</p>
-            )}
-          </div>
+            </div>
+          </label>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Input
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <PhoneInputWithCountry
             label="Телефон"
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={setPhone}
             placeholder="+7 777 000 00 00"
           />
-          <Input
-            label="Телефон ученика"
-            value={studentPhone}
-            onChange={(event) => setStudentPhone(event.target.value)}
-            placeholder="+7 777 111 11 11"
-          />
-          <Input
-            label="Доп. телефоны"
+          <PhoneInputWithCountry
+            label="Доп. телефон"
             value={additionalPhones}
-            onChange={(event) => setAdditionalPhones(event.target.value)}
-            placeholder="+7..., +7..."
+            onChange={setAdditionalPhones}
+            placeholder="+7 777 111 11 11"
           />
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Input
             label="Email"
+            labelSuffix="(опционально)"
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -328,12 +337,14 @@ export const AddStudentModal = ({
           />
           <Input
             label="Дата рождения"
+            labelSuffix="(опционально)"
             type="date"
             value={birthDate}
             onChange={(event) => setBirthDate(event.target.value)}
           />
           <Select
             label="Пол"
+            labelSuffix="(опционально)"
             value={gender}
             onChange={(event) => setGender(event.target.value as StudentFormValues['gender'])}
           >
@@ -349,14 +360,15 @@ export const AddStudentModal = ({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
             label="Родитель"
+            labelSuffix="(опционально)"
             value={parentName}
             onChange={(event) => setParentName(event.target.value)}
             placeholder="ФИО родителя"
           />
-          <Input
+          <PhoneInputWithCountry
             label="Телефон родителя"
             value={parentPhone}
-            onChange={(event) => setParentPhone(event.target.value)}
+            onChange={setParentPhone}
             placeholder="+7 777 222 22 22"
           />
         </div>
@@ -364,18 +376,21 @@ export const AddStudentModal = ({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Input
             label="Город"
+            labelSuffix="(опционально)"
             value={city}
             onChange={(event) => setCity(event.target.value)}
             placeholder="Алматы"
           />
           <Input
             label="Школа"
+            labelSuffix="(опционально)"
             value={school}
             onChange={(event) => setSchool(event.target.value)}
             placeholder="Школа №12"
           />
           <Input
             label="Класс"
+            labelSuffix="(опционально)"
             value={grade}
             onChange={(event) => setGrade(event.target.value)}
             placeholder="9"
@@ -384,29 +399,19 @@ export const AddStudentModal = ({
 
         <Input
           label="Адрес"
+          labelSuffix="(опционально)"
           value={address}
           onChange={(event) => setAddress(event.target.value)}
           placeholder="Улица, дом, квартира"
         />
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
           <Input
             label="Договор"
+            labelSuffix="(опционально)"
             value={contract}
             onChange={(event) => setContract(event.target.value)}
             placeholder="DOG-2026-001"
-          />
-          <Input
-            label="Скидка"
-            value={discount}
-            onChange={(event) => setDiscount(event.target.value)}
-            placeholder="10"
-          />
-          <Input
-            label="Лояльность"
-            value={loyalty}
-            onChange={(event) => setLoyalty(event.target.value)}
-            placeholder="GOLD"
           />
           <label className="flex items-end">
             <span className="flex h-11 w-full items-center gap-3 rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm text-[#3d4756]">
@@ -420,8 +425,21 @@ export const AddStudentModal = ({
           </label>
         </div>
 
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Input
+            label="Заказчик / customer"
+            labelSuffix="(опционально)"
+            value={customer}
+            onChange={(event) => setCustomer(event.target.value)}
+            placeholder="Заказчик или плательщик"
+          />
+        </div>
+
         <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700">Дополнительная информация</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Дополнительная информация
+            <span className="ml-1 text-[#8c95a3]">(опционально)</span>
+          </label>
           <textarea
             rows={3}
             value={additionalInfo}
@@ -432,7 +450,10 @@ export const AddStudentModal = ({
         </div>
 
         <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700">Комментарий</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Комментарий
+            <span className="ml-1 text-[#8c95a3]">(опционально)</span>
+          </label>
           <textarea
             rows={3}
             value={comment}
@@ -443,7 +464,10 @@ export const AddStudentModal = ({
         </div>
 
         <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700">Заметки</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Заметки
+            <span className="ml-1 text-[#8c95a3]">(опционально)</span>
+          </label>
           <textarea
             rows={3}
             value={notes}
@@ -452,12 +476,6 @@ export const AddStudentModal = ({
             className="crm-textarea resize-none"
           />
         </div>
-
-        {error ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        ) : null}
       </div>
     </Modal>
   );

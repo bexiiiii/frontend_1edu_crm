@@ -6,8 +6,11 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { notificationsService, type NotificationDto } from '@/lib/api';
 import { useApi, usePaginatedApi } from '@/hooks/useApi';
+import { getErrorMessage } from '@/lib/error-message';
+import { pushToast } from '@/lib/toast';
+import { useAuthStore } from '@/store/authStore';
 
-const PAGE_SIZE_OPTIONS = [20, 50, 100];
+const TABLE_PAGE_SIZE = 20;
 
 type NotificationStatus = 'PENDING' | 'SENT' | 'FAILED';
 type NotificationType = 'EMAIL' | 'SMS';
@@ -46,7 +49,7 @@ function getStatusBadge(status: string) {
 }
 
 export default function NotificationsPage() {
-  const [pageSize, setPageSize] = useState(20);
+  const { roles } = useAuthStore();
   const [filters, setFilters] = useState<{
     search: string;
     type: NotificationType | 'all';
@@ -57,6 +60,18 @@ export default function NotificationsPage() {
     status: 'all',
   });
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null);
+  const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
+  const [broadcastForm, setBroadcastForm] = useState({
+    subject: '',
+    body: '',
+    alsoEmail: true,
+  });
+  const [broadcastLoading, setBroadcastLoading] = useState(false);
+
+  const canBroadcastToAllUsers = useMemo(
+    () => roles.includes('TENANT_ADMIN') || roles.includes('SUPER_ADMIN'),
+    [roles]
+  );
 
   const {
     data: notifications,
@@ -66,6 +81,7 @@ export default function NotificationsPage() {
     totalPages,
     totalElements,
     setPage,
+    refetch,
   } = usePaginatedApi(
     (pageNum, size) =>
       notificationsService.getAll({
@@ -75,9 +91,49 @@ export default function NotificationsPage() {
         status: filters.status !== 'all' ? filters.status : undefined,
       }),
     0,
-    pageSize,
-    [filters.type, filters.status, pageSize]
+    TABLE_PAGE_SIZE,
+    [filters.type, filters.status]
   );
+
+  const handleBroadcast = async () => {
+    const subject = broadcastForm.subject.trim();
+    const body = broadcastForm.body.trim();
+
+    if (!subject) {
+      pushToast({ message: 'Укажите тему уведомления.', tone: 'warning' });
+      return;
+    }
+
+    if (!body) {
+      pushToast({ message: 'Введите текст уведомления.', tone: 'warning' });
+      return;
+    }
+
+    setBroadcastLoading(true);
+    try {
+      const response = await notificationsService.broadcast({
+        subject,
+        body,
+        alsoEmail: broadcastForm.alsoEmail,
+      });
+
+      pushToast({
+        tone: 'success',
+        message: `Уведомление отправлено. Получателей: ${response.data.recipients}.`,
+      });
+
+      setBroadcastForm({ subject: '', body: '', alsoEmail: true });
+      setIsBroadcastModalOpen(false);
+      await refetch();
+    } catch (error: unknown) {
+      pushToast({
+        tone: 'error',
+        message: getErrorMessage(error, 'Не удалось отправить уведомление всем пользователям.'),
+      });
+    } finally {
+      setBroadcastLoading(false);
+    }
+  };
 
   const {
     data: selectedNotification,
@@ -113,44 +169,24 @@ export default function NotificationsPage() {
     });
   }, [filters.search, notifications]);
 
-  const summary = useMemo(
-    () => ({
-      total: totalElements,
-      sent: notifications.filter((notification) => notification.status === 'SENT').length,
-      failed: notifications.filter((notification) => notification.status === 'FAILED').length,
-    }),
-    [notifications, totalElements]
-  );
-
-  const rangeStart = totalElements === 0 ? 0 : page * pageSize + 1;
-  const rangeEnd = Math.min((page + 1) * pageSize, totalElements);
+  const rangeStart = totalElements === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
+  const rangeEnd = Math.min((page + 1) * TABLE_PAGE_SIZE, totalElements);
 
   return (
     <div className="space-y-6">
       <div className="crm-surface p-6">
-        <h2 className="text-lg font-semibold text-[#202938]">Журнал уведомлений</h2>
-        <p className="mt-1 text-sm text-[#7f8794]">
-          Страница работает по документированным endpoint&apos;ам `GET /api/v1/notifications` и `GET /api/v1/notifications/{'{id}'}`.
-        </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-xl bg-[#f4f8fb] p-4">
-            <p className="text-sm text-[#7f8794]">Всего уведомлений</p>
-            <p className="mt-1 text-2xl font-bold text-[#1f2530]">{summary.total}</p>
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-[#202938]">Журнал уведомлений</h2>
           </div>
-          <div className="rounded-xl bg-[#e9faf7] p-4">
-            <p className="text-sm text-[#7f8794]">Отправлено на странице</p>
-            <p className="mt-1 text-2xl font-bold text-[#138f86]">{summary.sent}</p>
-          </div>
-          <div className="rounded-xl bg-[#fff1f1] p-4">
-            <p className="text-sm text-[#7f8794]">Ошибок на странице</p>
-            <p className="mt-1 text-2xl font-bold text-[#c34c4c]">{summary.failed}</p>
-          </div>
+          {canBroadcastToAllUsers ? (
+            <Button onClick={() => setIsBroadcastModalOpen(true)}>
+              Отправить всем
+            </Button>
+          ) : null}
         </div>
-      </div>
 
-      <div className="crm-surface p-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
@@ -188,21 +224,6 @@ export default function NotificationsPage() {
             <option value="SENT">Отправлено</option>
             <option value="FAILED">Ошибка</option>
           </select>
-
-          <select
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value));
-              setPage(0);
-            }}
-            className="crm-select"
-          >
-            {PAGE_SIZE_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option} на странице
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 
@@ -223,7 +244,7 @@ export default function NotificationsPage() {
           </div>
         ) : loading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -245,7 +266,7 @@ export default function NotificationsPage() {
                 {filteredNotifications.length > 0 ? (
                   filteredNotifications.map((notification, index) => (
                     <tr key={notification.id} className="crm-table-row">
-                      <td className="crm-table-cell">{page * pageSize + index + 1}</td>
+                      <td className="crm-table-cell">{page * TABLE_PAGE_SIZE + index + 1}</td>
                       <td className="crm-table-cell">{notification.type}</td>
                       <td className="crm-table-cell">{notification.eventType || '—'}</td>
                       <td className="crm-table-cell">
@@ -304,7 +325,7 @@ export default function NotificationsPage() {
       >
         {notificationDetailLoading ? (
           <div className="flex justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : notificationDetailError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -367,6 +388,52 @@ export default function NotificationsPage() {
             ) : null}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={canBroadcastToAllUsers && isBroadcastModalOpen}
+        onClose={() => setIsBroadcastModalOpen(false)}
+        title="Отправка всем пользователям"
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setIsBroadcastModalOpen(false)}>
+              Отмена
+            </Button>
+            <Button onClick={() => void handleBroadcast()} disabled={broadcastLoading}>
+              {broadcastLoading ? 'Отправляем...' : 'Отправить всем'}
+            </Button>
+          </>
+        )}
+      >
+        <p className="text-sm text-[#7f8794]">
+          Отправьте общее уведомление сотрудникам вашего учебного центра.
+        </p>
+        <input
+          type="text"
+          value={broadcastForm.subject}
+          onChange={(event) => setBroadcastForm((prev) => ({ ...prev, subject: event.target.value }))}
+          placeholder="Тема уведомления"
+          className="crm-input"
+          maxLength={255}
+        />
+
+        <textarea
+          value={broadcastForm.body}
+          onChange={(event) => setBroadcastForm((prev) => ({ ...prev, body: event.target.value }))}
+          placeholder="Текст уведомления"
+          className="crm-textarea min-h-30"
+          maxLength={2000}
+        />
+
+        <label className="inline-flex items-center gap-2 text-sm text-[#556070]">
+          <input
+            type="checkbox"
+            checked={broadcastForm.alsoEmail}
+            onChange={(event) => setBroadcastForm((prev) => ({ ...prev, alsoEmail: event.target.checked }))}
+            className="h-4 w-4 rounded border-[#c9d3e0] text-[#467aff]"
+          />
+          Также отправить по email
+        </label>
       </Modal>
     </div>
   );

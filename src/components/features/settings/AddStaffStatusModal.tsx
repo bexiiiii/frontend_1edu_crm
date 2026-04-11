@@ -2,13 +2,16 @@ import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { COLORS } from '@/constants/settings-data';
+import { YES_NO_OPTIONS } from '@/constants/settings-data';
 
 export interface StaffStatusFormPayload {
   id?: string;
   name: string;
   color: string;
   sortOrder: number;
+  active: boolean;
 }
 
 interface AddStaffStatusModalProps {
@@ -29,6 +32,7 @@ export const AddStaffStatusModal = ({
   const [name, setName] = useState(initialValue?.name ?? '');
   const [color, setColor] = useState(initialValue?.color ?? COLORS[0]);
   const [sortOrder, setSortOrder] = useState(String(initialValue?.sortOrder ?? 0));
+  const [active, setActive] = useState(initialValue?.active ?? true ? 'yes' : 'no');
 
   const handleSave = async () => {
     if (!name.trim()) return;
@@ -37,10 +41,12 @@ export const AddStaffStatusModal = ({
       name: name.trim(),
       color,
       sortOrder: Number(sortOrder) || 0,
+      active: active === 'yes',
     });
     setName('');
     setColor(COLORS[0]);
     setSortOrder('0');
+    setActive('yes');
   };
 
   return (
@@ -75,6 +81,14 @@ export const AddStaffStatusModal = ({
           onChange={(e) => setSortOrder(e.target.value)}
         />
 
+        <Select label="Активность" value={active} onChange={(event) => setActive(event.target.value)}>
+          {YES_NO_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Цвет</label>
           <div className="flex gap-2 flex-wrap">
@@ -84,7 +98,7 @@ export const AddStaffStatusModal = ({
                 type="button"
                 onClick={() => setColor(c)}
                 className={`w-8 h-8 rounded-lg border-2 transition-colors ${
-                  color === c ? 'border-teal-500' : 'border-gray-200 hover:border-teal-400'
+                  color === c ? 'border-[#467aff]' : 'border-gray-200 hover:border-[#7aa0ff]'
                 }`}
                 style={{ backgroundColor: c }}
               />

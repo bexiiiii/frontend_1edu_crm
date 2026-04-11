@@ -332,7 +332,7 @@ export default function Finance() {
 
         {loading ? (
           <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -374,7 +374,7 @@ export default function Finance() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => openEditModal(transaction)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-teal-50 hover:text-teal-600"
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#edf3ff] hover:text-[#3568eb]"
                             title="Редактировать"
                           >
                             <Edit2 className="h-4 w-4" />

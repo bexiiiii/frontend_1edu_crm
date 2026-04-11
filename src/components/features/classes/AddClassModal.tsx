@@ -271,7 +271,7 @@ export const AddClassModal = ({
                     type="checkbox"
                     checked={studentIds.includes(student.id)}
                     onChange={() => handleStudentToggle(student.id)}
-                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#25c4b8] focus:ring-[#25c4b8]"
+                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                   />
                   <span className="text-sm text-[#202938]">{student.name}</span>
                 </label>
