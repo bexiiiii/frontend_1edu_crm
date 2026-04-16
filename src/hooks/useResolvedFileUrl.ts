@@ -15,6 +15,32 @@ type CachedResolvedUrl = {
 const resolvedUrlCache = new Map<string, CachedResolvedUrl>();
 const pendingUrlCache = new Map<string, Promise<string>>();
 
+function extractPresignedUrl(payload: unknown): string {
+  if (typeof payload === 'string') {
+    return payload.trim();
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  const record = payload as Record<string, unknown>;
+  const directKeys = ['url', 'presignedUrl', 'value', 'signedUrl', 'downloadUrl', 'fileUrl'];
+
+  for (const key of directKeys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  if ('data' in record) {
+    return extractPresignedUrl(record.data);
+  }
+
+  return '';
+}
+
 function isResolvableFileValue(value: string): boolean {
   const trimmedValue = value.trim();
 
@@ -144,8 +170,18 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
 
   const bucketScopedObjectName = extractBucketScopedObjectName(trimmedValue);
   const candidateObjectNames = [objectName];
+
+  const bucketPrefixedObjectName = objectName.startsWith(`${INTERNAL_BUCKET_NAME}/`)
+    ? objectName
+    : `${INTERNAL_BUCKET_NAME}/${objectName}`;
+  if (!candidateObjectNames.includes(bucketPrefixedObjectName)) {
+    candidateObjectNames.push(bucketPrefixedObjectName);
+  }
+
   if (bucketScopedObjectName && bucketScopedObjectName !== objectName) {
-    candidateObjectNames.push(bucketScopedObjectName);
+    if (!candidateObjectNames.includes(bucketScopedObjectName)) {
+      candidateObjectNames.push(bucketScopedObjectName);
+    }
   }
 
   const pendingValue = pendingUrlCache.get(trimmedValue);
@@ -157,20 +193,7 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
     for (const candidateObjectName of candidateObjectNames) {
       try {
         const response = await filesService.getPresignedUrl(candidateObjectName);
-        const payload = response.data as unknown;
-        const nextUrl =
-          typeof payload === 'string'
-            ? payload.trim()
-            : payload && typeof payload === 'object'
-              ? ((payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).url ||
-                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).presignedUrl ||
-                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).value ||
-                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).signedUrl ||
-                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).downloadUrl ||
-                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).fileUrl ||
-                  '')
-                  .trim()
-              : '';
+        const nextUrl = extractPresignedUrl(response.data) || extractPresignedUrl(response);
 
         if (nextUrl) {
           resolvedUrlCache.set(trimmedValue, {
