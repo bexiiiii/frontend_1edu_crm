@@ -5,6 +5,7 @@ import { filesService } from '@/lib/api';
 
 const INTERNAL_BUCKET_NAME = 'ondeedu-files';
 const INTERNAL_FILE_HOSTS = new Set(['minio', 'localhost', '127.0.0.1']);
+const KNOWN_FILE_FOLDERS = ['avatars/', 'documents/', 'reports/'];
 const PRESIGNED_URL_TTL_MS = 14 * 60 * 1000;
 
 type CachedResolvedUrl = {
@@ -54,10 +55,67 @@ function isResolvableFileValue(value: string): boolean {
       return false;
     }
 
-    return INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase());
+    if (INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
+      return true;
+    }
+
+    if (url.searchParams.has('objectName')) {
+      return true;
+    }
+
+    const normalizedPathname = url.pathname.replace(/^\/+/, '');
+    if (!normalizedPathname) {
+      return false;
+    }
+
+    if (normalizedPathname.startsWith(`${INTERNAL_BUCKET_NAME}/`)) {
+      return true;
+    }
+
+    if (normalizedPathname.includes(`/${INTERNAL_BUCKET_NAME}/`)) {
+      return true;
+    }
+
+    if (KNOWN_FILE_FOLDERS.some((folder) => normalizedPathname.startsWith(folder))) {
+      return true;
+    }
+
+    return normalizedPathname.includes('/api/v1/files/');
   } catch {
     return true;
   }
+}
+
+function extractObjectNameFromUrl(url: URL): string | null {
+  const objectNameFromQuery = url.searchParams.get('objectName');
+  if (objectNameFromQuery?.trim()) {
+    return normalizeObjectName(objectNameFromQuery);
+  }
+
+  const normalizedPathname = url.pathname.replace(/^\/+/, '');
+  if (!normalizedPathname) {
+    return null;
+  }
+
+  if (normalizedPathname.startsWith(`${INTERNAL_BUCKET_NAME}/`)) {
+    return normalizeObjectName(normalizedPathname);
+  }
+
+  const bucketSegmentIndex = normalizedPathname.indexOf(`/${INTERNAL_BUCKET_NAME}/`);
+  if (bucketSegmentIndex >= 0) {
+    const bucketPath = normalizedPathname.slice(bucketSegmentIndex + 1);
+    return normalizeObjectName(bucketPath);
+  }
+
+  if (KNOWN_FILE_FOLDERS.some((folder) => normalizedPathname.startsWith(folder))) {
+    return normalizeObjectName(normalizedPathname);
+  }
+
+  if (INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
+    return normalizeObjectName(normalizedPathname);
+  }
+
+  return null;
 }
 
 function normalizeObjectName(value: string): string {
@@ -91,11 +149,7 @@ function extractObjectName(fileValue: string): string | null {
   try {
     const url = new URL(trimmedValue);
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      if (!INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
-        return null;
-      }
-
-      return normalizeObjectName(url.pathname);
+      return extractObjectNameFromUrl(url);
     }
   } catch {
     // Non-URL values are handled below.
@@ -123,7 +177,7 @@ function extractBucketScopedObjectName(fileValue: string): string | null {
       return null;
     }
 
-    if (!INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
+    if (!INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase()) && !url.pathname.includes(`/${INTERNAL_BUCKET_NAME}/`)) {
       return null;
     }
 
@@ -205,6 +259,10 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
       } catch {
         // Try next candidate object name.
       }
+    }
+
+    if (trimmedValue.startsWith('http://') || trimmedValue.startsWith('https://')) {
+      return trimmedValue;
     }
 
     return '';
