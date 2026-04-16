@@ -864,8 +864,6 @@ export default function Settings() {
           firstName: data.firstName.trim(),
           lastName: data.lastName.trim(),
           role: data.role,
-          ...(data.permissionsSource ? { permissionsSource: data.permissionsSource } : {}),
-          ...(data.permissionsSource === 'USER' && data.permissions ? { permissions: data.permissions } : {}),
         },
       });
       pushToast({ message: 'Пользователь обновлён. Для применения прав выполните refresh токена или повторный вход.', tone: 'success' });
@@ -886,8 +884,6 @@ export default function Settings() {
         password: data.password.trim(),
         role: data.role,
         tenantId,
-        ...(data.permissionsSource ? { permissionsSource: data.permissionsSource } : {}),
-        ...(data.permissionsSource === 'USER' ? { permissions: data.permissions } : {}),
       });
       pushToast({ message: 'Пользователь создан. Права применятся после обновления токена/повторного входа.', tone: 'success' });
     }
@@ -2721,10 +2717,8 @@ export default function Settings() {
         }}
         onSave={handleSaveUser}
         initialValue={selectedUser}
-        permissionsLoaded={selectedUser?.permissionsLoaded ?? true}
         roleOptions={authUserRoleOptions}
         availableStaff={availableStaffForAuth}
-        availablePermissions={availablePermissions}
         isSubmitting={createUserMutation.loading || updateUserMutation.loading}
       />
       <ResetUserPasswordModal
