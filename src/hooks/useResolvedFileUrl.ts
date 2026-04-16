@@ -41,11 +41,18 @@ function normalizeObjectName(value: string): string {
     return '';
   }
 
-  if (trimmedValue.startsWith(`${INTERNAL_BUCKET_NAME}/`)) {
-    return trimmedValue.slice(INTERNAL_BUCKET_NAME.length + 1);
+  let decodedValue = trimmedValue;
+  try {
+    decodedValue = decodeURIComponent(trimmedValue);
+  } catch {
+    decodedValue = trimmedValue;
   }
 
-  return trimmedValue;
+  if (decodedValue.startsWith(`${INTERNAL_BUCKET_NAME}/`)) {
+    return decodedValue.slice(INTERNAL_BUCKET_NAME.length + 1);
+  }
+
+  return decodedValue;
 }
 
 function extractObjectName(fileValue: string): string | null {
@@ -104,7 +111,17 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
   const request = filesService
     .getPresignedUrl(objectName)
     .then((response) => {
-      const nextUrl = response.data?.trim() ?? '';
+      const payload = response.data as unknown;
+      const nextUrl =
+        typeof payload === 'string'
+          ? payload.trim()
+          : payload && typeof payload === 'object'
+            ? ((payload as { url?: string; presignedUrl?: string; value?: string }).url ||
+                (payload as { url?: string; presignedUrl?: string; value?: string }).presignedUrl ||
+                (payload as { url?: string; presignedUrl?: string; value?: string }).value ||
+                '')
+                .trim()
+            : '';
 
       if (nextUrl) {
         resolvedUrlCache.set(trimmedValue, {
