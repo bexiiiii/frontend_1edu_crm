@@ -273,19 +273,13 @@ export const AddUserModal = ({
 
         <div>
           <Select
-            label="Источник прав"
+            label="Права доступа"
             value={permissionMode}
             onChange={(event) => setPermissionMode(event.target.value as 'role' | 'user')}
           >
-            <option value="role">Наследовать от роли</option>
-            <option value="user">Пользовательский набор</option>
+            <option value="role">От роли</option>
+            <option value="user">Вручную</option>
           </Select>
-
-          {permissionMode === 'role' ? (
-            <div className="mt-3 rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
-              Права будут применены от выбранной роли (role-backed/default fallback).
-            </div>
-          ) : null}
 
           <label className="mb-2 block text-sm font-medium text-gray-700">Гранулярные права</label>
           {isEditing && !permissionsLoaded && (

@@ -69,7 +69,7 @@ function isEditableElement(target: EventTarget | null): boolean {
     return false;
   }
 
-  const tagName = target.tagName.toLowerCase();
+  const tagName = toLowerSafe(target.tagName);
   return (
     tagName === 'input' ||
     tagName === 'textarea' ||
@@ -118,10 +118,12 @@ export default function Header({
       return searchableItems.slice(0, 8);
     }
 
-    const startsWithMatches = searchableItems.filter((item) => item.label.toLowerCase().startsWith(normalizedQuery));
+    const startsWithMatches = searchableItems.filter((item) => toLowerSafe(item.label).startsWith(normalizedQuery));
     const containsMatches = searchableItems.filter((item) => {
-      if (item.label.toLowerCase().includes(normalizedQuery)) {
-        return !item.label.toLowerCase().startsWith(normalizedQuery);
+      const label = toLowerSafe(item.label);
+
+      if (label.includes(normalizedQuery)) {
+        return !label.startsWith(normalizedQuery);
       }
 
       return item.keywords.some((keyword) => keyword.includes(normalizedQuery));
@@ -161,7 +163,7 @@ export default function Header({
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
+      const key = toLowerSafe(event.key);
       const hasCommandModifier = event.metaKey || event.ctrlKey;
 
       if (hasCommandModifier && key === 'k') {
