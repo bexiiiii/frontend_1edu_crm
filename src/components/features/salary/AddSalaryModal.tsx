@@ -3,9 +3,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { FINANCE_AMOUNT_CHANGE_REASON_OPTIONS } from '@/constants/finance';
 import { getErrorMessage } from '@/lib/error-message';
-import type { AmountChangeReasonCode, CreateSalaryPaymentRequest } from '@/lib/api';
+import type { CreateSalaryPaymentRequest } from '@/lib/api';
 
 interface SalaryStaffOption {
   id: string;
@@ -25,7 +24,6 @@ interface AddSalaryModalProps {
   defaultMonth: string;
   initialValues?: Partial<CreateSalaryPaymentRequest>;
   title?: string;
-  requireReason?: boolean;
   isSubmitting?: boolean;
 }
 
@@ -45,15 +43,12 @@ export const AddSalaryModal = ({
   defaultMonth,
   initialValues,
   title = 'Зафиксировать выплату зарплаты',
-  requireReason = false,
   isSubmitting = false,
 }: AddSalaryModalProps) => {
   const [staffId, setStaffId] = useState(initialValues?.staffId || defaultStaffId);
   const [salaryMonth, setSalaryMonth] = useState(initialValues?.salaryMonth || defaultMonth);
   const [amount, setAmount] = useState(initialValues?.amount != null ? String(initialValues.amount) : '');
   const [paymentDate, setPaymentDate] = useState(initialValues?.paymentDate || getTodayDate());
-  const [amountChangeReasonCode, setAmountChangeReasonCode] = useState<AmountChangeReasonCode | ''>(initialValues?.amountChangeReasonCode || '');
-  const [amountChangeReasonOther, setAmountChangeReasonOther] = useState(initialValues?.amountChangeReasonOther || '');
   const [notes, setNotes] = useState(initialValues?.notes || '');
   const [error, setError] = useState<string | null>(null);
 
@@ -87,26 +82,6 @@ export const AddSalaryModal = ({
       return;
     }
 
-    if (requireReason && !amountChangeReasonCode) {
-      setError('Выберите причину изменения суммы.');
-      return;
-    }
-
-    if (amountChangeReasonCode === 'OTHER' && !amountChangeReasonOther.trim()) {
-      setError('Для причины «Другое» заполните пояснение.');
-      return;
-    }
-
-    if (amountChangeReasonCode && amountChangeReasonCode !== 'OTHER' && amountChangeReasonOther.trim()) {
-      setError('Пояснение заполняется только для причины «Другое».');
-      return;
-    }
-
-    if (!amountChangeReasonCode && amountChangeReasonOther.trim()) {
-      setError('Сначала выберите причину изменения суммы.');
-      return;
-    }
-
     try {
       await onSave({
         staffId,
@@ -114,9 +89,6 @@ export const AddSalaryModal = ({
         amount: parsedAmount,
         currency: 'KZT',
         paymentDate,
-        amountChangeReasonCode: amountChangeReasonCode || undefined,
-        amountChangeReasonOther:
-          amountChangeReasonCode === 'OTHER' ? amountChangeReasonOther.trim() : undefined,
         notes: notes.trim() || undefined,
       });
     } catch (submitError) {
@@ -194,35 +166,6 @@ export const AddSalaryModal = ({
             <label className="mb-2 block text-sm font-medium text-[#5d6676]">Валюта</label>
             <div className="crm-input flex items-center text-[#5d6676]">KZT</div>
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Select
-            label="Причина изменения суммы"
-            value={amountChangeReasonCode}
-            onChange={(event) => {
-              const nextCode = event.target.value as AmountChangeReasonCode | '';
-              setAmountChangeReasonCode(nextCode);
-              if (nextCode !== 'OTHER') {
-                setAmountChangeReasonOther('');
-              }
-            }}
-          >
-            <option value="">Не выбрано</option>
-            {FINANCE_AMOUNT_CHANGE_REASON_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-
-          <Input
-            label="Пояснение причины"
-            value={amountChangeReasonOther}
-            onChange={(event) => setAmountChangeReasonOther(event.target.value)}
-            placeholder="Только для причины «Другое»"
-            disabled={amountChangeReasonCode !== 'OTHER'}
-          />
         </div>
 
         <div>

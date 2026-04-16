@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
+import { PaymentAmountChangeReasonModal } from '@/components/features/finance/PaymentAmountChangeReasonModal';
 import {
   PAYMENT_AMOUNT_CHANGE_REASON_LABELS,
   PAYMENT_METHOD_LABELS,
@@ -18,6 +19,7 @@ import {
   studentsService,
   subscriptionsService,
   type CreateStudentPaymentRequest,
+  type PaymentAmountChangeReasonCode,
   type StudentPaymentDto,
   type StudentPaymentHistoryResponse,
 } from '@/lib/api';
@@ -114,6 +116,15 @@ export default function StudentPaymentHistoryPage() {
   const [paymentModalState, setPaymentModalState] = useState<PaymentModalState>({
     key: 0,
     isOpen: false,
+  });
+  const [reasonModalState, setReasonModalState] = useState<{
+    isOpen: boolean;
+    paymentId: string | null;
+    payload: CreateStudentPaymentRequest | null;
+  }>({
+    isOpen: false,
+    paymentId: null,
+    payload: null,
   });
   const [activeTab, setActiveTab] = useState<PaymentHistoryTab>('SUBSCRIPTIONS');
 
@@ -334,6 +345,24 @@ export default function StudentPaymentHistoryPage() {
 
   const handleCreatePayment = async (data: CreateStudentPaymentRequest) => {
     if (paymentModalState.editingPayment) {
+      const initialAmount = Number(paymentModalState.editingPayment.amount);
+      const nextAmount = Number(data.amount);
+      const isAmountChanged = Number.isFinite(nextAmount) && nextAmount !== initialAmount;
+
+      if (isAmountChanged) {
+        setReasonModalState({
+          isOpen: true,
+          paymentId: paymentModalState.editingPayment.id,
+          payload: {
+            ...data,
+            amountChangeReasonCode: undefined,
+            amountChangeReasonOther: undefined,
+          },
+        });
+        closeAddPayment();
+        return;
+      }
+
       await updatePaymentMutation.mutate({
         id: paymentModalState.editingPayment.id,
         data,
@@ -343,6 +372,24 @@ export default function StudentPaymentHistoryPage() {
     }
 
     closeAddPayment();
+    await refetchHistory();
+  };
+
+  const handleConfirmReason = async (reason: { reasonCode: PaymentAmountChangeReasonCode; reasonOther?: string }) => {
+    if (!reasonModalState.paymentId || !reasonModalState.payload) {
+      return;
+    }
+
+    await updatePaymentMutation.mutate({
+      id: reasonModalState.paymentId,
+      data: {
+        ...reasonModalState.payload,
+        amountChangeReasonCode: reason.reasonCode,
+        amountChangeReasonOther: reason.reasonCode === 'OTHER' ? reason.reasonOther : undefined,
+      },
+    });
+
+    setReasonModalState({ isOpen: false, paymentId: null, payload: null });
     await refetchHistory();
   };
 
@@ -639,13 +686,17 @@ export default function StudentPaymentHistoryPage() {
           paidAt: paymentModalState.editingPayment.paidAt,
           paymentMonth: paymentModalState.editingPayment.paymentMonth,
           method: paymentModalState.editingPayment.method,
-          amountChangeReasonCode: paymentModalState.editingPayment.amountChangeReasonCode || undefined,
-          amountChangeReasonOther: paymentModalState.editingPayment.amountChangeReasonOther || undefined,
           notes: paymentModalState.editingPayment.notes || undefined,
         } : undefined}
         title={paymentModalState.editingPayment ? 'Редактировать платёж студента' : 'Записать платёж студента'}
-        requireReason={Boolean(paymentModalState.editingPayment)}
         isSubmitting={createPaymentMutation.loading || updatePaymentMutation.loading}
+      />
+
+      <PaymentAmountChangeReasonModal
+        isOpen={reasonModalState.isOpen}
+        onClose={() => setReasonModalState({ isOpen: false, paymentId: null, payload: null })}
+        onConfirm={handleConfirmReason}
+        isSubmitting={updatePaymentMutation.loading}
       />
     </div>
   );

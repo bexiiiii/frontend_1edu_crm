@@ -82,6 +82,45 @@ function extractObjectName(fileValue: string): string | null {
   return normalizeObjectName(trimmedValue);
 }
 
+function extractBucketScopedObjectName(fileValue: string): string | null {
+  const trimmedValue = fileValue.trim();
+
+  if (!trimmedValue || trimmedValue.startsWith('blob:') || trimmedValue.startsWith('data:')) {
+    return null;
+  }
+
+  let rawPath = '';
+
+  try {
+    const url = new URL(trimmedValue);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+
+    if (!INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
+      return null;
+    }
+
+    rawPath = url.pathname.replace(/^\/+/, '');
+  } catch {
+    if (/^(minio|localhost|127\.0\.0\.1)(?::\d+)?\//i.test(trimmedValue)) {
+      rawPath = trimmedValue.replace(/^(minio|localhost|127\.0\.0\.1)(?::\d+)?\//i, '');
+    } else {
+      return null;
+    }
+  }
+
+  if (!rawPath) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(rawPath);
+  } catch {
+    return rawPath;
+  }
+}
+
 async function resolveFileUrl(fileValue: string): Promise<string> {
   const trimmedValue = fileValue.trim();
 
@@ -103,35 +142,50 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
     return '';
   }
 
+  const bucketScopedObjectName = extractBucketScopedObjectName(trimmedValue);
+  const candidateObjectNames = [objectName];
+  if (bucketScopedObjectName && bucketScopedObjectName !== objectName) {
+    candidateObjectNames.push(bucketScopedObjectName);
+  }
+
   const pendingValue = pendingUrlCache.get(trimmedValue);
   if (pendingValue) {
     return pendingValue;
   }
 
-  const request = filesService
-    .getPresignedUrl(objectName)
-    .then((response) => {
-      const payload = response.data as unknown;
-      const nextUrl =
-        typeof payload === 'string'
-          ? payload.trim()
-          : payload && typeof payload === 'object'
-            ? ((payload as { url?: string; presignedUrl?: string; value?: string }).url ||
-                (payload as { url?: string; presignedUrl?: string; value?: string }).presignedUrl ||
-                (payload as { url?: string; presignedUrl?: string; value?: string }).value ||
-                '')
-                .trim()
-            : '';
+  const request = (async () => {
+    for (const candidateObjectName of candidateObjectNames) {
+      try {
+        const response = await filesService.getPresignedUrl(candidateObjectName);
+        const payload = response.data as unknown;
+        const nextUrl =
+          typeof payload === 'string'
+            ? payload.trim()
+            : payload && typeof payload === 'object'
+              ? ((payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).url ||
+                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).presignedUrl ||
+                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).value ||
+                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).signedUrl ||
+                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).downloadUrl ||
+                  (payload as { url?: string; presignedUrl?: string; value?: string; signedUrl?: string; downloadUrl?: string; fileUrl?: string }).fileUrl ||
+                  '')
+                  .trim()
+              : '';
 
-      if (nextUrl) {
-        resolvedUrlCache.set(trimmedValue, {
-          url: nextUrl,
-          expiresAt: Date.now() + PRESIGNED_URL_TTL_MS,
-        });
+        if (nextUrl) {
+          resolvedUrlCache.set(trimmedValue, {
+            url: nextUrl,
+            expiresAt: Date.now() + PRESIGNED_URL_TTL_MS,
+          });
+          return nextUrl;
+        }
+      } catch {
+        // Try next candidate object name.
       }
+    }
 
-      return nextUrl;
-    })
+    return '';
+  })()
     .catch(() => '')
     .finally(() => {
       pendingUrlCache.delete(trimmedValue);

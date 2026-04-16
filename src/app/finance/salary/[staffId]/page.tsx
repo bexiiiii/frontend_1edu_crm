@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Edit2, Loader2, Plus } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { AmountChangeReasonModal } from '@/components/features/finance/AmountChangeReasonModal';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
 import { Button } from '@/components/ui/Button';
 import {
@@ -13,7 +14,13 @@ import {
 } from '@/constants/employee';
 import { TRANSACTION_STATUS_COLORS, TRANSACTION_STATUS_LABELS } from '@/constants/finance';
 import { useApi, useMutation } from '@/hooks/useApi';
-import { salaryService, staffService, type CreateSalaryPaymentRequest, type StaffSalaryHistoryDto } from '@/lib/api';
+import {
+  salaryService,
+  staffService,
+  type AmountChangeReasonCode,
+  type CreateSalaryPaymentRequest,
+  type StaffSalaryHistoryDto,
+} from '@/lib/api';
 
 interface SalaryPaymentModalState {
   key: number;
@@ -61,6 +68,15 @@ export default function StaffSalaryHistoryPage() {
     key: 0,
     isOpen: false,
     editingPayment: undefined,
+  });
+  const [reasonModalState, setReasonModalState] = useState<{
+    isOpen: boolean;
+    paymentId: string | null;
+    payload: CreateSalaryPaymentRequest | null;
+  }>({
+    isOpen: false,
+    paymentId: null,
+    payload: null,
   });
 
   const {
@@ -124,6 +140,24 @@ export default function StaffSalaryHistoryPage() {
 
   const handleSavePayment = async (payload: CreateSalaryPaymentRequest) => {
     if (paymentModalState.editingPayment) {
+      const initialAmount = Number(paymentModalState.editingPayment.amount);
+      const nextAmount = Number(payload.amount);
+      const isAmountChanged = Number.isFinite(nextAmount) && nextAmount !== initialAmount;
+
+      if (isAmountChanged) {
+        setReasonModalState({
+          isOpen: true,
+          paymentId: paymentModalState.editingPayment.transactionId,
+          payload: {
+            ...payload,
+            amountChangeReasonCode: undefined,
+            amountChangeReasonOther: undefined,
+          },
+        });
+        handleClosePaymentModal();
+        return;
+      }
+
       await updatePaymentMutation.mutate({
         id: paymentModalState.editingPayment.transactionId,
         payload,
@@ -133,6 +167,24 @@ export default function StaffSalaryHistoryPage() {
     }
 
     handleClosePaymentModal();
+    await refetchHistory();
+  };
+
+  const handleConfirmReason = async (reason: { reasonCode: AmountChangeReasonCode; reasonOther?: string }) => {
+    if (!reasonModalState.paymentId || !reasonModalState.payload) {
+      return;
+    }
+
+    await updatePaymentMutation.mutate({
+      id: reasonModalState.paymentId,
+      payload: {
+        ...reasonModalState.payload,
+        amountChangeReasonCode: reason.reasonCode,
+        amountChangeReasonOther: reason.reasonCode === 'OTHER' ? reason.reasonOther : undefined,
+      },
+    });
+
+    setReasonModalState({ isOpen: false, paymentId: null, payload: null });
     await refetchHistory();
   };
 
@@ -342,13 +394,17 @@ export default function StaffSalaryHistoryPage() {
           salaryMonth: paymentModalState.editingPayment.salaryMonth,
           amount: paymentModalState.editingPayment.amount,
           paymentDate: paymentModalState.editingPayment.paymentDate.slice(0, 10),
-          amountChangeReasonCode: paymentModalState.editingPayment.amountChangeReasonCode || undefined,
-          amountChangeReasonOther: paymentModalState.editingPayment.amountChangeReasonOther || undefined,
           notes: paymentModalState.editingPayment.notes || undefined,
         } : undefined}
         title={paymentModalState.editingPayment ? 'Редактировать выплату зарплаты' : 'Зафиксировать выплату зарплаты'}
-        requireReason={Boolean(paymentModalState.editingPayment)}
         isSubmitting={createPaymentMutation.loading || updatePaymentMutation.loading}
+      />
+
+      <AmountChangeReasonModal
+        isOpen={reasonModalState.isOpen}
+        onClose={() => setReasonModalState({ isOpen: false, paymentId: null, payload: null })}
+        onConfirm={handleConfirmReason}
+        isSubmitting={updatePaymentMutation.loading}
       />
     </div>
   );
