@@ -6,12 +6,20 @@ import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddIncomeModal } from '@/components/features/finance/AddIncomeModal';
 import { AddExpenseModal } from '@/components/features/finance/AddExpenseModal';
+import { AmountChangeReasonModal } from '@/components/features/finance/AmountChangeReasonModal';
 import {
+  FINANCE_AMOUNT_CHANGE_REASON_LABELS,
   FINANCE_TAB_LABELS,
   TRANSACTION_STATUS_COLORS,
   TRANSACTION_STATUS_LABELS,
 } from '@/constants/finance';
-import { financeService, studentsService, type CreateTransactionRequest, type TransactionDto } from '@/lib/api';
+import {
+  financeService,
+  studentsService,
+  type AmountChangeReasonCode,
+  type CreateTransactionRequest,
+  type TransactionDto,
+} from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { FinanceFilters, FinanceTab, FinanceTransactionItem, TransactionFormValues } from '@/types/finance';
 
@@ -31,11 +39,14 @@ function getStudentFullName(student: {
 function toFormValues(transaction: FinanceTransactionItem): TransactionFormValues {
   return {
     amount: String(transaction.amount),
+    originalAmount: String(transaction.originalAmount),
     transactionDate: transaction.transactionDate,
     status: transaction.status,
     category: transaction.category,
     description: transaction.description,
     notes: transaction.notes,
+    amountChangeReasonCode: transaction.amountChangeReasonCode,
+    amountChangeReasonOther: transaction.amountChangeReasonOther,
     studentId: transaction.studentId,
   };
 }
@@ -45,11 +56,14 @@ function toListItem(transaction: TransactionDto, studentMap: Map<string, string>
     id: transaction.id,
     type: transaction.type,
     amount: transaction.amount,
+    originalAmount: transaction.amount,
     currency: transaction.currency || 'KZT',
     transactionDate: transaction.transactionDate,
     category: transaction.category || '',
     description: transaction.description || '',
     notes: transaction.notes || '',
+    amountChangeReasonCode: transaction.amountChangeReasonCode || '',
+    amountChangeReasonOther: transaction.amountChangeReasonOther || '',
     status: transaction.status,
     studentId: transaction.studentId || '',
     studentName: transaction.studentId ? studentMap.get(transaction.studentId) || transaction.studentId : '',
@@ -84,6 +98,15 @@ export default function Finance() {
     isOpen: false,
     transactionId: null,
     type: 'INCOME',
+  });
+  const [reasonModalState, setReasonModalState] = useState<{
+    isOpen: boolean;
+    transactionId: string | null;
+    payload: Partial<CreateTransactionRequest> | null;
+  }>({
+    isOpen: false,
+    transactionId: null,
+    payload: null,
   });
 
   const { data: studentsPage } = useApi(() => studentsService.getAll({ page: 0, size: 500 }), []);
@@ -214,6 +237,24 @@ export default function Finance() {
 
   const handleSaveTransaction = async (data: CreateTransactionRequest) => {
     if (modalState.transactionId) {
+      const initialAmount = Number(modalState.initialValues?.originalAmount || modalState.initialValues?.amount || '0');
+      const nextAmount = Number(data.amount);
+      const isAmountChanged = Number.isFinite(nextAmount) && nextAmount !== initialAmount;
+
+      if (isAmountChanged) {
+        setReasonModalState({
+          isOpen: true,
+          transactionId: modalState.transactionId,
+          payload: {
+            ...data,
+            amountChangeReasonCode: undefined,
+            amountChangeReasonOther: undefined,
+          },
+        });
+        closeModal();
+        return;
+      }
+
       await updateMutation.mutate({
         id: modalState.transactionId,
         data,
@@ -223,6 +264,24 @@ export default function Finance() {
     }
 
     closeModal();
+    await refetch();
+  };
+
+  const handleConfirmReason = async (reason: { reasonCode: AmountChangeReasonCode; reasonOther?: string }) => {
+    if (!reasonModalState.transactionId || !reasonModalState.payload) {
+      return;
+    }
+
+    await updateMutation.mutate({
+      id: reasonModalState.transactionId,
+      data: {
+        ...reasonModalState.payload,
+        amountChangeReasonCode: reason.reasonCode,
+        amountChangeReasonOther: reason.reasonCode === 'OTHER' ? reason.reasonOther : undefined,
+      },
+    });
+
+    setReasonModalState({ isOpen: false, transactionId: null, payload: null });
     await refetch();
   };
 
@@ -346,6 +405,7 @@ export default function Finance() {
                   <th className="crm-table-th">Статус</th>
                   <th className="crm-table-th">Студент</th>
                   <th className="crm-table-th">Описание</th>
+                  <th className="crm-table-th">Причина изменения суммы</th>
                   <th className="crm-table-th">Заметки</th>
                   <th className="crm-table-th">Действия</th>
                 </tr>
@@ -369,6 +429,15 @@ export default function Finance() {
                       </td>
                       <td className="crm-table-cell">{transaction.studentName || '—'}</td>
                       <td className="crm-table-cell">{transaction.description || '—'}</td>
+                      <td className="crm-table-cell">
+                        {transaction.amountChangeReasonCode
+                          ? `${FINANCE_AMOUNT_CHANGE_REASON_LABELS[transaction.amountChangeReasonCode]}${
+                              transaction.amountChangeReasonCode === 'OTHER' && transaction.amountChangeReasonOther
+                                ? `: ${transaction.amountChangeReasonOther}`
+                                : ''
+                            }`
+                          : '—'}
+                      </td>
                       <td className="crm-table-cell">{transaction.notes || '—'}</td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-2">
@@ -392,7 +461,7 @@ export default function Finance() {
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Транзакции не найдены
                     </td>
                   </tr>
@@ -437,6 +506,13 @@ export default function Finance() {
           title={modalState.transactionId ? 'Редактировать расход' : 'Добавить расход'}
         />
       )}
+
+      <AmountChangeReasonModal
+        isOpen={reasonModalState.isOpen}
+        onClose={() => setReasonModalState({ isOpen: false, transactionId: null, payload: null })}
+        onConfirm={handleConfirmReason}
+        isSubmitting={updateMutation.loading}
+      />
     </div>
   );
 }

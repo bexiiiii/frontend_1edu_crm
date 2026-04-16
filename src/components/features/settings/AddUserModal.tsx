@@ -14,6 +14,7 @@ export interface UserFormPayload {
   password?: string;
   role: string;
   permissions?: string[];
+  permissionsSource?: string;
 }
 
 interface AvailableStaffOption {
@@ -63,6 +64,7 @@ export const AddUserModal = ({
   isSubmitting = false,
 }: AddUserModalProps) => {
   const isEditing = Boolean(initialValue?.id);
+  const initialPermissionMode = initialValue?.permissionsSource?.startsWith('USER') ? 'user' : 'role';
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [username, setUsername] = useState(initialValue?.username ?? '');
   const [firstName, setFirstName] = useState(initialValue?.firstName ?? '');
@@ -70,6 +72,7 @@ export const AddUserModal = ({
   const [email, setEmail] = useState(initialValue?.email ?? '');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState(initialValue?.role ?? 'TEACHER');
+  const [permissionMode, setPermissionMode] = useState<'role' | 'user'>(initialPermissionMode);
   const [permissions, setPermissions] = useState<string[]>(initialValue?.permissions ?? []);
   const [permissionsTouched, setPermissionsTouched] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{
@@ -112,7 +115,8 @@ export const AddUserModal = ({
       return;
     }
 
-    const shouldSendPermissions = !isEditing || permissionsLoaded || permissionsTouched;
+    const shouldSendPermissions = permissionMode === 'user' && (!isEditing || permissionsLoaded || permissionsTouched);
+    const nextPermissionsSource = permissionMode === 'user' ? 'USER' : role ? `ROLE:${role}` : undefined;
 
     try {
       await onSave({
@@ -123,6 +127,7 @@ export const AddUserModal = ({
         lastName: lastName.trim(),
         password: isEditing ? undefined : password.trim(),
         role,
+        permissionsSource: nextPermissionsSource,
         permissions: shouldSendPermissions ? permissions : undefined,
       });
 
@@ -132,6 +137,7 @@ export const AddUserModal = ({
       setEmail('');
       setPassword('');
       setRole('TEACHER');
+      setPermissionMode('role');
       setPermissions([]);
       setSelectedStaffId('');
     } catch (submitError) {
@@ -236,12 +242,6 @@ export const AddUserModal = ({
           />
         </div>
 
-        {isEditing && (
-          <p className="text-xs text-gray-500">
-            Логин не меняется через текущий backend-контракт, поэтому поле доступно только для чтения.
-          </p>
-        )}
-
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {!isEditing ? (
             <Input
@@ -272,6 +272,21 @@ export const AddUserModal = ({
         </div>
 
         <div>
+          <Select
+            label="Источник прав"
+            value={permissionMode}
+            onChange={(event) => setPermissionMode(event.target.value as 'role' | 'user')}
+          >
+            <option value="role">Наследовать от роли</option>
+            <option value="user">Пользовательский набор</option>
+          </Select>
+
+          {permissionMode === 'role' ? (
+            <div className="mt-3 rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
+              Права будут применены от выбранной роли (role-backed/default fallback).
+            </div>
+          ) : null}
+
           <label className="mb-2 block text-sm font-medium text-gray-700">Гранулярные права</label>
           {isEditing && !permissionsLoaded && (
             <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
@@ -286,6 +301,7 @@ export const AddUserModal = ({
                     type="checkbox"
                     checked={permissions.includes(permission)}
                     onChange={() => togglePermission(permission)}
+                    disabled={permissionMode === 'role'}
                     className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                   />
                   <span className="text-sm text-gray-700">{permission}</span>

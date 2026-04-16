@@ -48,7 +48,7 @@ function getLevelClass(level: LogLevel): string {
   }[level];
 }
 
-function isSystemLog(log: AuditLogRow): log is SystemAuditLog {
+function isTenantLog(log: AuditLogRow): log is TenantAuditLog {
   return 'tenantId' in log;
 }
 
@@ -73,7 +73,7 @@ export default function LogsPage() {
       category: '',
       action: '',
       actorId: '',
-      tenantId: '',
+      targetId: '',
       from: today,
       to: today,
     };
@@ -93,7 +93,6 @@ export default function LogsPage() {
       const commonParams = {
         page: pageNum,
         size,
-        category: filters.category.trim() || undefined,
         action: filters.action.trim() || undefined,
         actorId: filters.actorId.trim() || undefined,
         from: filters.from ? new Date(filters.from).toISOString() : undefined,
@@ -103,15 +102,18 @@ export default function LogsPage() {
       if (activeSource === 'system' && isSuperAdmin) {
         return auditService.getSystemLog({
           ...commonParams,
-          tenantId: filters.tenantId.trim() || undefined,
+          targetId: filters.targetId.trim() || undefined,
         });
       }
 
-      return auditService.getTenantLog(commonParams);
+      return auditService.getTenantLog({
+        ...commonParams,
+        category: filters.category.trim() || undefined,
+      });
     },
     0,
     TABLE_PAGE_SIZE,
-    [activeSource, filters.category, filters.action, filters.actorId, filters.tenantId, filters.from, filters.to, isSuperAdmin]
+    [activeSource, filters.category, filters.action, filters.actorId, filters.targetId, filters.from, filters.to, isSuperAdmin]
   );
 
   const filteredLogs = useMemo(() => {
@@ -122,11 +124,19 @@ export default function LogsPage() {
         return true;
       }
 
+      const category = 'category' in log ? log.category : '';
+      const actorName = 'actorName' in log ? log.actorName || '' : '';
+      const targetType = 'targetType' in log ? log.targetType : '';
+      const targetName = 'targetName' in log ? log.targetName || '' : '';
+
       return [
-        log.category,
+        category,
         log.action,
         log.actorId,
+        actorName,
+        targetType,
         log.targetId,
+        targetName,
         stringifyDetails(log.details),
       ]
         .join(' ')
@@ -138,8 +148,8 @@ export default function LogsPage() {
   const summary = useMemo(
     () => ({
       total: totalElements,
-      errors: filteredLogs.filter((log) => categoryToLevel(log.category, log.action) === 'ERROR').length,
-      warnings: filteredLogs.filter((log) => categoryToLevel(log.category, log.action) === 'WARN').length,
+      errors: filteredLogs.filter((log) => categoryToLevel(('category' in log ? log.category : log.targetType), log.action) === 'ERROR').length,
+      warnings: filteredLogs.filter((log) => categoryToLevel(('category' in log ? log.category : log.targetType), log.action) === 'WARN').length,
     }),
     [filteredLogs, totalElements]
   );
@@ -202,17 +212,6 @@ export default function LogsPage() {
 
           <input
             type="text"
-            placeholder="Фильтр по category"
-            value={filters.category}
-            onChange={(event) => {
-              setFilters((prev) => ({ ...prev, category: event.target.value }));
-              setPage(0);
-            }}
-            className="crm-input"
-          />
-
-          <input
-            type="text"
             placeholder="Фильтр по action"
             value={filters.action}
             onChange={(event) => {
@@ -253,13 +252,26 @@ export default function LogsPage() {
             className="crm-select"
           />
 
+          {activeSource === 'tenant' ? (
+            <input
+              type="text"
+              placeholder="Фильтр по category"
+              value={filters.category}
+              onChange={(event) => {
+                setFilters((prev) => ({ ...prev, category: event.target.value }));
+                setPage(0);
+              }}
+              className="crm-input"
+            />
+          ) : null}
+
           {activeSource === 'system' && isSuperAdmin ? (
             <input
               type="text"
-              placeholder="Фильтр по tenantId"
-              value={filters.tenantId}
+              placeholder="Фильтр по targetId"
+              value={filters.targetId}
               onChange={(event) => {
-                setFilters((prev) => ({ ...prev, tenantId: event.target.value }));
+                setFilters((prev) => ({ ...prev, targetId: event.target.value }));
                 setPage(0);
               }}
               className="crm-input"
@@ -290,7 +302,7 @@ export default function LogsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-[1200px] w-full">
+            <table className="min-w-300 w-full">
               <thead className="crm-table-head">
                 <tr>
                   <th className="crm-table-th">#</th>
@@ -298,9 +310,10 @@ export default function LogsPage() {
                   <th className="crm-table-th">Уровень</th>
                   <th className="crm-table-th">Category</th>
                   <th className="crm-table-th">Action</th>
+                  <th className="crm-table-th">Actor</th>
                   <th className="crm-table-th">Actor ID</th>
+                  <th className="crm-table-th">Target Type</th>
                   <th className="crm-table-th">Target ID</th>
-                  {activeSource === 'system' && isSuperAdmin ? <th className="crm-table-th">Tenant ID</th> : null}
                   <th className="crm-table-th">Details</th>
                   <th className="crm-table-th">Действия</th>
                 </tr>
@@ -308,7 +321,10 @@ export default function LogsPage() {
               <tbody className="crm-table-body">
                 {filteredLogs.length > 0 ? (
                   filteredLogs.map((log, index) => {
-                    const level = categoryToLevel(log.category, log.action);
+                    const category = 'category' in log ? log.category : log.targetType;
+                    const actorName = 'actorName' in log ? log.actorName : null;
+                    const targetType = 'targetType' in log ? log.targetType : '—';
+                    const level = categoryToLevel(category, log.action);
                     const detailsPreview = stringifyDetails(log.details);
 
                     return (
@@ -320,15 +336,14 @@ export default function LogsPage() {
                             {level}
                           </span>
                         </td>
-                        <td className="crm-table-cell">{log.category}</td>
+                        <td className="crm-table-cell">{category || '—'}</td>
                         <td className="crm-table-cell">{log.action}</td>
+                        <td className="crm-table-cell">{actorName || '—'}</td>
                         <td className="crm-table-cell break-all">{log.actorId || '—'}</td>
+                        <td className="crm-table-cell">{targetType || '—'}</td>
                         <td className="crm-table-cell break-all">{log.targetId || '—'}</td>
-                        {activeSource === 'system' && isSuperAdmin ? (
-                          <td className="crm-table-cell break-all">{isSystemLog(log) ? log.tenantId : '—'}</td>
-                        ) : null}
                         <td className="crm-table-cell">
-                          <div className="max-w-[280px] truncate text-sm text-[#556070]">{detailsPreview}</div>
+                          <div className="max-w-70 truncate text-sm text-[#556070]">{detailsPreview}</div>
                         </td>
                         <td className="crm-table-cell">
                           <button
@@ -345,7 +360,7 @@ export default function LogsPage() {
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={activeSource === 'system' && isSuperAdmin ? 10 : 9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Логи не найдены
                     </td>
                   </tr>
@@ -379,28 +394,40 @@ export default function LogsPage() {
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Уровень</label>
                 <div>
-                  <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${getLevelClass(categoryToLevel(selectedLog.category, selectedLog.action))}`}>
-                    {categoryToLevel(selectedLog.category, selectedLog.action)}
+                  <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${getLevelClass(categoryToLevel('category' in selectedLog ? selectedLog.category : selectedLog.targetType, selectedLog.action))}`}>
+                    {categoryToLevel('category' in selectedLog ? selectedLog.category : selectedLog.targetType, selectedLog.action)}
                   </span>
                 </div>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Category</label>
-                <p className="text-base text-gray-900">{selectedLog.category}</p>
+                <p className="text-base text-gray-900">{'category' in selectedLog ? selectedLog.category : selectedLog.targetType}</p>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Action</label>
                 <p className="text-base text-gray-900">{selectedLog.action}</p>
               </div>
+              {'targetType' in selectedLog ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Target Type</label>
+                  <p className="text-base text-gray-900">{selectedLog.targetType}</p>
+                </div>
+              ) : null}
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Actor ID</label>
                 <p className="break-all text-base text-gray-900">{selectedLog.actorId || '—'}</p>
               </div>
+              {'actorName' in selectedLog ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Actor</label>
+                  <p className="break-all text-base text-gray-900">{selectedLog.actorName || '—'}</p>
+                </div>
+              ) : null}
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Target ID</label>
                 <p className="break-all text-base text-gray-900">{selectedLog.targetId || '—'}</p>
               </div>
-              {isSystemLog(selectedLog) ? (
+              {isTenantLog(selectedLog) ? (
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500">Tenant ID</label>
                   <p className="break-all text-base text-gray-900">{selectedLog.tenantId}</p>

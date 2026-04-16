@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, Edit2, Loader2, Plus } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
 import { Button } from '@/components/ui/Button';
@@ -14,6 +14,12 @@ import {
 import { TRANSACTION_STATUS_COLORS, TRANSACTION_STATUS_LABELS } from '@/constants/finance';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { salaryService, staffService, type CreateSalaryPaymentRequest, type StaffSalaryHistoryDto } from '@/lib/api';
+
+interface SalaryPaymentModalState {
+  key: number;
+  isOpen: boolean;
+  editingPayment?: StaffSalaryHistoryDto['payments'][number];
+}
 
 function getCurrentMonth(): string {
   const now = new Date();
@@ -51,9 +57,10 @@ export default function StaffSalaryHistoryPage() {
   const staffIdParam = params.staffId;
   const staffId = Array.isArray(staffIdParam) ? staffIdParam[0] : staffIdParam;
 
-  const [paymentModalState, setPaymentModalState] = useState<{ key: number; isOpen: boolean }>({
+  const [paymentModalState, setPaymentModalState] = useState<SalaryPaymentModalState>({
     key: 0,
     isOpen: false,
+    editingPayment: undefined,
   });
 
   const {
@@ -78,6 +85,10 @@ export default function StaffSalaryHistoryPage() {
   );
 
   const createPaymentMutation = useMutation((payload: CreateSalaryPaymentRequest) => salaryService.createPayment(payload));
+  const updatePaymentMutation = useMutation(
+    ({ id, payload }: { id: string; payload: CreateSalaryPaymentRequest }) =>
+      salaryService.updatePayment(id, payload)
+  );
 
   const paymentStaffOptions = useMemo(
     () =>
@@ -95,10 +106,11 @@ export default function StaffSalaryHistoryPage() {
     [historyData]
   );
 
-  const handleOpenPaymentModal = () => {
+  const handleOpenPaymentModal = (payment?: StaffSalaryHistoryDto['payments'][number]) => {
     setPaymentModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
+      editingPayment: payment,
     }));
   };
 
@@ -106,11 +118,20 @@ export default function StaffSalaryHistoryPage() {
     setPaymentModalState((prev) => ({
       ...prev,
       isOpen: false,
+      editingPayment: undefined,
     }));
   };
 
   const handleSavePayment = async (payload: CreateSalaryPaymentRequest) => {
-    await createPaymentMutation.mutate(payload);
+    if (paymentModalState.editingPayment) {
+      await updatePaymentMutation.mutate({
+        id: paymentModalState.editingPayment.transactionId,
+        payload,
+      });
+    } else {
+      await createPaymentMutation.mutate(payload);
+    }
+
     handleClosePaymentModal();
     await refetchHistory();
   };
@@ -264,6 +285,7 @@ export default function StaffSalaryHistoryPage() {
                     <th className="crm-table-th">Сумма</th>
                     <th className="crm-table-th">Статус</th>
                     <th className="crm-table-th">Заметка</th>
+                    <th className="crm-table-th">Действия</th>
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
@@ -279,11 +301,22 @@ export default function StaffSalaryHistoryPage() {
                           </span>
                         </td>
                         <td className="crm-table-cell">{payment.notes || '—'}</td>
+                        <td className="crm-table-cell">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentModal(payment)}
+                            disabled={createPaymentMutation.loading || updatePaymentMutation.loading}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-50"
+                            title="Редактировать выплату"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr className="crm-table-row">
-                      <td colSpan={5} className="crm-table-cell py-8 text-center text-sm text-[#8a93a3]">
+                      <td colSpan={6} className="crm-table-cell py-8 text-center text-sm text-[#8a93a3]">
                         Выплат пока нет
                       </td>
                     </tr>
@@ -302,8 +335,20 @@ export default function StaffSalaryHistoryPage() {
         onSave={handleSavePayment}
         staffOptions={paymentStaffOptions}
         defaultStaffId={staffId}
-        defaultMonth={getCurrentMonth()}
-        isSubmitting={createPaymentMutation.loading}
+        lockStaff
+        defaultMonth={paymentModalState.editingPayment?.salaryMonth || getCurrentMonth()}
+        initialValues={paymentModalState.editingPayment ? {
+          staffId: paymentModalState.editingPayment.staffId,
+          salaryMonth: paymentModalState.editingPayment.salaryMonth,
+          amount: paymentModalState.editingPayment.amount,
+          paymentDate: paymentModalState.editingPayment.paymentDate.slice(0, 10),
+          amountChangeReasonCode: paymentModalState.editingPayment.amountChangeReasonCode || undefined,
+          amountChangeReasonOther: paymentModalState.editingPayment.amountChangeReasonOther || undefined,
+          notes: paymentModalState.editingPayment.notes || undefined,
+        } : undefined}
+        title={paymentModalState.editingPayment ? 'Редактировать выплату зарплаты' : 'Зафиксировать выплату зарплаты'}
+        requireReason={Boolean(paymentModalState.editingPayment)}
+        isSubmitting={createPaymentMutation.loading || updatePaymentMutation.loading}
       />
     </div>
   );

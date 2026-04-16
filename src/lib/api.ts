@@ -37,6 +37,18 @@ api.interceptors.request.use((config) => {
 
     if (token) config.headers.Authorization = `Bearer ${token}`;
   }
+
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData && config.headers) {
+    const headers = config.headers as { delete?: (name: string) => void } & Record<string, unknown>;
+
+    if (typeof headers.delete === 'function') {
+      headers.delete('Content-Type');
+    } else {
+      delete headers['Content-Type'];
+      delete headers['content-type'];
+    }
+  }
+
   return config;
 });
 
@@ -154,8 +166,10 @@ export interface UserDto {
   email: string;
   firstName: string;
   lastName: string;
+  staffId: string | null;
   roles: string[];
   permissions?: string[];
+  permissionsSource?: string | null;
   enabled: boolean;
   photoUrl: string | null;
   language: string | null;
@@ -210,6 +224,7 @@ export interface CreateUserRequest {
   role: string;
   tenantId?: string;
   permissions?: string[];
+  permissionsSource?: string;
 }
 
 /** Create a user (register staff) */
@@ -312,6 +327,7 @@ export async function updateUser(id: string, data: {
   lastName?: string;
   role?: string;
   permissions?: string[];
+  permissionsSource?: string;
 }): Promise<ApiResponse<UserDto>> {
   const response = await api.put<ApiResponse<UserDto>>(`/api/v1/auth/users/${id}`, data);
   return response.data;

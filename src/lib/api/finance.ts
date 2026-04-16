@@ -8,12 +8,14 @@ import type {
   TransactionType,
   StudentPaymentDto,
   CreateStudentPaymentRequest,
+  UpdateStudentPaymentRequest,
   StudentPaymentHistoryResponse,
   MonthlyOverviewResponse,
   StudentDebtDto,
   SalaryOverviewDto,
   StaffSalaryHistoryDto,
   CreateSalaryPaymentRequest,
+  UpdateSalaryPaymentRequest,
   SalaryPaymentDto,
 } from './types';
 
@@ -82,6 +84,12 @@ export const studentPaymentsService = {
     return response.data;
   },
 
+  /** Update student payment */
+  async update(id: string, data: UpdateStudentPaymentRequest) {
+    const response = await api.put<ApiResponse<StudentPaymentDto>>(`/api/v1/payments/student-payments/${id}`, data);
+    return response.data;
+  },
+
   /** Delete student payment */
   async delete(id: string) {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/payments/student-payments/${id}`);
@@ -124,6 +132,12 @@ export const salaryService = {
   /** Record a salary payment */
   async createPayment(data: CreateSalaryPaymentRequest) {
     const response = await api.post<ApiResponse<SalaryPaymentDto>>('/api/v1/finance/salary/payments', data);
+    return response.data;
+  },
+
+  /** Update salary payment */
+  async updatePayment(id: string, data: UpdateSalaryPaymentRequest) {
+    const response = await api.put<ApiResponse<SalaryPaymentDto>>(`/api/v1/finance/salary/payments/${id}`, data);
     return response.data;
   },
 };

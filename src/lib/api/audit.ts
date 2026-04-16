@@ -11,7 +11,7 @@ export const auditService = {
   },
 
   /** Get system audit log entries (SUPER_ADMIN only) */
-  async getSystemLog(params?: PaginationParams & { category?: string; action?: string; actorId?: string; tenantId?: string; from?: string; to?: string }) {
+  async getSystemLog(params?: PaginationParams & { action?: string; targetId?: string; actorId?: string; from?: string; to?: string }) {
     const response = await api.get<ApiResponse<PageResponse<SystemAuditLog>>>('/api/v1/audit/system', { params });
     return response.data;
   },

@@ -169,6 +169,7 @@ interface EditableUser {
   role: string;
   displayRole: string;
   permissions: string[];
+  permissionsSource: string | null;
   permissionsLoaded: boolean;
   isDeletable: boolean;
 }
@@ -569,6 +570,7 @@ export default function Settings() {
       role: getPrimaryRole(user.roles) || 'TEACHER',
       displayRole: getDisplayRole(user.roles),
       permissions: user.permissions || [],
+      permissionsSource: user.permissionsSource ?? null,
       permissionsLoaded: Array.isArray(user.permissions),
       isDeletable: !user.roles.includes('TENANT_ADMIN'),
     }));
@@ -721,6 +723,7 @@ export default function Settings() {
     lastName?: string;
     role?: string;
     permissions?: string[];
+    permissionsSource?: string;
   } }) => updateUser(payload.id, payload.data));
   const deleteUserMutation = useMutation((id: string) => deleteUser(id));
   const resetUserPasswordMutation = useMutation((payload: { id: string; newPassword: string }) =>
@@ -836,6 +839,7 @@ export default function Settings() {
         role: getPrimaryRole(freshRoles) || user.role,
         displayRole: getDisplayRole(freshRoles),
         permissions: freshUser.permissions || user.permissions,
+        permissionsSource: freshUser.permissionsSource ?? user.permissionsSource,
         permissionsLoaded: Array.isArray(freshUser.permissions),
         isDeletable: !freshRoles.includes('TENANT_ADMIN'),
       });
@@ -860,10 +864,11 @@ export default function Settings() {
           firstName: data.firstName.trim(),
           lastName: data.lastName.trim(),
           role: data.role,
-          ...(data.permissions ? { permissions: data.permissions } : {}),
+          ...(data.permissionsSource ? { permissionsSource: data.permissionsSource } : {}),
+          ...(data.permissionsSource === 'USER' && data.permissions ? { permissions: data.permissions } : {}),
         },
       });
-      pushToast({ message: 'Пользователь обновлён.', tone: 'success' });
+      pushToast({ message: 'Пользователь обновлён. Для применения прав выполните refresh токена или повторный вход.', tone: 'success' });
     } else {
       if (!tenantId) {
         throw new Error('Tenant context is not set. Перезайдите в систему и попробуйте ещё раз.');
@@ -881,9 +886,10 @@ export default function Settings() {
         password: data.password.trim(),
         role: data.role,
         tenantId,
-        permissions: data.permissions,
+        ...(data.permissionsSource ? { permissionsSource: data.permissionsSource } : {}),
+        ...(data.permissionsSource === 'USER' ? { permissions: data.permissions } : {}),
       });
-      pushToast({ message: 'Пользователь создан.', tone: 'success' });
+      pushToast({ message: 'Пользователь создан. Права применятся после обновления токена/повторного входа.', tone: 'success' });
     }
 
     await refetchUsers();
@@ -1138,7 +1144,7 @@ export default function Settings() {
           file: profilePhotoFile,
           folder: 'avatars',
         });
-        nextPhotoUrl = uploadResult.fileName;
+        nextPhotoUrl = uploadResult.data?.fileName || nextPhotoUrl;
       }
 
       await updatePersonalProfileMutation.mutate({
@@ -1254,7 +1260,7 @@ export default function Settings() {
 
       if (companyLogoFile) {
         const uploadResult = await uploadCompanyLogoMutation.mutate(companyLogoFile);
-        nextLogoUrl = uploadResult.logoUrl ?? nextLogoUrl;
+        nextLogoUrl = uploadResult.data?.logoUrl ?? nextLogoUrl;
       }
 
       await updateCompanyMutation.mutate(
@@ -1448,9 +1454,6 @@ export default function Settings() {
               </div>
             </div>
 
-            <div className="mt-6 rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
-              Этот блок носит информационный характер. Изменение тенанта и тарифа выполняется только через backend-процессы.
-            </div>
           </div>
 
           <div className="crm-surface p-6">

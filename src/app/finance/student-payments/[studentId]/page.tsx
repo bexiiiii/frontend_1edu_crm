@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
 import {
+  PAYMENT_AMOUNT_CHANGE_REASON_LABELS,
   PAYMENT_METHOD_LABELS,
   STUDENT_PAYMENT_STATUS_COLORS,
   STUDENT_PAYMENT_STATUS_LABELS,
@@ -26,6 +27,21 @@ interface PaymentModalState {
   key: number;
   isOpen: boolean;
   subscriptionId?: string;
+  editingPayment?: PaymentRow;
+}
+
+interface PaymentRow {
+  id: string;
+  studentId: string;
+  paidAt: string;
+  paymentMonth: string;
+  amount: number;
+  method: StudentPaymentDto['method'];
+  amountChangeReasonCode: StudentPaymentDto['amountChangeReasonCode'];
+  amountChangeReasonOther: StudentPaymentDto['amountChangeReasonOther'];
+  notes: string | null;
+  subscriptionId: string;
+  courseName: string;
 }
 
 type PaymentHistoryTab = 'SUBSCRIPTIONS' | 'PAYMENTS' | 'MONTHLY';
@@ -148,6 +164,9 @@ export default function StudentPaymentHistoryPage() {
   );
 
   const createPaymentMutation = useMutation((data: CreateStudentPaymentRequest) => studentPaymentsService.create(data));
+  const updatePaymentMutation = useMutation(({ id, data }: { id: string; data: CreateStudentPaymentRequest }) =>
+    studentPaymentsService.update(id, data)
+  );
   const deletePaymentMutation = useMutation((id: string) => studentPaymentsService.delete(id));
 
   const studentName = useMemo(() => {
@@ -220,21 +239,12 @@ export default function StudentPaymentHistoryPage() {
     }));
   }, [courseMap, historyData]);
 
-  const paymentRows = useMemo(() => {
+  const paymentRows = useMemo<PaymentRow[]>(() => {
     if (!historyData) {
       return [];
     }
 
-    const rows: Array<{
-      id: string;
-      paidAt: string;
-      paymentMonth: string;
-      amount: number;
-      method: StudentPaymentDto['method'];
-      notes: string | null;
-      subscriptionId: string;
-      courseName: string;
-    }> = [];
+    const rows: PaymentRow[] = [];
 
     historyData.subscriptions.forEach((subscription) => {
       const courseName = courseMap.get(subscription.courseId || '') || subscription.courseId || 'Без курса';
@@ -243,10 +253,13 @@ export default function StudentPaymentHistoryPage() {
         month.payments.forEach((payment) => {
           rows.push({
             id: payment.id,
+            studentId: payment.studentId,
             paidAt: payment.paidAt,
             paymentMonth: payment.paymentMonth,
             amount: payment.amount,
             method: payment.method,
+            amountChangeReasonCode: payment.amountChangeReasonCode,
+            amountChangeReasonOther: payment.amountChangeReasonOther,
             notes: payment.notes,
             subscriptionId: payment.subscriptionId,
             courseName,
@@ -297,6 +310,16 @@ export default function StudentPaymentHistoryPage() {
       key: prev.key + 1,
       isOpen: true,
       subscriptionId,
+      editingPayment: undefined,
+    }));
+  };
+
+  const openEditPayment = (payment: PaymentRow) => {
+    setPaymentModalState((prev) => ({
+      key: prev.key + 1,
+      isOpen: true,
+      subscriptionId: payment.subscriptionId,
+      editingPayment: payment,
     }));
   };
 
@@ -305,21 +328,30 @@ export default function StudentPaymentHistoryPage() {
       ...prev,
       isOpen: false,
       subscriptionId: undefined,
+      editingPayment: undefined,
     }));
   };
 
   const handleCreatePayment = async (data: CreateStudentPaymentRequest) => {
-    await createPaymentMutation.mutate(data);
+    if (paymentModalState.editingPayment) {
+      await updatePaymentMutation.mutate({
+        id: paymentModalState.editingPayment.id,
+        data,
+      });
+    } else {
+      await createPaymentMutation.mutate(data);
+    }
+
     closeAddPayment();
     await refetchHistory();
   };
 
-  const handleDeletePayment = async (payment: StudentPaymentDto) => {
+  const handleDeletePayment = async (paymentId: string) => {
     if (!confirm('Удалить этот платёж?')) {
       return;
     }
 
-    await deletePaymentMutation.mutate(payment.id);
+    await deletePaymentMutation.mutate(paymentId);
     await refetchHistory();
   };
 
@@ -477,6 +509,7 @@ export default function StudentPaymentHistoryPage() {
                       <th className="crm-table-th">Курс</th>
                       <th className="crm-table-th">Сумма</th>
                       <th className="crm-table-th">Метод</th>
+                      <th className="crm-table-th">Причина изменения суммы</th>
                       <th className="crm-table-th">Комментарий</th>
                       <th className="crm-table-th">Действия</th>
                     </tr>
@@ -494,33 +527,43 @@ export default function StudentPaymentHistoryPage() {
                           </td>
                           <td className="crm-table-cell">{formatMoney(payment.amount)}</td>
                           <td className="crm-table-cell">{PAYMENT_METHOD_LABELS[payment.method]}</td>
+                          <td className="crm-table-cell">
+                            {payment.amountChangeReasonCode
+                              ? `${PAYMENT_AMOUNT_CHANGE_REASON_LABELS[payment.amountChangeReasonCode]}${
+                                  payment.amountChangeReasonCode === 'OTHER' && payment.amountChangeReasonOther
+                                    ? `: ${payment.amountChangeReasonOther}`
+                                    : ''
+                                }`
+                              : '—'}
+                          </td>
                           <td className="crm-table-cell">{payment.notes || '—'}</td>
                           <td className="crm-table-cell">
-                            <button
-                              type="button"
-                              onClick={() => void handleDeletePayment({
-                                id: payment.id,
-                                studentId,
-                                subscriptionId: payment.subscriptionId,
-                                amount: payment.amount,
-                                paidAt: payment.paidAt,
-                                paymentMonth: payment.paymentMonth,
-                                method: payment.method,
-                                notes: payment.notes,
-                                createdAt: payment.paidAt,
-                              })}
-                              disabled={deletePaymentMutation.loading}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#c34c4c] transition-colors hover:bg-[#fff1f1] disabled:cursor-not-allowed disabled:opacity-50"
-                              title="Удалить платёж"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditPayment(payment)}
+                                disabled={updatePaymentMutation.loading || deletePaymentMutation.loading}
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Редактировать платёж"
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeletePayment(payment.id)}
+                                disabled={deletePaymentMutation.loading || updatePaymentMutation.loading}
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#c34c4c] transition-colors hover:bg-[#fff1f1] disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Удалить платёж"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr className="crm-table-row">
-                        <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                        <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                           Платежей пока нет
                         </td>
                       </tr>
@@ -589,7 +632,20 @@ export default function StudentPaymentHistoryPage() {
         lockStudent
         subscriptions={paymentSubscriptionOptions}
         defaultSubscriptionId={paymentModalState.subscriptionId}
-        isSubmitting={createPaymentMutation.loading}
+        initialValues={paymentModalState.editingPayment ? {
+          studentId: paymentModalState.editingPayment.studentId,
+          subscriptionId: paymentModalState.editingPayment.subscriptionId,
+          amount: paymentModalState.editingPayment.amount,
+          paidAt: paymentModalState.editingPayment.paidAt,
+          paymentMonth: paymentModalState.editingPayment.paymentMonth,
+          method: paymentModalState.editingPayment.method,
+          amountChangeReasonCode: paymentModalState.editingPayment.amountChangeReasonCode || undefined,
+          amountChangeReasonOther: paymentModalState.editingPayment.amountChangeReasonOther || undefined,
+          notes: paymentModalState.editingPayment.notes || undefined,
+        } : undefined}
+        title={paymentModalState.editingPayment ? 'Редактировать платёж студента' : 'Записать платёж студента'}
+        requireReason={Boolean(paymentModalState.editingPayment)}
+        isSubmitting={createPaymentMutation.loading || updatePaymentMutation.loading}
       />
     </div>
   );

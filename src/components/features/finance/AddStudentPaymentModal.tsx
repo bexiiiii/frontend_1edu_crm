@@ -3,8 +3,15 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { PAYMENT_METHOD_LABELS } from '@/constants/finance';
-import type { CreateStudentPaymentRequest, PaymentMethod } from '@/lib/api';
+import {
+  PAYMENT_AMOUNT_CHANGE_REASON_OPTIONS,
+  PAYMENT_METHOD_LABELS,
+} from '@/constants/finance';
+import type {
+  CreateStudentPaymentRequest,
+  PaymentAmountChangeReasonCode,
+  PaymentMethod,
+} from '@/lib/api';
 
 interface SubscriptionOption {
   id: string;
@@ -26,6 +33,9 @@ interface AddStudentPaymentModalProps {
   lockStudent?: boolean;
   subscriptions: SubscriptionOption[];
   defaultSubscriptionId?: string;
+  initialValues?: Partial<CreateStudentPaymentRequest>;
+  title?: string;
+  requireReason?: boolean;
   isSubmitting?: boolean;
 }
 
@@ -63,15 +73,20 @@ export const AddStudentPaymentModal = ({
   lockStudent = false,
   subscriptions,
   defaultSubscriptionId,
+  initialValues,
+  title = 'Записать платёж студента',
+  requireReason = false,
   isSubmitting = false,
 }: AddStudentPaymentModalProps) => {
-  const [studentId, setStudentId] = useState(defaultStudentId || '');
-  const [subscriptionId, setSubscriptionId] = useState(defaultSubscriptionId || subscriptions[0]?.id || '');
-  const [amount, setAmount] = useState('');
-  const [paidAt, setPaidAt] = useState(getTodayDate());
-  const [paymentMonth, setPaymentMonth] = useState(getCurrentMonth());
-  const [method, setMethod] = useState<PaymentMethod>('CARD');
-  const [notes, setNotes] = useState('');
+  const [studentId, setStudentId] = useState(initialValues?.studentId || defaultStudentId || '');
+  const [subscriptionId, setSubscriptionId] = useState(initialValues?.subscriptionId || defaultSubscriptionId || subscriptions[0]?.id || '');
+  const [amount, setAmount] = useState(initialValues?.amount != null ? String(initialValues.amount) : '');
+  const [paidAt, setPaidAt] = useState(initialValues?.paidAt || getTodayDate());
+  const [paymentMonth, setPaymentMonth] = useState(initialValues?.paymentMonth || getCurrentMonth());
+  const [method, setMethod] = useState<PaymentMethod>(initialValues?.method || 'CARD');
+  const [amountChangeReasonCode, setAmountChangeReasonCode] = useState<PaymentAmountChangeReasonCode | ''>(initialValues?.amountChangeReasonCode || '');
+  const [amountChangeReasonOther, setAmountChangeReasonOther] = useState(initialValues?.amountChangeReasonOther || '');
+  const [notes, setNotes] = useState(initialValues?.notes || '');
   const [error, setError] = useState<string | null>(null);
 
   const selectedStudent = useMemo(
@@ -118,6 +133,26 @@ export const AddStudentPaymentModal = ({
       return;
     }
 
+    if (requireReason && !amountChangeReasonCode) {
+      setError('Выберите причину изменения суммы.');
+      return;
+    }
+
+    if (amountChangeReasonCode === 'OTHER' && !amountChangeReasonOther.trim()) {
+      setError('Для причины "Другое" заполните пояснение.');
+      return;
+    }
+
+    if (amountChangeReasonCode && amountChangeReasonCode !== 'OTHER' && amountChangeReasonOther.trim()) {
+      setError('Пояснение заполняется только для причины "Другое".');
+      return;
+    }
+
+    if (!amountChangeReasonCode && amountChangeReasonOther.trim()) {
+      setError('Сначала выберите причину изменения суммы.');
+      return;
+    }
+
     try {
       await onSave({
         studentId,
@@ -126,6 +161,9 @@ export const AddStudentPaymentModal = ({
         paidAt,
         paymentMonth,
         method,
+        amountChangeReasonCode: amountChangeReasonCode || undefined,
+        amountChangeReasonOther:
+          amountChangeReasonCode === 'OTHER' ? amountChangeReasonOther.trim() : undefined,
         notes: notes.trim() || undefined,
       });
     } catch (submitError) {
@@ -137,7 +175,7 @@ export const AddStudentPaymentModal = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Записать платёж студента"
+      title={title}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
@@ -204,6 +242,35 @@ export const AddStudentPaymentModal = ({
             type="month"
             value={paymentMonth}
             onChange={(event) => setPaymentMonth(event.target.value)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Select
+            label="Причина изменения суммы"
+            value={amountChangeReasonCode}
+            onChange={(event) => {
+              const nextCode = event.target.value as PaymentAmountChangeReasonCode | '';
+              setAmountChangeReasonCode(nextCode);
+              if (nextCode !== 'OTHER') {
+                setAmountChangeReasonOther('');
+              }
+            }}
+          >
+            <option value="">Не выбрано</option>
+            {PAYMENT_AMOUNT_CHANGE_REASON_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+
+          <Input
+            label="Пояснение причины"
+            value={amountChangeReasonOther}
+            onChange={(event) => setAmountChangeReasonOther(event.target.value)}
+            placeholder="Только для причины «Другое»"
+            disabled={amountChangeReasonCode !== 'OTHER'}
           />
         </div>
 

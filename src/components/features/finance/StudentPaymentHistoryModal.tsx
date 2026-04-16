@@ -2,6 +2,7 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import {
+  PAYMENT_AMOUNT_CHANGE_REASON_LABELS,
   PAYMENT_METHOD_LABELS,
   STUDENT_PAYMENT_STATUS_COLORS,
   STUDENT_PAYMENT_STATUS_LABELS,
@@ -162,6 +163,15 @@ export const StudentPaymentHistoryModal = ({
                                     <span>{formatDate(payment.paidAt)}</span>
                                     <span>{PAYMENT_METHOD_LABELS[payment.method]}</span>
                                     <span>Месяц: {payment.paymentMonth}</span>
+                                    <span>
+                                      Причина: {payment.amountChangeReasonCode
+                                        ? `${PAYMENT_AMOUNT_CHANGE_REASON_LABELS[payment.amountChangeReasonCode]}${
+                                            payment.amountChangeReasonCode === 'OTHER' && payment.amountChangeReasonOther
+                                              ? `: ${payment.amountChangeReasonOther}`
+                                              : ''
+                                          }`
+                                        : '—'}
+                                    </span>
                                   </div>
                                   {payment.notes ? (
                                     <p className="text-sm text-[#556070]">{payment.notes}</p>

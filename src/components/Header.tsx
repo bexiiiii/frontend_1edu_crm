@@ -13,6 +13,14 @@ type SearchItem = {
   description?: string;
 };
 
+function toLowerSafe(value: unknown): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.toLowerCase();
+}
+
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/kanban': 'Канбан',
@@ -91,14 +99,14 @@ export default function Header({
       label: `Аналитика: ${report.label}`,
       href: `/analytics/${report.slug}`,
       description: report.description,
-      keywords: ['аналитика', 'analytics', report.slug, report.label.toLowerCase()],
+      keywords: ['аналитика', 'analytics', report.slug, toLowerSafe(report.label)],
     }));
 
     const systemItems: SearchItem[] = Object.values(SYSTEM_PAGES_BY_SLUG).map((page) => ({
       label: page.title,
       href: `/system/${page.slug}`,
       description: page.badge,
-      keywords: ['система', 'ошибка', 'system', page.slug, page.title.toLowerCase(), page.badge.toLowerCase()],
+      keywords: ['система', 'ошибка', 'system', page.slug, toLowerSafe(page.title), toLowerSafe(page.badge)],
     }));
 
     return [...STATIC_SEARCH_ITEMS, ...analyticsItems, ...systemItems];

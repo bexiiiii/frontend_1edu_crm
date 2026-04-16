@@ -34,8 +34,10 @@ export interface UserDto {
   email: string;
   firstName: string;
   lastName: string;
+  staffId: string | null;
   roles: string[];
   permissions?: string[];
+  permissionsSource?: string | null;
   enabled: boolean;
   photoUrl: string | null;
   language: string | null;
@@ -50,6 +52,7 @@ export interface CreateUserRequest {
   role: string;
   tenantId?: string;
   permissions?: string[];
+  permissionsSource?: string;
 }
 
 export interface TokenResponse {
@@ -462,6 +465,7 @@ export interface UpdateTaskRequest extends Partial<CreateTaskRequest> {
 
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'REFUND';
 export type TransactionStatus = 'PENDING' | 'COMPLETED' | 'CANCELLED';
+export type AmountChangeReasonCode = 'DISCOUNT' | 'PENALTY' | 'REFUND_ADJUSTMENT' | 'MANUAL_CORRECTION' | 'OTHER';
 
 export interface TransactionDto {
   id: string;
@@ -473,6 +477,8 @@ export interface TransactionDto {
   description: string | null;
   transactionDate: string;
   studentId: string | null;
+  amountChangeReasonCode: AmountChangeReasonCode | null;
+  amountChangeReasonOther: string | null;
   staffId: string | null;
   salaryMonth: string | null;
   notes: string | null;
@@ -489,6 +495,9 @@ export interface CreateTransactionRequest {
   description?: string;
   transactionDate: string;
   studentId?: string;
+  staffId?: string;
+  amountChangeReasonCode?: AmountChangeReasonCode;
+  amountChangeReasonOther?: string;
   salaryMonth?: string;
   notes?: string;
 }
@@ -646,10 +655,14 @@ export type ExpenseCategoryDto = FinanceCategoryConfigDto;
 
 export interface TenantAuditLog {
   id: string;
+  tenantId: string;
   category: string;
   action: string;
   actorId: string;
+  actorName: string | null;
+  targetType: string;
   targetId: string;
+  targetName: string | null;
   details: Record<string, unknown>;
   timestamp: string;
 }
@@ -1004,6 +1017,8 @@ export interface SalaryPaymentDto {
   amount: number;
   currency: string;
   paymentDate: string;
+  amountChangeReasonCode?: AmountChangeReasonCode | null;
+  amountChangeReasonOther?: string | null;
   notes: string | null;
   status: TransactionStatus;
   createdAt: string;
@@ -1066,16 +1081,23 @@ export interface CreateSalaryPaymentRequest {
   amount: number;
   currency: string;
   paymentDate: string;
+  amountChangeReasonCode?: AmountChangeReasonCode;
+  amountChangeReasonOther?: string;
   notes?: string;
 }
+
+export type UpdateSalaryPaymentRequest = Partial<CreateSalaryPaymentRequest>;
 
 // ─── Audit (System) ────────────────────────────────────────────
 
 export interface SystemAuditLog {
   id: string;
   action: string;
+  targetType: string;
   actorId: string;
+  actorName: string | null;
   targetId: string;
+  targetName: string | null;
   details: Record<string, unknown>;
   timestamp: string;
 }
@@ -1083,6 +1105,7 @@ export interface SystemAuditLog {
 // ─── Payments ───────────────────────────────────────────────────
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
+export type PaymentAmountChangeReasonCode = 'PARTIAL_PAYMENT' | 'DISCOUNT_APPLIED' | 'DEBT_REPAYMENT' | 'MANUAL_CORRECTION' | 'OTHER';
 
 export interface StudentPaymentDto {
   id: string;
@@ -1092,6 +1115,8 @@ export interface StudentPaymentDto {
   paidAt: string;
   paymentMonth: string;
   method: PaymentMethod;
+  amountChangeReasonCode: PaymentAmountChangeReasonCode | null;
+  amountChangeReasonOther: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -1103,5 +1128,9 @@ export interface CreateStudentPaymentRequest {
   paidAt: string;
   paymentMonth: string;
   method: PaymentMethod;
+  amountChangeReasonCode?: PaymentAmountChangeReasonCode;
+  amountChangeReasonOther?: string;
   notes?: string;
 }
+
+export type UpdateStudentPaymentRequest = Partial<CreateStudentPaymentRequest>;
