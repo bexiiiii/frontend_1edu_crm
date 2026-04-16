@@ -15,8 +15,11 @@ export const filesService = {
 
   /** Get a presigned URL (15 min) for an object in MinIO */
   async getPresignedUrl(objectName: string) {
+    const encodedObjectName = encodeURIComponent(objectName);
     const response = await api.get<ApiResponse<string>>('/api/v1/files/presigned-url', {
-      params: { objectName },
+      paramsSerializer: {
+        serialize: () => `objectName=${encodedObjectName}`,
+      },
     });
     return response.data;
   },
