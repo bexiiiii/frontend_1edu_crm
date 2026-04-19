@@ -678,10 +678,9 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
         ? await settingsService.getGoogleDriveOAuthConnectUrl()
         : await settingsService.getYandexDiskOAuthConnectUrl();
 
-      const oauthUrl = response.data;
+      const oauthUrl = response.message || response.data;
       if (oauthUrl) {
-        window.open(oauthUrl, '_blank', 'noopener,noreferrer');
-        pushToast({ message: 'Открываем страницу авторизации...', tone: 'info' });
+        window.location.href = oauthUrl;
       } else {
         pushToast({ message: 'OAuth URL не доступен. Попробуйте позже.', tone: 'error' });
       }

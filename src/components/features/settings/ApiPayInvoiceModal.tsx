@@ -1,6 +1,6 @@
 'use client';
 
-import { type ChangeEvent, useMemo, useState } from 'react';
+import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,6 @@ import {
   apiPayInvoicesService,
   studentsService,
   type ContactRecipientField,
-  type GenerateApiPayInvoicesResponse,
   type StudentDto,
 } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
@@ -44,9 +43,10 @@ interface ApiPayInvoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialStudentId?: string | null;
 }
 
-export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess }: ApiPayInvoiceModalProps) => {
+export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentId }: ApiPayInvoiceModalProps) => {
   const [search, setSearch] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<StudentDto | null>(null);
   const [recipientField, setRecipientField] = useState<ContactRecipientField>('PHONE');
@@ -60,6 +60,16 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess }: ApiPayInvoice
   );
 
   const students = useMemo(() => studentsPage?.content ?? [], [studentsPage]);
+
+  // Pre-select student when modal opens from the invoice list action
+  useEffect(() => {
+    if (isOpen && initialStudentId && students.length > 0) {
+      const student = students.find((s) => s.id === initialStudentId);
+      if (student && !selectedStudent) {
+        setSelectedStudent(student);
+      }
+    }
+  }, [isOpen, initialStudentId, students, selectedStudent]);
 
   const filteredStudents = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -104,11 +114,10 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess }: ApiPayInvoice
         body.amount = amountNum;
       }
 
-      const response = await apiPayInvoicesService.generate(body as { month?: string; studentId?: string; recipientField?: string; amount?: number });
-      const result = response.data as GenerateApiPayInvoicesResponse;
+      await apiPayInvoicesService.createSingle(body as { studentId: string; subscriptionId?: string; recipientField: string; amount?: number });
       pushToast({
-        message: `Счета сгенерированы: ${result.generated} создано, ${result.skipped} пропущено, ${result.failed} ошибка`,
-        tone: result.failed > 0 ? 'warning' : 'success',
+        message: 'Счет успешно создан.',
+        tone: 'success',
       });
       onSuccess?.();
       handleClose();

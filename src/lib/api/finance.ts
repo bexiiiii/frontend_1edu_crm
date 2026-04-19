@@ -175,6 +175,12 @@ export const apiPayInvoicesService = {
     return response.data;
   },
 
+  /** Create single ApiPay invoice */
+  async createSingle(data: { studentId: string; subscriptionId?: string; recipientField: string; amount?: number }) {
+    const response = await api.post<ApiResponse<ApiPayInvoiceDto>>('/api/v1/payments/apipay/invoices/single', data);
+    return response.data;
+  },
+
   /** List ApiPay invoices */
   async getAll(params?: { month?: string; status?: ApiPayInvoiceStatus }) {
     const response = await api.get<ApiResponse<ApiPayInvoiceDto[]>>('/api/v1/payments/apipay/invoices', { params });

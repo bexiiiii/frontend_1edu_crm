@@ -72,6 +72,18 @@ function formatDateTime(value: string | null): string {
   });
 }
 
+function formatShortId(value: string): string {
+  if (!value) {
+    return '—';
+  }
+
+  if (value.length <= 12) {
+    return value;
+  }
+
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
 function getStudentDisplayName(student: {
   fullName?: string | null;
   firstName?: string | null;
@@ -123,6 +135,7 @@ export default function ApiPayInvoicesPage() {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ApiPayInvoiceStatus>('all');
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [invoiceModalInitialStudentId, setInvoiceModalInitialStudentId] = useState<string | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<ApiPayInvoiceDto | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
 
@@ -203,7 +216,10 @@ export default function ApiPayInvoicesPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setInvoiceModalOpen(true)}
+              onClick={() => {
+                setInvoiceModalInitialStudentId(null);
+                setInvoiceModalOpen(true);
+              }}
               className="inline-flex min-h-9 items-center justify-center rounded-xl border border-[#467aff] bg-[#467aff] px-4 text-sm font-medium text-white transition-colors hover:bg-[#3568eb]"
             >
               Создать счет
@@ -279,16 +295,17 @@ export default function ApiPayInvoicesPage() {
             <table className="w-full min-w-312.5">
               <thead className="crm-table-head">
                 <tr>
-                  <th className="crm-table-th">#</th>
-                  <th className="crm-table-th">Кому</th>
-                  <th className="crm-table-th">Как отправили</th>
-                  <th className="crm-table-th">Сумма</th>
-                  <th className="crm-table-th">Период</th>
-                  <th className="crm-table-th">Отправлено</th>
-                  <th className="crm-table-th">Оплачено</th>
-                  <th className="crm-table-th">Статус оплаты</th>
-                  <th className="crm-table-th">Статус ApiPay</th>
-                  <th className="crm-table-th">Результат</th>
+                  <th className="crm-table-th !px-4 !py-2.5">#</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Кому</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Как отправили</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Сумма</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Период</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Отправлено</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Оплачено</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Статус оплаты</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Статус ApiPay</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Результат</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Действия</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
@@ -299,32 +316,32 @@ export default function ApiPayInvoicesPage() {
 
                     return (
                       <tr key={invoice.id} className="crm-table-row align-top">
-                        <td className="crm-table-cell">{index + 1}</td>
+                        <td className="crm-table-cell !px-4 !py-2.5">{index + 1}</td>
 
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell !px-4 !py-2.5">
                           <div className="space-y-0.5">
                             <div className="text-sm font-semibold text-[#1f2530]">{studentName}</div>
-                            <div className="text-xs text-[#7d8795]">Student ID: {invoice.studentId}</div>
-                            <div className="text-xs text-[#7d8795]">Subscription: {invoice.subscriptionId}</div>
+                            <div className="text-xs text-[#7d8795]">Student ID: {formatShortId(invoice.studentId)}</div>
+                            <div className="text-xs text-[#7d8795]">Subscription: {formatShortId(invoice.subscriptionId)}</div>
                           </div>
                         </td>
 
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell !px-4 !py-2.5">
                           <div className="space-y-0.5">
                             <div className="text-sm text-[#1f2530]">{RECIPIENT_FIELD_LABELS[invoice.recipientField]}</div>
                             <div className="text-xs text-[#7d8795]">{invoice.recipientValue || '—'}</div>
                           </div>
                         </td>
 
-                        <td className="crm-table-cell font-medium text-[#1f2530]">
+                        <td className="crm-table-cell !px-4 !py-2.5 font-medium text-[#1f2530]">
                           {formatMoney(invoice.amount, invoice.currency)}
                         </td>
 
-                        <td className="crm-table-cell text-sm text-[#374151]">{invoice.paymentMonth}</td>
-                        <td className="crm-table-cell text-sm text-[#374151]">{formatDateTime(invoice.createdAt)}</td>
-                        <td className="crm-table-cell text-sm text-[#374151]">{formatDateTime(invoice.paidAt)}</td>
+                        <td className="crm-table-cell !px-4 !py-2.5 text-sm text-[#374151]">{invoice.paymentMonth}</td>
+                        <td className="crm-table-cell !px-4 !py-2.5 text-sm text-[#374151]">{formatDateTime(invoice.createdAt)}</td>
+                        <td className="crm-table-cell !px-4 !py-2.5 text-sm text-[#374151]">{formatDateTime(invoice.paidAt)}</td>
 
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell !px-4 !py-2.5">
                           <span
                             className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${paymentState.className}`}
                           >
@@ -332,7 +349,7 @@ export default function ApiPayInvoicesPage() {
                           </span>
                         </td>
 
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell !px-4 !py-2.5">
                           <span
                             className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${APIPAY_STATUS_COLORS[invoice.status]}`}
                           >
@@ -340,7 +357,7 @@ export default function ApiPayInvoicesPage() {
                           </span>
                         </td>
 
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell !px-4 !py-2.5">
                           <div className="space-y-1">
                             <button
                               type="button"
@@ -372,12 +389,27 @@ export default function ApiPayInvoicesPage() {
                             ) : null}
                           </div>
                         </td>
+
+                        <td className="crm-table-cell !px-4 !py-2.5">
+                          {invoice.status !== 'PAID' && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                  setInvoiceModalInitialStudentId(invoice.studentId);
+                                  setInvoiceModalOpen(true);
+                                }}
+                                className="inline-flex min-h-7 items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:border-emerald-700 hover:bg-emerald-700"
+                            >
+                              Выставить счет
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={11} className="crm-table-cell !px-4 !py-2.5 py-10 text-center text-sm text-[#8a93a3]">
                       По выбранным фильтрам инвойсы не найдены
                     </td>
                   </tr>
@@ -390,7 +422,10 @@ export default function ApiPayInvoicesPage() {
 
       <ApiPayInvoiceModal
         isOpen={invoiceModalOpen}
-        onClose={() => setInvoiceModalOpen(false)}
+        onClose={() => {
+          setInvoiceModalOpen(false);
+        }}
+        initialStudentId={invoiceModalInitialStudentId}
         onSuccess={() => void refetchInvoices()}
       />
 
