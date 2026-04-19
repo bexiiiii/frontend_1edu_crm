@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Edit2, Eye, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Edit2, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
-import { ClassDetailModal } from '@/components/features/classes/ClassDetailModal';
 import {
   COURSE_FORMATS,
   COURSE_STATUSES,
@@ -121,9 +122,14 @@ function applyCoursePayload(course: CourseDto, payload: CourseSavePayload): Cour
 }
 
 export default function Classes() {
-  const [detailOpen, setDetailOpen] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const editCourseIdFromQuery = searchParams.get('editCourseId');
+
   const [selectedCourse, setSelectedCourse] = useState<CourseListItem | null>(null);
   const [courseOverrides, setCourseOverrides] = useState<Record<string, CourseDto>>({});
+  const [handledEditCourseId, setHandledEditCourseId] = useState<string | null>(null);
   const [modalState, setModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -296,7 +302,6 @@ export default function Classes() {
 
   const openEditModal = async (course: CourseListItem) => {
     setSelectedCourse(course);
-    setDetailOpen(false);
 
     let sourceCourse = course;
 
@@ -318,6 +323,30 @@ export default function Classes() {
       initialValues: toFormValues(sourceCourse),
     }));
   };
+
+  useEffect(() => {
+    if (!editCourseIdFromQuery || isLoading) {
+      return;
+    }
+
+    if (handledEditCourseId === editCourseIdFromQuery) {
+      return;
+    }
+
+    const target = courses.find((course) => course.id === editCourseIdFromQuery);
+    if (!target) {
+      return;
+    }
+
+    void openEditModal(target);
+    setHandledEditCourseId(editCourseIdFromQuery);
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete('editCourseId');
+
+    const nextUrl = nextParams.toString() ? `${pathname}?${nextParams.toString()}` : pathname;
+    router.replace(nextUrl);
+  }, [courses, editCourseIdFromQuery, handledEditCourseId, isLoading, pathname, router, searchParams]);
 
   const handleSaveCourse = async (data: CourseSavePayload) => {
     let savedCourse: CourseDto;
@@ -364,11 +393,6 @@ export default function Classes() {
     await refetch();
   };
 
-  const handleViewCourse = (course: CourseListItem) => {
-    setSelectedCourse(course);
-    setDetailOpen(true);
-  };
-
   const handleDeleteCourse = async (course?: CourseListItem | null) => {
     const target = course ?? selectedCourse;
     if (!target || !confirm('Вы уверены, что хотите удалить курс?')) {
@@ -376,7 +400,6 @@ export default function Classes() {
     }
 
     await deleteMutation.mutate(target.id);
-    setDetailOpen(false);
     setSelectedCourse(null);
     await refetch();
   };
@@ -554,19 +577,19 @@ export default function Classes() {
                         </td>
                         <td className="crm-table-cell">
                           <div className="flex items-center gap-2">
+                            <Link
+                              href={`/classes/${course.id}`}
+                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
+                              title="Карточка курса"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Link>
                             <button
                               onClick={() => void openEditModal(course)}
                               className="rounded-lg p-2 text-[#12998f] transition-colors hover:bg-[#eaf9f7]"
                               title="Редактировать"
                             >
                               <Edit2 className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => handleViewCourse(course)}
-                              className="rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
-                              title="Просмотр"
-                            >
-                              <Eye className="h-4 w-4" />
                             </button>
                             <button
                               onClick={() => handleDeleteCourse(course)}
@@ -605,19 +628,6 @@ export default function Classes() {
         isSubmitting={isSaving}
         title={modalState.courseId ? 'Редактировать курс' : 'Добавить курс'}
         includeStatus={Boolean(modalState.courseId)}
-      />
-
-      <ClassDetailModal
-        isOpen={detailOpen}
-        onClose={() => setDetailOpen(false)}
-        classData={selectedCourse}
-        onEdit={() => {
-          if (selectedCourse) {
-            openEditModal(selectedCourse);
-          }
-        }}
-        onDelete={() => void handleDeleteCourse()}
-        isMutating={isActionMutating}
       />
     </div>
   );
