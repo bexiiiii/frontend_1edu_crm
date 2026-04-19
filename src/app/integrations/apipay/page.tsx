@@ -135,7 +135,12 @@ export default function ApiPayInvoicesPage() {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ApiPayInvoiceStatus>('all');
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
-  const [invoiceModalInitialStudentId, setInvoiceModalInitialStudentId] = useState<string | null>(null);
+  const [invoiceModalInitialData, setInvoiceModalInitialData] = useState<{
+    studentId?: string | null;
+    subscriptionId?: string | null;
+    month?: string | null;
+    recipientField?: ContactRecipientField | null;
+  } | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<ApiPayInvoiceDto | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
 
@@ -163,7 +168,7 @@ export default function ApiPayInvoicesPage() {
     const query = search.trim().toLowerCase();
 
     const sorted = [...(invoices ?? [])].sort((a, b) => {
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
 
     if (!query) {
@@ -217,7 +222,7 @@ export default function ApiPayInvoicesPage() {
             <button
               type="button"
               onClick={() => {
-                setInvoiceModalInitialStudentId(null);
+                setInvoiceModalInitialData(null);
                 setInvoiceModalOpen(true);
               }}
               className="inline-flex min-h-9 items-center justify-center rounded-xl border border-[#467aff] bg-[#467aff] px-4 text-sm font-medium text-white transition-colors hover:bg-[#3568eb]"
@@ -391,11 +396,16 @@ export default function ApiPayInvoicesPage() {
                         </td>
 
                         <td className="crm-table-cell !px-4 !py-2.5">
-                          {invoice.status !== 'PAID' && (
+                          {invoice.status !== 'PAID' && !invoice.paidAt && (
                             <button
                                 type="button"
                                 onClick={() => {
-                                  setInvoiceModalInitialStudentId(invoice.studentId);
+                                  setInvoiceModalInitialData({
+                                    studentId: invoice.studentId,
+                                    subscriptionId: invoice.subscriptionId,
+                                    month: invoice.paymentMonth,
+                                    recipientField: invoice.recipientField,
+                                  });
                                   setInvoiceModalOpen(true);
                                 }}
                                 className="inline-flex min-h-7 items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:border-emerald-700 hover:bg-emerald-700"
@@ -425,7 +435,10 @@ export default function ApiPayInvoicesPage() {
         onClose={() => {
           setInvoiceModalOpen(false);
         }}
-        initialStudentId={invoiceModalInitialStudentId}
+        initialStudentId={invoiceModalInitialData?.studentId}
+        initialSubscriptionId={invoiceModalInitialData?.subscriptionId}
+        initialMonth={invoiceModalInitialData?.month}
+        initialRecipientField={invoiceModalInitialData?.recipientField}
         onSuccess={() => void refetchInvoices()}
       />
 

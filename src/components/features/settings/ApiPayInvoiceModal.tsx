@@ -39,17 +39,50 @@ function getPhoneValue(student: StudentDto, field: ContactRecipientField): strin
   }
 }
 
+function getCurrentYearMonth(): string {
+  const now = new Date();
+  const month = `${now.getMonth() + 1}`.padStart(2, '0');
+  return `${now.getFullYear()}-${month}`;
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { message?: string } } }).response;
+    if (response?.data?.message) {
+      return response.data.message;
+    }
+  }
+
+  return fallbackMessage;
+}
+
 interface ApiPayInvoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
   initialStudentId?: string | null;
+  initialSubscriptionId?: string | null;
+  initialMonth?: string | null;
+  initialRecipientField?: ContactRecipientField | null;
 }
 
-export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentId }: ApiPayInvoiceModalProps) => {
+export const ApiPayInvoiceModal = ({
+  isOpen,
+  onClose,
+  onSuccess,
+  initialStudentId,
+  initialSubscriptionId,
+  initialMonth,
+  initialRecipientField,
+}: ApiPayInvoiceModalProps) => {
   const [search, setSearch] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<StudentDto | null>(null);
   const [recipientField, setRecipientField] = useState<ContactRecipientField>('PHONE');
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentYearMonth());
   const [amountMode, setAmountMode] = useState<'auto' | 'manual'>('auto');
   const [manualAmount, setManualAmount] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -61,15 +94,27 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
 
   const students = useMemo(() => studentsPage?.content ?? [], [studentsPage]);
 
+  // Pre-fill modal fields when opened from "Выставить счет" action
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    setRecipientField(initialRecipientField ?? 'PHONE');
+    setSelectedMonth(initialMonth ?? getCurrentYearMonth());
+  }, [isOpen, initialMonth, initialRecipientField]);
+
   // Pre-select student when modal opens from the invoice list action
   useEffect(() => {
-    if (isOpen && initialStudentId && students.length > 0) {
-      const student = students.find((s) => s.id === initialStudentId);
-      if (student && !selectedStudent) {
-        setSelectedStudent(student);
-      }
+    if (!isOpen || !initialStudentId || students.length === 0) {
+      return;
     }
-  }, [isOpen, initialStudentId, students, selectedStudent]);
+
+    const student = students.find((s) => s.id === initialStudentId);
+    if (student) {
+      setSelectedStudent(student);
+    }
+  }, [isOpen, initialStudentId, students]);
 
   const filteredStudents = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -92,6 +137,11 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
       return;
     }
 
+    if (!selectedMonth) {
+      pushToast({ message: 'Укажите месяц счета.', tone: 'error' });
+      return;
+    }
+
     if (!selectedPhone) {
       pushToast({ message: 'У выбранного ученика нет номера в поле «' + RECIPIENT_FIELD_OPTIONS.find(o => o.value === recipientField)?.label + '».', tone: 'error' });
       return;
@@ -99,10 +149,21 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
 
     setGenerating(true);
     try {
-      const body: Record<string, unknown> = {
+      const body: {
+        studentId: string;
+        recipientField: ContactRecipientField;
+        month: string;
+        subscriptionId?: string;
+        amount?: number;
+      } = {
         studentId: selectedStudent.id,
         recipientField,
+        month: selectedMonth,
       };
+
+      if (initialSubscriptionId && initialStudentId && selectedStudent.id === initialStudentId) {
+        body.subscriptionId = initialSubscriptionId;
+      }
 
       if (amountMode === 'manual') {
         const amountNum = parseFloat(manualAmount.replace(/\s/g, ''));
@@ -114,15 +175,15 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
         body.amount = amountNum;
       }
 
-      await apiPayInvoicesService.createSingle(body as { studentId: string; subscriptionId?: string; recipientField: string; amount?: number });
+      await apiPayInvoicesService.createSingle(body);
       pushToast({
         message: 'Счет успешно создан.',
         tone: 'success',
       });
       onSuccess?.();
       handleClose();
-    } catch {
-      pushToast({ message: 'Не удалось сгенерировать счет.', tone: 'error' });
+    } catch (error) {
+      pushToast({ message: getErrorMessage(error, 'Не удалось создать счет.'), tone: 'error' });
     } finally {
       setGenerating(false);
     }
@@ -134,6 +195,7 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
     setManualAmount('');
     setAmountMode('auto');
     setRecipientField('PHONE');
+    setSelectedMonth(getCurrentYearMonth());
     onClose();
   };
 
@@ -212,6 +274,16 @@ export const ApiPayInvoiceModal = ({ isOpen, onClose, onSuccess, initialStudentI
                 </p>
               </div>
             )}
+
+            <div>
+              <label className="block text-sm font-medium text-[#1f2530]">Месяц счета</label>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => setSelectedMonth(event.target.value)}
+                className="crm-select mt-1"
+              />
+            </div>
 
             {/* Amount mode */}
             <div className="space-y-2">
