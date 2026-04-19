@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { filesService } from '@/lib/api';
 
-const INTERNAL_BUCKET_NAME = 'ondeedu-files';
+const INTERNAL_BUCKET_NAME = process.env.NEXT_PUBLIC_MINIO_BUCKET_NAME || 'ondeedu-files';
 const INTERNAL_FILE_HOSTS = new Set(['minio', 'localhost', '127.0.0.1']);
 const KNOWN_FILE_FOLDERS = ['avatars/', 'documents/', 'reports/'];
 const PRESIGNED_URL_TTL_MS = 14 * 60 * 1000;
@@ -55,19 +55,28 @@ function isResolvableFileValue(value: string): boolean {
       return false;
     }
 
+    // Internal MinIO hosts - need presigned URL resolution
     if (INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
       return true;
     }
 
-    if (url.searchParams.has('objectName')) {
+    // URLs with file/object query parameters need resolution
+    if (['objectName', 'fileName', 'filename', 'key', 'objectKey', 'path'].some((param) => url.searchParams.has(param))) {
       return true;
     }
 
-    const normalizedPathname = url.pathname.replace(/^\/+/, '');
+    let normalizedPathname = url.pathname.replace(/^\/+/, '');
+    try {
+      normalizedPathname = decodeURIComponent(normalizedPathname);
+    } catch {
+      normalizedPathname = url.pathname.replace(/^\/+/, '');
+    }
+
     if (!normalizedPathname) {
       return false;
     }
 
+    // Check for bucket segment in path
     if (normalizedPathname.startsWith(`${INTERNAL_BUCKET_NAME}/`)) {
       return true;
     }
@@ -76,23 +85,48 @@ function isResolvableFileValue(value: string): boolean {
       return true;
     }
 
-    if (KNOWN_FILE_FOLDERS.some((folder) => normalizedPathname.startsWith(folder))) {
+    // Check for known file folders
+    if (KNOWN_FILE_FOLDERS.some((folder) => normalizedPathname.includes(folder))) {
       return true;
     }
 
-    return normalizedPathname.includes('/api/v1/files/');
+    // Backend API file endpoints need resolution
+    if (normalizedPathname.includes('api/v1/files/')) {
+      return true;
+    }
+
+    // External CDN URLs or direct MinIO URLs should be used as-is
+    // Only resolve if they have presigned URL expiration params
+    const hasExpiryParams = url.searchParams.has('X-Amz-Expires') || url.searchParams.has('Expires') || url.searchParams.has('expires');
+    if (hasExpiryParams) {
+      return true;
+    }
+
+    // If it's a fully formed HTTPS URL without expiry params, use as-is
+    return false;
   } catch {
+    // Non-URL values (like object paths) should be resolved
     return true;
   }
 }
 
 function extractObjectNameFromUrl(url: URL): string | null {
-  const objectNameFromQuery = url.searchParams.get('objectName');
-  if (objectNameFromQuery?.trim()) {
-    return normalizeObjectName(objectNameFromQuery);
+  const objectNameQueryKeys = ['objectName', 'fileName', 'filename', 'key', 'objectKey', 'path'];
+
+  for (const queryKey of objectNameQueryKeys) {
+    const objectNameFromQuery = url.searchParams.get(queryKey);
+    if (objectNameFromQuery?.trim()) {
+      return normalizeObjectName(objectNameFromQuery);
+    }
   }
 
-  const normalizedPathname = url.pathname.replace(/^\/+/, '');
+  let normalizedPathname = url.pathname.replace(/^\/+/, '');
+  try {
+    normalizedPathname = decodeURIComponent(normalizedPathname);
+  } catch {
+    normalizedPathname = url.pathname.replace(/^\/+/, '');
+  }
+
   if (!normalizedPathname) {
     return null;
   }
@@ -107,8 +141,11 @@ function extractObjectNameFromUrl(url: URL): string | null {
     return normalizeObjectName(bucketPath);
   }
 
-  if (KNOWN_FILE_FOLDERS.some((folder) => normalizedPathname.startsWith(folder))) {
-    return normalizeObjectName(normalizedPathname);
+  for (const folder of KNOWN_FILE_FOLDERS) {
+    const folderIndex = normalizedPathname.indexOf(folder);
+    if (folderIndex >= 0) {
+      return normalizeObjectName(normalizedPathname.slice(folderIndex));
+    }
   }
 
   if (INTERNAL_FILE_HOSTS.has(url.hostname.toLowerCase())) {
@@ -201,6 +238,20 @@ function extractBucketScopedObjectName(fileValue: string): string | null {
   }
 }
 
+function getRenderableRawUrlFallback(value: string): string {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return '';
+  }
+
+  if (trimmedValue.startsWith('/') || /^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  return '';
+}
+
 async function resolveFileUrl(fileValue: string): Promise<string> {
   const trimmedValue = fileValue.trim();
 
@@ -219,7 +270,7 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
 
   const objectName = extractObjectName(trimmedValue);
   if (!objectName) {
-    return '';
+    return getRenderableRawUrlFallback(trimmedValue);
   }
 
   const bucketScopedObjectName = extractBucketScopedObjectName(trimmedValue);
@@ -261,11 +312,7 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
       }
     }
 
-    if (trimmedValue.startsWith('http://') || trimmedValue.startsWith('https://')) {
-      return trimmedValue;
-    }
-
-    return '';
+    return getRenderableRawUrlFallback(trimmedValue);
   })()
     .catch(() => '')
     .finally(() => {
@@ -278,6 +325,7 @@ async function resolveFileUrl(fileValue: string): Promise<string> {
 
 export function useResolvedFileUrl(fileValue: string | null | undefined): string {
   const rawValue = fileValue?.trim() ?? '';
+  const rawUrlFallback = getRenderableRawUrlFallback(rawValue);
   const [resolvedState, setResolvedState] = useState<{ source: string; url: string }>({
     source: '',
     url: '',
@@ -312,5 +360,9 @@ export function useResolvedFileUrl(fileValue: string | null | undefined): string
     return rawValue;
   }
 
-  return resolvedState.source === rawValue ? resolvedState.url : '';
+  if (resolvedState.source === rawValue) {
+    return resolvedState.url || rawUrlFallback;
+  }
+
+  return rawUrlFallback;
 }

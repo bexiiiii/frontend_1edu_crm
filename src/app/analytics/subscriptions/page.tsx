@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { analyticsService, reportsService } from '@/lib/api';
+import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { downloadBlob } from '@/lib/download';
 import { pushToast } from '@/lib/toast';
@@ -86,9 +86,7 @@ export default function SubscriptionsReportPage() {
     setIsDownloading(true);
 
     try {
-      const { blob, filename } = await reportsService.download({
-        type: 'SUBSCRIPTIONS',
-        format: 'PDF',
+      const { blob, filename } = await analyticsService.exportSubscriptions({
         from: fromDate || undefined,
         to: toDate || undefined,
       });

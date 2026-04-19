@@ -232,7 +232,16 @@ function LeadCardItem({
   isDeleting: boolean;
 }) {
   return (
-    <article className="rounded-xl border border-[#dbe4ec] bg-white p-4 shadow-[0_1px_2px_rgba(14,23,38,0.06)]">
+    <article
+      draggable={!isMovingStage && !isDeleting}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', lead.id);
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      className={`rounded-xl border border-[#dbe4ec] bg-white p-4 shadow-[0_1px_2px_rgba(14,23,38,0.06)] cursor-grab active:cursor-grabbing ${
+        isMovingStage || isDeleting ? 'opacity-50 pointer-events-none' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold text-[#1f2937]">{lead.displayName}</h3>
@@ -316,6 +325,7 @@ function LeadColumnCard({
   onOpenLead,
   onDeleteLead,
   onChangeStage,
+  onDropLead,
   activeStageId,
   activeDeleteId,
 }: {
@@ -324,9 +334,12 @@ function LeadColumnCard({
   onOpenLead: (lead: LeadBoardCard) => void;
   onDeleteLead: (lead: LeadBoardCard) => void;
   onChangeStage: (lead: LeadBoardCard, stage: LeadStage) => void;
+  onDropLead: (leadId: string, stage: LeadStage) => void;
   activeStageId: string | null;
   activeDeleteId: string | null;
 }) {
+  const [isDragOver, setIsDragOver] = useState(false);
+
   return (
     <section className="flex h-full w-72 shrink-0 flex-col rounded-2xl border border-[#dfe6ed] bg-[#f8fafc] p-3 sm:w-80 lg:w-85">
       <header className="flex items-start justify-between gap-2">
@@ -351,7 +364,31 @@ function LeadColumnCard({
         Добавить
       </button>
 
-      <div className={`mt-3 flex-1 overflow-hidden rounded-xl p-2 ${column.accent}`}>
+      <div
+        className={`mt-3 flex-1 overflow-hidden rounded-xl p-2 transition-colors ${
+          isDragOver ? 'ring-2 ring-inset ring-[#467aff] bg-[#eff4ff]' : column.accent
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setIsDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          // We only want to hide the hover effect if we actually leave the column container
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setIsDragOver(false);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          const leadId = e.dataTransfer.getData('text/plain');
+          if (leadId) {
+            onDropLead(leadId, column.stage);
+          }
+        }}
+      >
         <div className="h-full space-y-2 overflow-y-auto pr-1">
           {column.leads.length > 0 ? (
             column.leads.map((lead) => (
@@ -796,6 +833,13 @@ export default function KanbanPage() {
     }
   };
 
+  const handleDropLead = async (leadId: string, stage: LeadStage) => {
+    const lead = leads.find((l) => l.id === leadId);
+    if (!lead || lead.stage === stage) return;
+    
+    await handleMoveLeadStage(lead, stage);
+  };
+
   const totalLeads = leads.length;
   const modalIsSubmitting = createMutation.loading || updateMutation.loading;
   const modalIsDeleting = deleteMutation.loading && activeDeleteId === modalState.leadId;
@@ -863,6 +907,7 @@ export default function KanbanPage() {
                 onOpenLead={openEditModal}
                 onDeleteLead={(lead) => void handleDeleteLead(lead)}
                 onChangeStage={(lead, stage) => void handleMoveLeadStage(lead, stage)}
+                onDropLead={handleDropLead}
                 activeStageId={activeStageId}
                 activeDeleteId={activeDeleteId}
               />

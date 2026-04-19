@@ -2,9 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Loader2 } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
+import { downloadBlob } from '@/lib/download';
+import { pushToast } from '@/lib/toast';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -45,6 +48,7 @@ export default function GroupLoadAnalyticsPage() {
   const [periodPreset, setPeriodPreset] = useState<PresetState>('month');
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: groupLoadData, loading } = useApi(
     () => analyticsService.getGroupLoad({ from: fromDate, to: toDate }),
@@ -104,10 +108,35 @@ export default function GroupLoadAnalyticsPage() {
     setToDate(normalized.to);
   };
 
+  const handleDownloadReport = async () => {
+    setIsDownloading(true);
+
+    try {
+      const { blob, filename } = await analyticsService.exportGroupLoad({
+        from: fromDate || undefined,
+        to: toDate || undefined,
+      });
+      downloadBlob(blob, filename);
+      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
-        <h2 className="text-2xl font-semibold text-[#202938]">Загрузка групп</h2>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h2 className="text-2xl font-semibold text-[#202938]">Загрузка групп</h2>
+          <Button
+            variant="secondary"
+            icon={Download}
+            onClick={() => void handleDownloadReport()}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
+          </Button>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {periodOptions.map((option) => (
@@ -146,7 +175,7 @@ export default function GroupLoadAnalyticsPage() {
       <>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div className="crm-surface p-4">
+        <div className="crm-surface p-5">
           <p className="text-sm text-[#7f8794]">Элементов</p>
           <p className="mt-1 text-2xl font-bold text-[#1f2530]">{summary.total}</p>
         </div>
@@ -172,7 +201,7 @@ export default function GroupLoadAnalyticsPage() {
         </p>
 
         <div className="mt-4 overflow-x-auto">
-          <div className="h-[430px]" style={{ minWidth: `${chartMinWidth}px` }}>
+          <div className="h-107.5" style={{ minWidth: `${chartMinWidth}px` }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 16, right: 20, left: 0, bottom: 92 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" />
@@ -209,7 +238,7 @@ export default function GroupLoadAnalyticsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[920px] w-full">
+          <table className="min-w-230 w-full">
             <thead className="crm-table-head">
               <tr>
                 <th className="crm-table-th">Элемент</th>

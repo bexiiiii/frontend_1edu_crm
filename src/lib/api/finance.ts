@@ -17,6 +17,12 @@ import type {
   CreateSalaryPaymentRequest,
   UpdateSalaryPaymentRequest,
   SalaryPaymentDto,
+  GenerateKpayInvoicesResponse,
+  KpayInvoiceDto,
+  KpayInvoiceStatus,
+  GenerateApiPayInvoicesResponse,
+  ApiPayInvoiceDto,
+  ApiPayInvoiceStatus,
 } from './types';
 
 // ─── Finance Service (Transactions) ────────────────────────────
@@ -138,6 +144,46 @@ export const salaryService = {
   /** Update salary payment */
   async updatePayment(id: string, data: UpdateSalaryPaymentRequest) {
     const response = await api.put<ApiResponse<SalaryPaymentDto>>(`/api/v1/finance/salary/payments/${id}`, data);
+    return response.data;
+  },
+};
+
+export const kpayInvoicesService = {
+  /** Generate KPAY invoices for month */
+  async generate(data?: { month?: string }) {
+    const response = await api.post<ApiResponse<GenerateKpayInvoicesResponse>>('/api/v1/payments/kpay/invoices/generate', data);
+    return response.data;
+  },
+
+  /** List KPAY invoices */
+  async getAll(params?: { month?: string; status?: KpayInvoiceStatus }) {
+    const response = await api.get<ApiResponse<KpayInvoiceDto[]>>('/api/v1/payments/kpay/invoices', { params });
+    return response.data;
+  },
+
+  /** Get KPAY invoice by id */
+  async getById(id: string) {
+    const response = await api.get<ApiResponse<KpayInvoiceDto>>(`/api/v1/payments/kpay/invoices/${id}`);
+    return response.data;
+  },
+};
+
+export const apiPayInvoicesService = {
+  /** Generate ApiPay invoices for month */
+  async generate(data?: { month?: string }) {
+    const response = await api.post<ApiResponse<GenerateApiPayInvoicesResponse>>('/api/v1/payments/apipay/invoices/generate', data);
+    return response.data;
+  },
+
+  /** List ApiPay invoices */
+  async getAll(params?: { month?: string; status?: ApiPayInvoiceStatus }) {
+    const response = await api.get<ApiResponse<ApiPayInvoiceDto[]>>('/api/v1/payments/apipay/invoices', { params });
+    return response.data;
+  },
+
+  /** Get ApiPay invoice by id */
+  async getById(id: string) {
+    const response = await api.get<ApiResponse<ApiPayInvoiceDto>>(`/api/v1/payments/apipay/invoices/${id}`);
     return response.data;
   },
 };

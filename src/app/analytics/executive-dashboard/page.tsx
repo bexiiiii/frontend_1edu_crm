@@ -6,6 +6,7 @@ import {
   Activity,
   CheckCircle2,
   Crown,
+  Download,
   DollarSign,
   Loader2,
   TrendingDown,
@@ -29,8 +30,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
+import { downloadBlob } from '@/lib/download';
+import { pushToast } from '@/lib/toast';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -71,6 +75,7 @@ export default function ExecutiveDashboardPage() {
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
   const [classFilter, setClassFilter] = useState('all');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: execData, loading } = useApi(
     () => analyticsService.getDashboard({ from: fromDate, to: toDate }),
@@ -158,10 +163,37 @@ export default function ExecutiveDashboardPage() {
     setToDate(normalized.to);
   };
 
+  const handleDownloadReport = async () => {
+    setIsDownloading(true);
+
+    try {
+      const { blob, filename } = await analyticsService.exportDashboard({
+        from: fromDate,
+        to: toDate,
+        lessonType: 'ALL',
+      });
+
+      downloadBlob(blob, filename);
+      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
-        <h2 className="text-2xl font-semibold text-[#202938]">Дашборд руководителя</h2>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h2 className="text-2xl font-semibold text-[#202938]">Дашборд руководителя</h2>
+          <Button
+            variant="secondary"
+            icon={Download}
+            onClick={() => void handleDownloadReport()}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
+          </Button>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {periodOptions.map((option) => (

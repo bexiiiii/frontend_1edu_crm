@@ -27,8 +27,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { ANALYTICS_SUBMENU_ITEMS } from '@/constants/analytics';
+import { INTEGRATIONS } from '@/constants/settings-data';
 import { useApi } from '@/hooks/useApi';
-import { notificationsService } from '@/lib/api';
+import { notificationsService, settingsService } from '@/lib/api';
 import { canAccessPath } from '@/lib/rbac';
 import { useAuthStore } from '@/store/authStore';
 
@@ -57,6 +58,11 @@ const HIDDEN_ANALYTICS_SUBMENU_HREFS = new Set([
 const VISIBLE_ANALYTICS_SUBMENU_ITEMS = ANALYTICS_SUBMENU_ITEMS.filter(
   (item) => !HIDDEN_ANALYTICS_SUBMENU_HREFS.has(item.href)
 );
+
+const NAVBAR_INTEGRATION_IDS = ['kpay', 'apipay', 'aisar', 'ftelecom', 'zadarma'] as const;
+const NAVBAR_INTEGRATION_IDS_SET = new Set<string>(NAVBAR_INTEGRATION_IDS);
+const INTEGRATIONS_UPDATED_EVENT = '1edu:integrations-updated';
+const BACKUP_INTEGRATION_IDS = ['google-drive-backup', 'yandex-disk-backup'] as const;
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Главная', href: '/' },
@@ -102,6 +108,7 @@ export default function Sidebar({
   const { logout, user, userEmail, roles, permissions } = useAuthStore();
   const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
   const isNotificationsPage = pathname === '/notifications' || pathname.startsWith('/notifications/');
+  const canOpenSettings = useMemo(() => canAccessPath('/settings', roles, permissions), [permissions, roles]);
 
   const { data: notificationsPageData, refetch: refetchNotifications } = useApi(
     () => notificationsService.getAll({ page: 0, size: 50 }),
@@ -109,6 +116,51 @@ export default function Sidebar({
   );
 
   const latestNotifications = notificationsPageData?.content || [];
+
+  const { data: connectedIntegrationIdsFromApi, refetch: refetchConnectedIntegrationIds } = useApi<string[]>(
+    async () => {
+      if (!canOpenSettings) {
+        return { data: [] };
+      }
+
+      const results = await Promise.allSettled([
+        settingsService.getKpaySettings(),
+        settingsService.getApiPaySettings(),
+        settingsService.getAisarSettings(),
+        settingsService.getFtelecomSettings(),
+        settingsService.getZadarmaSettings(),
+        settingsService.getGoogleDriveBackupSettings(),
+        settingsService.getYandexDiskBackupSettings(),
+      ]);
+
+      const integrationIds = ['kpay', 'apipay', 'aisar', 'ftelecom', 'zadarma', 'google-drive-backup', 'yandex-disk-backup'];
+      const nextConnectedIntegrationIds: string[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value.data.enabled) {
+          nextConnectedIntegrationIds.push(integrationIds[index]);
+        }
+      });
+
+      return { data: nextConnectedIntegrationIds };
+    },
+    [canOpenSettings]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleIntegrationsUpdated = () => {
+      void refetchConnectedIntegrationIds();
+    };
+
+    window.addEventListener(INTEGRATIONS_UPDATED_EVENT, handleIntegrationsUpdated);
+    return () => {
+      window.removeEventListener(INTEGRATIONS_UPDATED_EVENT, handleIntegrationsUpdated);
+    };
+  }, [refetchConnectedIntegrationIds]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -194,6 +246,22 @@ export default function Sidebar({
       })
       .filter((item): item is NavItem => item !== null);
   }, [permissions, roles]);
+
+  const connectedIntegrationIdSet = useMemo(() => {
+    return new Set(connectedIntegrationIdsFromApi || []);
+  }, [connectedIntegrationIdsFromApi]);
+
+  const connectedIntegrations = useMemo(() => {
+    return INTEGRATIONS.filter(
+      (integration) => {
+        const isNavbarIntegration = NAVBAR_INTEGRATION_IDS_SET.has(integration.id);
+        const isBackupIntegration = BACKUP_INTEGRATION_IDS.includes(integration.id as typeof BACKUP_INTEGRATION_IDS[number]);
+        const isConnected = connectedIntegrationIdSet.has(integration.id);
+
+        return (isNavbarIntegration || isBackupIntegration) && isConnected;
+      }
+    );
+  }, [connectedIntegrationIdSet]);
 
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(() => {
     return (
@@ -366,6 +434,56 @@ export default function Sidebar({
               </Link>
             );
           })}
+
+          {canOpenSettings ? (
+            <div className="mt-3 border-t border-[#e8eaee] pt-3">
+              <p className="px-3 text-[11px] font-semibold tracking-[0.12em] text-[#98a1af] uppercase">Интеграции</p>
+              <div className="mt-2 space-y-1">
+                {connectedIntegrations.length > 0 ? (
+                  connectedIntegrations.map((integration) => {
+                    const isInvoiceIntegration = integration.id === 'kpay' || integration.id === 'apipay';
+                    const href = isInvoiceIntegration
+                      ? `/integrations/${integration.id}`
+                      : `/settings?tab=integrations&integration=${integration.id}`;
+                    const isConnected = connectedIntegrationIdSet.has(integration.id);
+
+                    return (
+                      <Link
+                        key={integration.id}
+                        href={href}
+                        className="flex items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-[#8f97a4] transition-colors hover:border-[#e8eaee] hover:bg-[#f7f9fb] hover:text-[#2f3640]"
+                        title={integration.name}
+                      >
+                        {integration.icon ? (
+                          <Image
+                            src={integration.icon}
+                            alt={`${integration.name} logo`}
+                            width={16}
+                            height={16}
+                            className="h-4 w-4 shrink-0 object-contain"
+                          />
+                        ) : (
+                          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-[#edf3ff] text-[10px] font-semibold text-[#315fd0]">
+                            {integration.name.slice(0, 1)}
+                          </span>
+                        )}
+                        <span className="truncate text-[13px] font-medium">{integration.name}</span>
+                        <span
+                          className={clsx(
+                            'ml-auto inline-flex h-2 w-2 rounded-full',
+                            isConnected ? 'bg-emerald-500' : 'bg-[#c4ccd7]'
+                          )}
+                          aria-hidden="true"
+                        />
+                      </Link>
+                    );
+                  })
+                ) : (
+                  <p className="px-3 py-2 text-xs text-[#9aa2ae]">Нет подключенных интеграций</p>
+                )}
+              </div>
+            </div>
+          ) : null}
         </nav>
 
         <div className="mt-auto border-t border-[#e8eaee] pt-3">

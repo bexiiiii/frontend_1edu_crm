@@ -216,15 +216,52 @@ export default function StudentProfilePage() {
     const paymentHistory = paymentHistoryResult?.data ?? null;
     const transactions = transactionsResult?.data.content ?? [];
 
-    const scheduleIds = Array.from(
-      new Set(subscriptions.map((subscription) => subscription.groupId).filter((id): id is string => Boolean(id)))
-    );
-    const courseIds = Array.from(
-      new Set(subscriptions.map((subscription) => subscription.courseId).filter((id): id is string => Boolean(id)))
-    );
     const lessonIds = Array.from(new Set(attendanceHistory.map((row) => row.lessonId))).slice(0, 120);
 
-    const [scheduleEntries, courseEntries, lessonEntries] = await Promise.all([
+    const lessonEntries = await Promise.all(
+      lessonIds.map(async (id) => {
+        try {
+          const response = await lessonsService.getById(id);
+          return [id, response.data] as const;
+        } catch {
+          return [id, null] as const;
+        }
+      })
+    );
+
+    const lessonsById: Record<string, LessonDto> = {};
+    lessonEntries.forEach(([id, value]) => {
+      if (value) {
+        lessonsById[id] = value;
+      }
+    });
+
+    const scheduleIdsSet = new Set<string>();
+    subscriptions.forEach((subscription) => {
+      if (subscription.groupId) scheduleIdsSet.add(subscription.groupId);
+    });
+    Object.values(lessonsById).forEach((lesson) => {
+      if (lesson.groupId) scheduleIdsSet.add(lesson.groupId);
+    });
+
+    const courseIdsSet = new Set<string>();
+    subscriptions.forEach((subscription) => {
+      if (subscription.courseId) courseIdsSet.add(subscription.courseId);
+    });
+    Object.values(lessonsById).forEach((lesson) => {
+      if (lesson.courseId) courseIdsSet.add(lesson.courseId);
+    });
+
+    if (paymentHistory) {
+      paymentHistory.subscriptions.forEach((sub) => {
+        if (sub.courseId) courseIdsSet.add(sub.courseId);
+      });
+    }
+
+    const scheduleIds = Array.from(scheduleIdsSet);
+    const courseIds = Array.from(courseIdsSet);
+
+    const [scheduleEntries, courseEntries] = await Promise.all([
       Promise.all(
         scheduleIds.map(async (id) => {
           try {
@@ -244,22 +281,11 @@ export default function StudentProfilePage() {
             return [id, null] as const;
           }
         })
-      ),
-      Promise.all(
-        lessonIds.map(async (id) => {
-          try {
-            const response = await lessonsService.getById(id);
-            return [id, response.data] as const;
-          } catch {
-            return [id, null] as const;
-          }
-        })
-      ),
+      )
     ]);
 
     const schedulesById: Record<string, ScheduleDto> = {};
     const coursesById: Record<string, CourseDto> = {};
-    const lessonsById: Record<string, LessonDto> = {};
 
     scheduleEntries.forEach(([id, value]) => {
       if (value) {
@@ -270,12 +296,6 @@ export default function StudentProfilePage() {
     courseEntries.forEach(([id, value]) => {
       if (value) {
         coursesById[id] = value;
-      }
-    });
-
-    lessonEntries.forEach(([id, value]) => {
-      if (value) {
-        lessonsById[id] = value;
       }
     });
 
@@ -357,11 +377,13 @@ export default function StudentProfilePage() {
       );
 
       const courseName = matchedSubscription?.courseId
-        ? data.coursesById[matchedSubscription.courseId]?.name || matchedSubscription.courseId
-        : 'Без курса';
+        ? data.coursesById[matchedSubscription.courseId]?.name || 'Неизвестный курс'
+        : subscriptionSummary.courseId
+          ? data.coursesById[subscriptionSummary.courseId]?.name || 'Неизвестный курс'
+          : 'Без курса';
 
       const groupName = matchedSubscription?.groupId
-        ? data.schedulesById[matchedSubscription.groupId]?.name || matchedSubscription.groupId
+        ? data.schedulesById[matchedSubscription.groupId]?.name || 'Удаленная группа'
         : 'Без группы';
 
       subscriptionSummary.months.forEach((month) => {
@@ -403,7 +425,7 @@ export default function StudentProfilePage() {
         const lessonDate = lesson?.lessonDate || '';
         const lessonTime = lesson ? `${lesson.startTime.slice(0, 5)} - ${lesson.endTime.slice(0, 5)}` : '—';
         const groupName = lesson?.groupId
-          ? data.schedulesById[lesson.groupId]?.name || lesson.groupId
+          ? data.schedulesById[lesson.groupId]?.name || 'Удаленная группа'
           : 'Не указана';
 
         return {
@@ -730,12 +752,12 @@ export default function StudentProfilePage() {
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
                         {subscription.groupId
-                          ? data.schedulesById[subscription.groupId]?.name || subscription.groupId
+                          ? data.schedulesById[subscription.groupId]?.name || 'Удаленная группа'
                           : 'Без группы'}
                       </td>
                       <td className="crm-table-cell">
                         {subscription.courseId
-                          ? data.coursesById[subscription.courseId]?.name || subscription.courseId
+                          ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
                           : 'Без курса'}
                       </td>
                       <td className="crm-table-cell">

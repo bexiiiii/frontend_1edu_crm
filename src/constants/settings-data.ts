@@ -92,24 +92,75 @@ export const YES_NO_OPTIONS = [
 
 export const INTEGRATIONS: Integration[] = [
   {
+    id: 'kpay',
+    name: 'KPAY',
+    description: 'Отправляйте счета\nза 2 минуты\nПринимайте оплату на Kaspi прямо из вашей CRM.\nАвтоматическая фиксация платежей и выставление счетов.',
+    icon: '/logo/kpay.png',
+    sideIcons: ['/logo/kaspi-logo.png'],
+  },
+  {
+    id: 'apipay',
+    name: 'ApiPay',
+    description: 'ApiPay.kz — автоматическое выставление счетов в Kaspi Pay с мгновенным подтверждением\nБез переписок с клиентами·Без проверки чеков·Без ручного учёта',
+    icon: '/logo/apipay-logo-color.png',
+    sideIcons: ['/logo/kaspi-logo.png'],
+  },
+  {
+    id: 'aisar',
+    name: 'AISAR',
+    description: 'Омниканальный месенджер для переписки WhatsApp, Telegram и Instagram, а также рассылок и чат-ботов',
+    icon: '/logo/aisar_logo.svg',
+    sideIcons: ['/logo/instagram.svg', '/logo/telegram.svg', '/logo/whatsapp.svg'],
+  },
+  {
+    id: 'ftelecom',
+    name: 'Freedom Telecom',
+    description: 'Виртуальная АТС для бизнеса\nУправляйте бизнесом из любой точки мира! Интегрируйте с CRM-системой и оставайтесь на связи 24/7',
+    icon: '/logo/freedom_telecom.png',
+    sideIcons: ['/logo/phone_ico.svg'],
+  },
+  {
+    id: 'zadarma',
+    name: 'Zadarma',
+    description: 'Сервис облачной телефонии Zadarma позволяет быстро телефонизировать ваш бизнес без лишнего оборудования, проводов и географического присутствия',
+    icon: '/logo/Zadarma_Logo.jpg',
+    sideIcons: ['/logo/phone_ico.svg'],
+  },
+  {
+    id: 'google-drive-backup',
+    name: 'Google Drive Backup',
+    description: 'Резервное копирование данных центра на Google Drive',
+    icon: '/logo/google-drive.svg',
+  },
+  {
+    id: 'yandex-disk-backup',
+    name: 'Yandex Disk Backup',
+    description: 'Резервное копирование данных центра на Yandex Disk',
+    icon: '/logo/yandex-disk.svg',
+  },
+  {
     id: 'instagram',
     name: 'Instagram',
     description: 'Ведите переписки WhatsApp, Telegram и Instagram внутри UmaiCRM',
+    icon: '/logo/instagram.svg',
   },
   {
     id: 'facebook',
     name: 'Facebook',
     description: 'Ведите переписки WhatsApp, Telegram и Instagram внутри UmaiCRM',
+    icon: '/logo/icons8-facebook.svg',
   },
   {
     id: 'whatsapp',
     name: 'WhatsApp',
     description: 'Омниканальный месенджер для переписки WhatsApp, Telegram и Instagram, а также рассылок и чат-ботов',
+    icon: '/logo/whatsapp.svg',
   },
   {
     id: 'sip',
     name: 'SIP интеграция',
     description: 'Анализ разговоров, контроль пропущенных звонков, лидогенерация через SIP телефонию',
+    icon: '/logo/phone_ico.svg',
   },
   {
     id: 'qosymsha',

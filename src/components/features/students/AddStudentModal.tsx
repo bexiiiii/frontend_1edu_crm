@@ -143,7 +143,7 @@ export const AddStudentModal = ({
       setIsUploadingPhoto(true);
       try {
         const uploadResponse = await filesService.upload(selectedPhotoFile, 'avatars');
-        uploadedPhotoUrl = uploadResponse.data.fileName;
+        uploadedPhotoUrl = uploadResponse.data.url || uploadedPhotoUrl;
       } catch (uploadError) {
         throw new Error(getErrorMessage(uploadError) || 'Не удалось загрузить фото ученика.');
       } finally {

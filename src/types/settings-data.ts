@@ -39,4 +39,5 @@ export interface Integration {
   name: string;
   description: string;
   icon?: string;
+  sideIcons?: string[];
 }

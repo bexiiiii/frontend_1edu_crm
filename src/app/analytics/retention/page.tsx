@@ -17,7 +17,7 @@ import {
   getRetentionHeatColor,
   normalizeDateRange,
 } from '@/lib/retention';
-import { analyticsService, reportsService } from '@/lib/api';
+import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { downloadBlob } from '@/lib/download';
 import { pushToast } from '@/lib/toast';
@@ -91,11 +91,10 @@ export default function RetentionPage() {
     setIsDownloading(true);
 
     try {
-      const { blob, filename } = await reportsService.download({
-        type: 'STUDENTS',
-        format: 'PDF',
+      const { blob, filename } = await analyticsService.exportRetention({
         from: normalizedRange.from || undefined,
         to: normalizedRange.to || undefined,
+        cohortType: cohortBasis === 'first_visit' ? 'FIRST_VISIT' : 'FIRST_PAYMENT',
       });
 
       downloadBlob(blob, filename);
@@ -215,11 +214,11 @@ export default function RetentionPage() {
       <>
       <div className="crm-table-wrap overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-[980px] w-full border-collapse">
+          <table className="min-w-245 w-full border-collapse">
             <thead className="crm-table-head">
               <tr>
-                <th className="crm-table-th sticky left-0 z-20 w-[220px] bg-[#f6f8fa]">Когорта</th>
-                <th className="crm-table-th sticky z-20 w-[120px] bg-[#f6f8fa]" style={{ left: 220 }}>
+                <th className="crm-table-th sticky left-0 z-20 w-55 bg-[#f6f8fa]">Когорта</th>
+                <th className="crm-table-th sticky z-20 w-30 bg-[#f6f8fa]" style={{ left: 220 }}>
                   Размер
                 </th>
                 {horizonColumns.map((column) => (

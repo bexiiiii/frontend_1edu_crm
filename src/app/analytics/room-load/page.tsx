@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Button } from '@/components/ui/Button';
-import { analyticsService, reportsService } from '@/lib/api';
+import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { downloadBlob } from '@/lib/download';
 import { pushToast } from '@/lib/toast';
@@ -105,11 +105,10 @@ export default function RoomLoadAnalyticsPage() {
     setIsDownloading(true);
 
     try {
-      const { blob, filename } = await reportsService.download({
-        type: 'ATTENDANCE',
-        format: 'PDF',
+      const { blob, filename } = await analyticsService.exportRoomLoad({
         from: fromDate || undefined,
         to: toDate || undefined,
+        timelineDate: timelineDate || undefined,
       });
 
       downloadBlob(blob, filename);
@@ -191,7 +190,7 @@ export default function RoomLoadAnalyticsPage() {
           Снимок на конец выбранного периода.
         </p>
 
-        <div className="mt-4 h-[380px]">
+        <div className="mt-4 h-95">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 16, right: 20, left: 0, bottom: 52 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" />
@@ -213,7 +212,7 @@ export default function RoomLoadAnalyticsPage() {
           <h3 className="text-base font-semibold text-[#273142]">Детализация по аудиториям</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[900px] w-full">
+          <table className="min-w-225 w-full">
             <thead className="crm-table-head">
               <tr>
                 <th className="crm-table-th">Аудитория</th>
@@ -245,7 +244,7 @@ export default function RoomLoadAnalyticsPage() {
       <div className="crm-surface p-5">
         <h3 className="text-xl font-semibold text-[#202938]">Загруженность по времени (таймлайн)</h3>
 
-        <div className="mt-4 w-full max-w-[280px]">
+        <div className="mt-4 w-full max-w-70">
           <input
             type="date"
             value={timelineDate}

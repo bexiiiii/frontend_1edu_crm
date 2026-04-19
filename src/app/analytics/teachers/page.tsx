@@ -2,9 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Crown, Loader2 } from 'lucide-react';
+import { Crown, Download, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
+import { downloadBlob } from '@/lib/download';
+import { pushToast } from '@/lib/toast';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -29,6 +32,7 @@ export default function TeachersAnalyticsPage() {
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
   const [showFormula, setShowFormula] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: teacherData, loading } = useApi(
     () => analyticsService.getTeachers({ from: fromDate, to: toDate }),
@@ -89,10 +93,36 @@ export default function TeachersAnalyticsPage() {
     setToDate(normalized.to);
   };
 
+  const handleDownloadReport = async () => {
+    setIsDownloading(true);
+
+    try {
+      const { blob, filename } = await analyticsService.exportTeachers({
+        from: fromDate || undefined,
+        to: toDate || undefined,
+      });
+
+      downloadBlob(blob, filename);
+      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
-        <h2 className="text-2xl font-semibold text-[#202938]">Аналитика преподавателей</h2>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h2 className="text-2xl font-semibold text-[#202938]">Аналитика преподавателей</h2>
+          <Button
+            variant="secondary"
+            icon={Download}
+            onClick={() => void handleDownloadReport()}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
+          </Button>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {periodOptions.map((option) => (
@@ -176,8 +206,8 @@ export default function TeachersAnalyticsPage() {
 
       <div className="crm-surface p-5">
         <h3 className="text-xl font-semibold text-[#202938]">Топ по выручке</h3>
-        <div className="mt-4 h-[420px]">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="mt-4 h-105">
+            <ResponsiveContainer width="100%" height="100%">
             <BarChart data={revenueTopChartData} layout="vertical" margin={{ left: 30, right: 20, top: 12, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" />
               <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 12 }} />

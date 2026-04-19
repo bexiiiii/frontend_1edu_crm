@@ -60,6 +60,30 @@ function stringifyDetails(details: Record<string, unknown>): string {
   }
 }
 
+const UUID_LIKE_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function formatAuditIdentifier(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return '—';
+  }
+
+  if (UUID_LIKE_REGEXP.test(normalized)) {
+    return `${normalized.slice(0, 8)}...${normalized.slice(-4)}`;
+  }
+
+  if (normalized.length > 24) {
+    return `${normalized.slice(0, 14)}...${normalized.slice(-6)}`;
+  }
+
+  return normalized;
+}
+
 export default function LogsPage() {
   const roles = useAuthStore((state) => state.roles);
   const isSuperAdmin = roles.includes('SUPER_ADMIN');
@@ -305,17 +329,17 @@ export default function LogsPage() {
             <table className="min-w-300 w-full">
               <thead className="crm-table-head">
                 <tr>
-                  <th className="crm-table-th">#</th>
-                  <th className="crm-table-th">Время</th>
-                  <th className="crm-table-th">Уровень</th>
-                  <th className="crm-table-th">Category</th>
-                  <th className="crm-table-th">Action</th>
-                  <th className="crm-table-th">Actor</th>
-                  <th className="crm-table-th">Actor ID</th>
-                  <th className="crm-table-th">Target Type</th>
-                  <th className="crm-table-th">Target ID</th>
-                  <th className="crm-table-th">Details</th>
-                  <th className="crm-table-th">Действия</th>
+                  <th className="crm-table-th px-4 py-2.5">#</th>
+                  <th className="crm-table-th px-4 py-2.5">Время</th>
+                  <th className="crm-table-th px-4 py-2.5">Уровень</th>
+                  <th className="crm-table-th px-4 py-2.5">Category</th>
+                  <th className="crm-table-th px-4 py-2.5">Action</th>
+                  <th className="crm-table-th px-4 py-2.5">Actor</th>
+                  <th className="crm-table-th px-4 py-2.5">Actor ID</th>
+                  <th className="crm-table-th px-4 py-2.5">Target Type</th>
+                  <th className="crm-table-th px-4 py-2.5">Target ID</th>
+                  <th className="crm-table-th px-4 py-2.5">Details</th>
+                  <th className="crm-table-th px-4 py-2.5">Действия</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
@@ -323,36 +347,48 @@ export default function LogsPage() {
                   filteredLogs.map((log, index) => {
                     const category = 'category' in log ? log.category : log.targetType;
                     const actorName = 'actorName' in log ? log.actorName : null;
+                    const targetName = 'targetName' in log ? log.targetName : null;
                     const targetType = 'targetType' in log ? log.targetType : '—';
                     const level = categoryToLevel(category, log.action);
                     const detailsPreview = stringifyDetails(log.details);
+                    const actorLabel = actorName?.trim() || (log.actorId ? 'Система' : '—');
+                    const targetLabel = targetName?.trim() || formatAuditIdentifier(log.targetId);
+                    const targetLabelTitle = targetName?.trim() ? `${targetName} (${log.targetId || '—'})` : (log.targetId || '—');
 
                     return (
                       <tr key={log.id} className="crm-table-row">
-                        <td className="crm-table-cell">{page * TABLE_PAGE_SIZE + index + 1}</td>
-                        <td className="crm-table-cell">{formatDateTime(log.timestamp)}</td>
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{page * TABLE_PAGE_SIZE + index + 1}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{formatDateTime(log.timestamp)}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">
                           <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${getLevelClass(level)}`}>
                             {level}
                           </span>
                         </td>
-                        <td className="crm-table-cell">{category || '—'}</td>
-                        <td className="crm-table-cell">{log.action}</td>
-                        <td className="crm-table-cell">{actorName || '—'}</td>
-                        <td className="crm-table-cell break-all">{log.actorId || '—'}</td>
-                        <td className="crm-table-cell">{targetType || '—'}</td>
-                        <td className="crm-table-cell break-all">{log.targetId || '—'}</td>
-                        <td className="crm-table-cell">
-                          <div className="max-w-70 truncate text-sm text-[#556070]">{detailsPreview}</div>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{category || '—'}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{log.action}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{actorLabel}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">
+                          <span className="inline-block max-w-32 truncate align-middle" title={log.actorId || '—'}>
+                            {formatAuditIdentifier(log.actorId)}
+                          </span>
                         </td>
-                        <td className="crm-table-cell">
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">{targetType || '—'}</td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">
+                          <span className="inline-block max-w-40 truncate align-middle" title={targetLabelTitle}>
+                            {targetLabel}
+                          </span>
+                        </td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">
+                          <div className="max-w-56 truncate text-xs text-[#556070]">{detailsPreview}</div>
+                        </td>
+                        <td className="crm-table-cell px-4 py-2.5 leading-snug">
                           <button
                             type="button"
                             onClick={() => setSelectedLog(log)}
-                            className="rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
+                            className="rounded-lg p-1.5 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
                             title="Открыть запись"
                           >
-                            <Eye className="h-4 w-4" />
+                            <Eye className="h-3.5 w-3.5" />
                           </button>
                         </td>
                       </tr>
@@ -360,7 +396,7 @@ export default function LogsPage() {
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={11} className="crm-table-cell px-4 py-8 text-center text-xs text-[#8a93a3]">
                       Логи не найдены
                     </td>
                   </tr>

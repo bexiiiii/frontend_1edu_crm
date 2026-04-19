@@ -36,6 +36,15 @@ api.interceptors.request.use((config) => {
     }
 
     if (token) config.headers.Authorization = `Bearer ${token}`;
+
+    if (tenantId && config.headers) {
+      const headers = config.headers as { set?: (name: string, value: string) => void } & Record<string, unknown>;
+      if (typeof headers.set === 'function') {
+        headers.set('X-Tenant-ID', tenantId);
+      } else {
+        headers['X-Tenant-ID'] = tenantId;
+      }
+    }
   }
 
   if (typeof FormData !== 'undefined' && config.data instanceof FormData && config.headers) {
@@ -364,7 +373,7 @@ export { lessonsService } from './api/lessons';
 export { attendanceService } from './api/attendance';
 export { leadsService } from './api/leads';
 export { tasksService } from './api/tasks';
-export { financeService, studentPaymentsService, salaryService } from './api/finance';
+export { financeService, studentPaymentsService, salaryService, kpayInvoicesService, apiPayInvoicesService } from './api/finance';
 export { filesService } from './api/files';
 export { subscriptionsService, priceListService } from './api/subscriptions';
 export { notificationsService } from './api/notifications';

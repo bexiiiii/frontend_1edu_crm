@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, KeyRound, Trash2 } from 'lucide-react';
+import { Plus, Edit2, KeyRound, Loader2, Trash2 } from 'lucide-react';
+import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -199,6 +201,17 @@ const TENANT_PLAN_OPTIONS = [
   { value: 'PROFESSIONAL', label: 'Профессиональный' },
   { value: 'ENTERPRISE', label: 'Enterprise' },
 ];
+
+const WORKING_INTEGRATION_IDS = new Set([
+  'kpay',
+  'apipay',
+  'aisar',
+  'ftelecom',
+  'zadarma',
+  'google-drive-backup',
+  'yandex-disk-backup',
+]);
+const INTEGRATIONS_UPDATED_EVENT = '1edu:integrations-updated';
 
 function getErrorMessage(error: unknown, fallbackMessage: string): string {
   if (error instanceof Error && error.message.trim()) {
@@ -430,6 +443,9 @@ function getDisplayRole(roles: string[]): string {
 }
 
 export default function Settings() {
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const requestedIntegrationId = searchParams.get('integration');
   const [activeTab, setActiveTab] = useState<SettingsTab>('user');
   const [usersSearch, setUsersSearch] = useState('');
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
@@ -448,6 +464,8 @@ export default function Settings() {
   const [selectedAttendanceStatus, setSelectedAttendanceStatus] = useState<AttendanceStatusFormPayload | null>(null);
   const [selectedPaymentSource, setSelectedPaymentSource] = useState<PaymentSourceFormPayload | null>(null);
   const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
+  const [integrationEnabledOverrides, setIntegrationEnabledOverrides] = useState<Record<string, boolean>>({});
+  const [disablingIntegrationId, setDisablingIntegrationId] = useState<string | null>(null);
   const [isTariffModalOpen, setIsTariffModalOpen] = useState(false);
   const [isAddStaffStatusModalOpen, setIsAddStaffStatusModalOpen] = useState(false);
   const [selectedStaffStatus, setSelectedStaffStatus] = useState<StaffStatusFormPayload | null>(null);
@@ -487,6 +505,43 @@ export default function Settings() {
 
     setActiveTab((visibleSettingsTabs[0]?.value as SettingsTab) ?? 'user');
   }, [activeTab, visibleSettingsTabs]);
+
+  useEffect(() => {
+    if (!requestedTab) {
+      return;
+    }
+
+    const isKnownTab = SETTINGS_TABS.some((tab) => tab.value === requestedTab);
+    if (!isKnownTab) {
+      return;
+    }
+
+    const canOpenRequestedTab = visibleSettingsTabs.some((tab) => tab.value === requestedTab);
+    if (!canOpenRequestedTab) {
+      return;
+    }
+
+    if (activeTab !== requestedTab) {
+      setActiveTab(requestedTab as SettingsTab);
+    }
+  }, [activeTab, requestedTab, visibleSettingsTabs]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations' || !requestedIntegrationId) {
+      return;
+    }
+
+    const integrationToOpen = INTEGRATIONS.find(
+      (integration) => integration.id === requestedIntegrationId && WORKING_INTEGRATION_IDS.has(integration.id)
+    );
+
+    if (!integrationToOpen) {
+      return;
+    }
+
+    setSelectedIntegration(integrationToOpen);
+    setIsIntegrationModalOpen(true);
+  }, [activeTab, requestedIntegrationId]);
 
   // ─── API Data ─────────────────────────────────────────────────
   const { data: companySettingsData, loading: companySettingsLoading, error: companySettingsLoadError, refetch: refetchCompanySettings } = useApi(() => settingsService.get(), []);
@@ -556,6 +611,60 @@ export default function Settings() {
     error: expenseCategoriesError,
     refetch: refetchExpenseCategories,
   } = useApi(() => settingsService.getExpenseCategories(), []);
+  const {
+    data: integrationEnabledMap,
+    refetch: refetchIntegrationEnabledMap,
+  } = useApi<Record<string, boolean>>(
+    async () => {
+      const [kpay, apipay, aisar, ftelecom, zadarma, googleDriveBackup, yandexDiskBackup] = await Promise.allSettled([
+        settingsService.getKpaySettings(),
+        settingsService.getApiPaySettings(),
+        settingsService.getAisarSettings(),
+        settingsService.getFtelecomSettings(),
+        settingsService.getZadarmaSettings(),
+        settingsService.getGoogleDriveBackupSettings(),
+        settingsService.getYandexDiskBackupSettings(),
+      ]);
+
+      return {
+        data: {
+          kpay: kpay.status === 'fulfilled' ? kpay.value.data.enabled : false,
+          apipay: apipay.status === 'fulfilled' ? apipay.value.data.enabled : false,
+          aisar: aisar.status === 'fulfilled' ? aisar.value.data.enabled : false,
+          ftelecom: ftelecom.status === 'fulfilled' ? ftelecom.value.data.enabled : false,
+          zadarma: zadarma.status === 'fulfilled' ? zadarma.value.data.enabled : false,
+          'google-drive-backup': googleDriveBackup.status === 'fulfilled' ? googleDriveBackup.value.data.enabled : false,
+          'yandex-disk-backup': yandexDiskBackup.status === 'fulfilled' ? yandexDiskBackup.value.data.enabled : false,
+        },
+      };
+    },
+    []
+  );
+
+  const effectiveIntegrationEnabledMap = useMemo(
+    () => ({ ...(integrationEnabledMap ?? {}), ...integrationEnabledOverrides }),
+    [integrationEnabledMap, integrationEnabledOverrides]
+  );
+
+  useEffect(() => {
+    if (!integrationEnabledMap) {
+      return;
+    }
+
+    setIntegrationEnabledOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      Object.keys(prev).forEach((integrationId) => {
+        if (integrationEnabledMap[integrationId] === prev[integrationId]) {
+          delete next[integrationId];
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  }, [integrationEnabledMap]);
 
   // Map API users → access tab
   const users = useMemo(() => {
@@ -1140,7 +1249,7 @@ export default function Settings() {
           file: profilePhotoFile,
           folder: 'avatars',
         });
-        nextPhotoUrl = uploadResult.data?.fileName || nextPhotoUrl;
+        nextPhotoUrl = uploadResult.data?.url || nextPhotoUrl;
       }
 
       await updatePersonalProfileMutation.mutate({
@@ -1302,6 +1411,65 @@ export default function Settings() {
     setSelectedIntegration(integration);
     setIsIntegrationModalOpen(true);
   };
+
+  const handleDisableIntegration = useCallback(
+    async (integrationId: string) => {
+      const previousEnabled = Boolean(effectiveIntegrationEnabledMap?.[integrationId]);
+      setDisablingIntegrationId(integrationId);
+      setIntegrationEnabledOverrides((prev) => ({
+        ...prev,
+        [integrationId]: false,
+      }));
+
+      try {
+        switch (integrationId) {
+          case 'kpay':
+            await settingsService.updateKpaySettings({ enabled: false });
+            break;
+          case 'apipay':
+            await settingsService.updateApiPaySettings({ enabled: false });
+            break;
+          case 'aisar':
+            await settingsService.updateAisarSettings({ enabled: false });
+            break;
+          case 'ftelecom':
+            await settingsService.updateFtelecomSettings({ enabled: false });
+            break;
+          case 'zadarma':
+            await settingsService.updateZadarmaSettings({ enabled: false });
+            break;
+          case 'google-drive-backup':
+            await settingsService.updateGoogleDriveBackupSettings({ enabled: false });
+            break;
+          case 'yandex-disk-backup':
+            await settingsService.updateYandexDiskBackupSettings({ enabled: false });
+            break;
+          default:
+            return;
+        }
+
+        await refetchIntegrationEnabledMap();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(INTEGRATIONS_UPDATED_EVENT));
+        }
+        pushToast({ message: 'Интеграция отключена.', tone: 'success' });
+      } catch (error) {
+        setIntegrationEnabledOverrides((prev) => {
+          const next = { ...prev };
+          if (previousEnabled) {
+            next[integrationId] = true;
+          } else {
+            delete next[integrationId];
+          }
+          return next;
+        });
+        pushToast({ message: getErrorMessage(error, 'Не удалось отключить интеграцию.'), tone: 'error' });
+      } finally {
+        setDisablingIntegrationId(null);
+      }
+    },
+    [effectiveIntegrationEnabledMap, refetchIntegrationEnabledMap]
+  );
 
   const companyLogoDisplayUrl = companyLogoPreviewUrl || resolvedCompanyLogoUrl;
   const isCompanySubmitting = updateCompanyMutation.loading || uploadCompanyLogoMutation.loading;
@@ -2645,21 +2813,116 @@ export default function Settings() {
 
       {activeTab === 'integrations' && (
         <div className="crm-surface p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Рекомендованные</h2>
-          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            Подключения в этом разделе пока доступны только для просмотра. Сохранение параметров интеграций будет добавлено после расширения серверной части.
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {INTEGRATIONS.map(integration => (
-              <button
-                key={integration.id}
-                onClick={() => handleIntegrationClick(integration)}
-                className="p-4 border-2 border-gray-200 rounded-2xl transition-colors text-left hover:border-[#467aff]"
-              >
-                <h3 className="font-semibold text-gray-900 mb-2">{integration.name}</h3>
-                <p className="text-sm text-gray-600">{integration.description}</p>
-              </button>
-            ))}
+          <h2 className="mb-3 text-lg font-semibold text-gray-900">Интеграции</h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {INTEGRATIONS.filter((integration) => WORKING_INTEGRATION_IDS.has(integration.id)).map((integration) => {
+              const isIntegrationEnabled = Boolean(effectiveIntegrationEnabledMap?.[integration.id]);
+              const isDisabling = disablingIntegrationId === integration.id;
+
+              return (
+                <article
+                  key={integration.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleIntegrationClick(integration)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      handleIntegrationClick(integration);
+                    }
+                  }}
+                  className="flex h-full cursor-pointer flex-col rounded-2xl border-2 border-[#d6dde8] bg-[#f6f8fb] p-3.5 text-left transition-colors hover:border-[#467aff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#467aff]/35 md:p-4"
+                >
+                  <div className="mb-3 flex min-h-8 items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      {integration.icon ? (
+                        <Image
+                          src={integration.icon}
+                          alt={`${integration.name} logo`}
+                          width={96}
+                          height={28}
+                          className="max-h-7 w-auto max-w-24 object-contain"
+                        />
+                      ) : (
+                        <span className="rounded-xl border border-[#dbe2e8] bg-white px-3 py-2 text-sm font-semibold text-[#467aff]">
+                          {integration.name}
+                        </span>
+                      )}
+                    </div>
+
+                    {integration.sideIcons?.length ? (
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {integration.sideIcons.map((sideIcon, index) => (
+                          <span
+                            key={`${integration.id}-side-icon-${index}`}
+                            className="flex h-6 w-6 items-center justify-center rounded-full border border-[#dbe2e8] bg-white"
+                          >
+                            <Image
+                              src={sideIcon}
+                              alt={`${integration.name} side logo ${index + 1}`}
+                              width={16}
+                              height={16}
+                              className="h-4 w-4 object-contain"
+                            />
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <h3 className="mb-1.5 text-lg leading-tight font-semibold text-[#1f2530] md:text-xl">{integration.name}</h3>
+                  <div className="mb-2">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                        isIntegrationEnabled
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'border-[#dbe2e8] bg-white text-[#718097]'
+                      }`}
+                    >
+                      {isIntegrationEnabled ? 'Активна' : 'Не активна'}
+                    </span>
+                  </div>
+                  {integration.id === 'kpay' ? (
+                    <p className="text-sm leading-5 text-[#1f2530]">
+                      Отправляйте счета
+                      <br />
+                      за 2 минуты
+                      <br />
+                      Принимайте оплату на <span className="font-semibold text-red-500 underline decoration-red-500">Kaspi</span> прямо из вашей CRM.
+                      <br />
+                      Автоматическая фиксация платежей и выставление счетов.
+                    </p>
+                  ) : (
+                    <p className="text-sm leading-5 whitespace-pre-line text-[#1f2530]">{integration.description}</p>
+                  )}
+                  <div className="mt-auto pt-4">
+                    {isIntegrationEnabled ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDisableIntegration(integration.id);
+                        }}
+                        disabled={isDisabling}
+                        className="inline-flex min-h-8 min-w-24 items-center justify-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {isDisabling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Отключить'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleIntegrationClick(integration);
+                        }}
+                        className="inline-flex min-h-9 min-w-30 whitespace-nowrap items-center justify-center rounded-xl border-2 border-[#467aff] bg-[#467aff] px-4 text-sm font-medium text-white transition-colors hover:border-[#3568eb] hover:bg-[#3568eb] md:min-w-34 md:text-base"
+                      >
+                        Подключить
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2759,7 +3022,7 @@ export default function Settings() {
       />
 
       <AddAttendanceStatusModal
-        key={`${selectedAttendanceStatus?.id ?? 'new'}-${isAddAttendanceStatusModalOpen ? 'open' : 'closed'}`}
+        key={`attendance-status-${selectedAttendanceStatus?.id ?? 'new'}-${isAddAttendanceStatusModalOpen ? 'open' : 'closed'}`}
         isOpen={isAddAttendanceStatusModalOpen}
         onClose={() => {
           setIsAddAttendanceStatusModalOpen(false);
@@ -2771,7 +3034,7 @@ export default function Settings() {
       />
 
       <AddPaymentSourceModal
-        key={`${selectedPaymentSource?.id ?? 'new'}-${isAddPaymentSourceModalOpen ? 'open' : 'closed'}`}
+        key={`payment-source-${selectedPaymentSource?.id ?? 'new'}-${isAddPaymentSourceModalOpen ? 'open' : 'closed'}`}
         isOpen={isAddPaymentSourceModalOpen}
         onClose={() => {
           setIsAddPaymentSourceModalOpen(false);
@@ -2784,12 +3047,22 @@ export default function Settings() {
 
       <IntegrationModal
         isOpen={isIntegrationModalOpen}
-        onClose={() => setIsIntegrationModalOpen(false)}
+        onClose={() => {
+          setIsIntegrationModalOpen(false);
+          void refetchIntegrationEnabledMap();
+        }}
         integration={selectedIntegration}
+        onSaved={({ integrationId, enabled }) => {
+          setIntegrationEnabledOverrides((prev) => ({
+            ...prev,
+            [integrationId]: enabled,
+          }));
+          void refetchIntegrationEnabledMap();
+        }}
       />
 
       <AddStaffStatusModal
-        key={`${selectedStaffStatus?.id ?? 'new'}-${isAddStaffStatusModalOpen ? 'open' : 'closed'}`}
+        key={`staff-status-${selectedStaffStatus?.id ?? 'new'}-${isAddStaffStatusModalOpen ? 'open' : 'closed'}`}
         isOpen={isAddStaffStatusModalOpen}
         onClose={() => { setIsAddStaffStatusModalOpen(false); setSelectedStaffStatus(null); }}
         onSave={handleSaveStaffStatus}

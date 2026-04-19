@@ -130,7 +130,7 @@ export default function Tasks() {
         status: task.status,
         priority: task.priority,
         assignedTo: task.assignedTo || '',
-        assigneeName: task.assignedTo ? staffMap.get(task.assignedTo) || task.assignedTo : '',
+        assigneeName: task.assignedTo ? staffMap.get(task.assignedTo) || 'Неизвестный сотрудник' : '',
         dueDate: task.dueDate || '',
         notes: task.notes || '',
         createdAt: task.createdAt || '',

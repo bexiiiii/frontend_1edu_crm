@@ -83,6 +83,41 @@ function getDisplayName(student: {
   return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim();
 }
 
+function normalizePhoneForWhatsApp(value: string | null | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  const digits = value.replace(/\D/g, '');
+
+  if (!digits) {
+    return '';
+  }
+
+  if (digits.length === 11 && digits.startsWith('8')) {
+    return `7${digits.slice(1)}`;
+  }
+
+  if (digits.startsWith('00')) {
+    return digits.slice(2);
+  }
+
+  return digits;
+}
+
+function getPrimaryStudentPhone(student: Pick<StudentListItem, 'phone' | 'studentPhone' | 'parentPhone' | 'additionalPhones'>): string {
+  const candidates = [student.phone, student.studentPhone, student.parentPhone, ...student.additionalPhones];
+
+  for (const candidate of candidates) {
+    const normalized = normalizePhoneForWhatsApp(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return '';
+}
+
 function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullName: string }) {
   const studentPhotoUrl = useResolvedFileUrl(studentPhoto);
   const [hasImageError, setHasImageError] = useState(false);
@@ -343,7 +378,11 @@ export default function Students() {
               </thead>
               <tbody className="crm-table-body">
                 {students.length > 0 ? (
-                  students.map((student, index) => (
+                  students.map((student, index) => {
+                    const primaryPhone = getPrimaryStudentPhone(student);
+                    const whatsappUrl = primaryPhone ? `https://wa.me/${primaryPhone}` : null;
+
+                    return (
                     <tr key={student.id} className="crm-table-row">
                       <td className="crm-table-cell">{page * 20 + index + 1}</td>
                       <td className="crm-table-cell">
@@ -391,6 +430,28 @@ export default function Students() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-2">
+                          {whatsappUrl ? (
+                            <a
+                              href={whatsappUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-emerald-50"
+                              title="Открыть WhatsApp"
+                              aria-label="Открыть чат в WhatsApp"
+                            >
+                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="cursor-not-allowed rounded-lg p-2 opacity-45"
+                              title="Нет номера для WhatsApp"
+                              aria-label="Нет номера для WhatsApp"
+                            >
+                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                            </button>
+                          )}
                           <Link
                             href={`/students/${student.id}`}
                             className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
@@ -415,7 +476,8 @@ export default function Students() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                  );
+                  })
                 ) : (
                   <tr className="crm-table-row">
                     <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">

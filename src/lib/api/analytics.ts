@@ -15,6 +15,37 @@ import type {
   ManagerEfficiencyResponse,
 } from './types';
 
+function getFilenameFromDisposition(contentDisposition: string | undefined, fallback: string) {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utfMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    return decodeURIComponent(utfMatch[1]);
+  }
+
+  const simpleMatch = contentDisposition.match(/filename="?([^\"]+)"?/i);
+  if (simpleMatch?.[1]) {
+    return simpleMatch[1];
+  }
+
+  return fallback;
+}
+
+async function downloadAnalyticsExport(path: string, fallbackFilename: string, params?: Record<string, unknown>) {
+  const response = await api.get<Blob>(path, {
+    params,
+    responseType: 'blob',
+  });
+
+  return {
+    blob: response.data,
+    filename: getFilenameFromDisposition(response.headers['content-disposition'], fallbackFilename),
+    contentType: response.headers['content-type'],
+  };
+}
+
 // ─── Analytics Service ──────────────────────────────────────────
 
 export const analyticsService = {
@@ -98,5 +129,45 @@ export const analyticsService = {
   async getManagers(params?: { from?: string; to?: string }) {
     const response = await api.get<ApiResponse<ManagerEfficiencyResponse>>('/api/v1/analytics/managers', { params });
     return response.data;
+  },
+
+  /** Download dashboard analytics report (xlsx) */
+  async exportDashboard(params: { from: string; to: string; lessonType?: 'ALL' | 'GROUP' | 'INDIVIDUAL' | 'TRIAL' }) {
+    return downloadAnalyticsExport('/api/v1/analytics/dashboard/export', 'dashboard-report.xlsx', params);
+  },
+
+  /** Download finance analytics report (xlsx) */
+  async exportFinanceReport(params: { from: string; to: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/finance-report/export', 'finance-report.xlsx', params);
+  },
+
+  /** Download subscriptions analytics report (xlsx) */
+  async exportSubscriptions(params?: { from?: string; to?: string; onlySuspicious?: boolean }) {
+    return downloadAnalyticsExport('/api/v1/analytics/subscriptions/export', 'subscriptions-report.xlsx', params);
+  },
+
+  /** Download teachers analytics report (xlsx) */
+  async exportTeachers(params?: { from?: string; to?: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/teachers/export', 'teachers-report.xlsx', params);
+  },
+
+  /** Download retention analytics report (xlsx) */
+  async exportRetention(params?: { from?: string; to?: string; cohortType?: 'FIRST_PAYMENT' | 'FIRST_VISIT' }) {
+    return downloadAnalyticsExport('/api/v1/analytics/retention/export', 'retention-report.xlsx', params);
+  },
+
+  /** Download group load analytics report (xlsx) */
+  async exportGroupLoad(params?: { from?: string; to?: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/group-load/export', 'group-load-report.xlsx', params);
+  },
+
+  /** Download room load analytics report (xlsx) */
+  async exportRoomLoad(params?: { from?: string; to?: string; timelineDate?: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/room-load/export', 'room-load-report.xlsx', params);
+  },
+
+  /** Download group attendance analytics report (xlsx) */
+  async exportGroupAttendance(params: { groupId: string; months?: 6 | 12; from?: string; to?: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/group-attendance/export', 'group-attendance-report.xlsx', params);
   },
 };

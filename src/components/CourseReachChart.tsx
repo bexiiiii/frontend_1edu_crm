@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 
 interface ReachItem {
@@ -12,13 +13,24 @@ interface ReachItem {
 interface CourseReachChartProps {
   data: ReachItem[];
   loading?: boolean;
+  limit?: number;
 }
 
-export default function CourseReachChart({ data, loading = false }: CourseReachChartProps) {
+export default function CourseReachChart({ data, loading = false, limit }: CourseReachChartProps) {
+  const displayData = limit ? data.slice(0, limit) : data;
+
   return (
     <div className="crm-surface flex h-[335px] flex-col p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h3 className="text-lg font-bold text-[#1f2530]">Источники лидов</h3>
+        {limit && (
+          <Link
+            href="/kanban"
+            className="text-xs font-medium text-[#467aff] transition-colors hover:underline"
+          >
+            Смотреть больше
+          </Link>
+        )}
       </div>
 
       {loading ? (
@@ -31,7 +43,7 @@ export default function CourseReachChart({ data, loading = false }: CourseReachC
         </div>
       ) : (
         <div className="flex-1 space-y-3 overflow-y-auto">
-          {data.map((item) => (
+          {displayData.map((item) => (
             <div key={item.source} className="rounded-2xl border border-[#e6ecf5] bg-[#f8fbfd] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>

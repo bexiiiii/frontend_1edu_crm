@@ -651,6 +651,137 @@ export interface FinanceCategoryConfigDto {
 export type IncomeCategoryDto = FinanceCategoryConfigDto;
 export type ExpenseCategoryDto = FinanceCategoryConfigDto;
 
+export type ContactRecipientField = 'PHONE' | 'STUDENT_PHONE' | 'PARENT_PHONE' | 'ADDITIONAL_PHONE_1';
+
+export interface KpaySettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  merchantId: string | null;
+  apiBaseUrl: string | null;
+  recipientField: ContactRecipientField;
+  apiKeyMasked: string | null;
+  apiSecretMasked: string | null;
+}
+
+export interface UpdateKpaySettingsRequest {
+  enabled?: boolean;
+  merchantId?: string | null;
+  apiBaseUrl?: string | null;
+  recipientField?: ContactRecipientField;
+  apiKey?: string;
+  apiSecret?: string;
+}
+
+export interface ApiPaySettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  apiBaseUrl: string | null;
+  recipientField: ContactRecipientField;
+  apiKeyMasked: string | null;
+  webhookSecretMasked: string | null;
+  webhookUrl: string | null;
+  signatureHeader: 'X-Webhook-Signature';
+  signatureAlgorithm: 'HMAC-SHA256';
+}
+
+export interface UpdateApiPaySettingsRequest {
+  enabled?: boolean;
+  apiBaseUrl?: string | null;
+  recipientField?: ContactRecipientField;
+  apiKey?: string;
+  webhookSecret?: string;
+}
+
+export interface AisarSettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  apiBaseUrl: string | null;
+  apiKeyMasked: string | null;
+  webhookSecretMasked: string | null;
+  webhookUrl: string | null;
+  signatureHeader: 'X-AISAR-Signature';
+  signatureAlgorithm: 'HMAC-SHA256';
+}
+
+export interface UpdateAisarSettingsRequest {
+  enabled?: boolean;
+  apiBaseUrl?: string | null;
+  apiKey?: string;
+  webhookSecret?: string;
+}
+
+export interface FtelecomSettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  apiBaseUrl: string | null;
+  crmTokenMasked: string | null;
+  webhookUrl: string | null;
+  tokenField: 'crm_token';
+}
+
+export interface UpdateFtelecomSettingsRequest {
+  enabled?: boolean;
+  apiBaseUrl?: string | null;
+  crmToken?: string;
+}
+
+export interface ZadarmaSettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  apiBaseUrl: string | null;
+  userKeyMasked: string | null;
+  userSecretMasked: string | null;
+  webhookUrl: string | null;
+  validationMode: 'GET ?zd_echo=<random>';
+  signatureHeader: 'Signature';
+  signatureAlgorithm: 'HMAC-SHA1 (base64)';
+}
+
+export interface UpdateZadarmaSettingsRequest {
+  enabled?: boolean;
+  apiBaseUrl?: string | null;
+  userKey?: string;
+  userSecret?: string;
+}
+
+export interface GoogleDriveBackupSettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  oauthConnectUrl: string | null;
+  folderId: string | null;
+  accessTokenMasked: string | null;
+  lastBackupAt: string | null;
+}
+
+export interface UpdateGoogleDriveBackupSettingsRequest {
+  enabled?: boolean;
+  folderId?: string | null;
+  accessToken?: string;
+}
+
+export interface YandexDiskBackupSettingsDto {
+  enabled: boolean;
+  configured: boolean;
+  oauthConnectUrl: string | null;
+  folderPath: string | null;
+  accessTokenMasked: string | null;
+  lastBackupAt: string | null;
+}
+
+export interface UpdateYandexDiskBackupSettingsRequest {
+  enabled?: boolean;
+  folderPath?: string | null;
+  accessToken?: string;
+}
+
+export interface CloudBackupRunResultDto {
+  provider: string;
+  fileName: string;
+  remoteId?: string | null;
+  remotePath?: string | null;
+  completedAt: string;
+}
+
 // ─── Audit ──────────────────────────────────────────────────────
 
 export interface TenantAuditLog {
@@ -1106,6 +1237,68 @@ export interface SystemAuditLog {
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
 export type PaymentAmountChangeReasonCode = 'PARTIAL_PAYMENT' | 'DISCOUNT_APPLIED' | 'DEBT_REPAYMENT' | 'MANUAL_CORRECTION' | 'OTHER';
+export type KpayInvoiceStatus = 'CREATED' | 'PENDING' | 'PAID' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+export type ApiPayInvoiceStatus = 'CREATED' | 'PENDING' | 'PAID' | 'FAILED' | 'CANCELLED' | 'EXPIRED' | 'REFUNDED';
+
+export interface GenerateKpayInvoicesResponse {
+  month: string;
+  totalSubscriptions: number;
+  generated: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface GenerateApiPayInvoicesResponse {
+  month: string;
+  totalSubscriptions: number;
+  generated: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface KpayInvoiceDto {
+  id: string;
+  studentId: string;
+  subscriptionId: string;
+  paymentMonth: string;
+  recipientField: ContactRecipientField;
+  recipientValue: string;
+  amount: number;
+  currency: string;
+  merchantInvoiceId: string;
+  externalInvoiceId: string | null;
+  paymentUrl: string | null;
+  status: KpayInvoiceStatus;
+  externalPaymentMethod: string | null;
+  externalTransactionId: string | null;
+  paidAt: string | null;
+  studentPaymentId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiPayInvoiceDto {
+  id: string;
+  studentId: string;
+  subscriptionId: string;
+  paymentMonth: string;
+  recipientField: ContactRecipientField;
+  recipientValue: string;
+  amount: number;
+  currency: string;
+  merchantInvoiceId: string;
+  externalInvoiceId: string | null;
+  paymentUrl: string | null;
+  status: ApiPayInvoiceStatus;
+  externalPaymentMethod: string | null;
+  externalTransactionId: string | null;
+  paidAt: string | null;
+  studentPaymentId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface StudentPaymentDto {
   id: string;
