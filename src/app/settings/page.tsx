@@ -205,7 +205,6 @@ const TENANT_PLAN_OPTIONS = [
 const WORKING_INTEGRATION_IDS = new Set([
   'kpay',
   'apipay',
-  'aisar',
   'ftelecom',
   'zadarma',
   'google-drive-backup',
@@ -616,10 +615,9 @@ export default function Settings() {
     refetch: refetchIntegrationEnabledMap,
   } = useApi<Record<string, boolean>>(
     async () => {
-      const [kpay, apipay, aisar, ftelecom, zadarma, googleDriveBackup, yandexDiskBackup] = await Promise.allSettled([
+      const [kpay, apipay, ftelecom, zadarma, googleDriveBackup, yandexDiskBackup] = await Promise.allSettled([
         settingsService.getKpaySettings(),
         settingsService.getApiPaySettings(),
-        settingsService.getAisarSettings(),
         settingsService.getFtelecomSettings(),
         settingsService.getZadarmaSettings(),
         settingsService.getGoogleDriveBackupSettings(),
@@ -630,7 +628,6 @@ export default function Settings() {
         data: {
           kpay: kpay.status === 'fulfilled' ? kpay.value.data.enabled : false,
           apipay: apipay.status === 'fulfilled' ? apipay.value.data.enabled : false,
-          aisar: aisar.status === 'fulfilled' ? aisar.value.data.enabled : false,
           ftelecom: ftelecom.status === 'fulfilled' ? ftelecom.value.data.enabled : false,
           zadarma: zadarma.status === 'fulfilled' ? zadarma.value.data.enabled : false,
           'google-drive-backup': googleDriveBackup.status === 'fulfilled' ? googleDriveBackup.value.data.enabled : false,
@@ -1428,9 +1425,6 @@ export default function Settings() {
             break;
           case 'apipay':
             await settingsService.updateApiPaySettings({ enabled: false });
-            break;
-          case 'aisar':
-            await settingsService.updateAisarSettings({ enabled: false });
             break;
           case 'ftelecom':
             await settingsService.updateFtelecomSettings({ enabled: false });

@@ -59,7 +59,7 @@ const VISIBLE_ANALYTICS_SUBMENU_ITEMS = ANALYTICS_SUBMENU_ITEMS.filter(
   (item) => !HIDDEN_ANALYTICS_SUBMENU_HREFS.has(item.href)
 );
 
-const NAVBAR_INTEGRATION_IDS = ['kpay', 'apipay', 'aisar', 'ftelecom', 'zadarma'] as const;
+const NAVBAR_INTEGRATION_IDS = ['kpay', 'apipay', 'ftelecom', 'zadarma'] as const;
 const NAVBAR_INTEGRATION_IDS_SET = new Set<string>(NAVBAR_INTEGRATION_IDS);
 const INTEGRATIONS_UPDATED_EVENT = '1edu:integrations-updated';
 const BACKUP_INTEGRATION_IDS = ['google-drive-backup', 'yandex-disk-backup'] as const;
@@ -126,14 +126,13 @@ export default function Sidebar({
       const results = await Promise.allSettled([
         settingsService.getKpaySettings(),
         settingsService.getApiPaySettings(),
-        settingsService.getAisarSettings(),
         settingsService.getFtelecomSettings(),
         settingsService.getZadarmaSettings(),
         settingsService.getGoogleDriveBackupSettings(),
         settingsService.getYandexDiskBackupSettings(),
       ]);
 
-      const integrationIds = ['kpay', 'apipay', 'aisar', 'ftelecom', 'zadarma', 'google-drive-backup', 'yandex-disk-backup'];
+      const integrationIds = ['kpay', 'apipay', 'ftelecom', 'zadarma', 'google-drive-backup', 'yandex-disk-backup'];
       const nextConnectedIntegrationIds: string[] = [];
 
       results.forEach((result, index) => {

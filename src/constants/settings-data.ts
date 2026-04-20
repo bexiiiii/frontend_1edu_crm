@@ -106,13 +106,6 @@ export const INTEGRATIONS: Integration[] = [
     sideIcons: ['/logo/kaspi-logo.png'],
   },
   {
-    id: 'aisar',
-    name: 'AISAR',
-    description: 'Омниканальный месенджер для переписки WhatsApp, Telegram и Instagram, а также рассылок и чат-ботов',
-    icon: '/logo/aisar_logo.svg',
-    sideIcons: ['/logo/instagram.svg', '/logo/telegram.svg', '/logo/whatsapp.svg'],
-  },
-  {
     id: 'ftelecom',
     name: 'Freedom Telecom',
     description: 'Виртуальная АТС для бизнеса\nУправляйте бизнесом из любой точки мира! Интегрируйте с CRM-системой и оставайтесь на связи 24/7',
