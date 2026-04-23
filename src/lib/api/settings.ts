@@ -22,6 +22,9 @@ import type {
   YandexDiskBackupSettingsDto,
   UpdateYandexDiskBackupSettingsRequest,
   CloudBackupRunResultDto,
+  BranchDto,
+  CreateBranchRequest,
+  UpdateBranchRequest,
 } from './types';
 
 // ─── Settings Service ───────────────────────────────────────────
@@ -36,6 +39,38 @@ export const settingsService = {
   /** Update center settings */
   async update(data: Partial<SettingsDto>) {
     const response = await api.put<ApiResponse<SettingsDto>>('/api/v1/settings', data);
+    return response.data;
+  },
+
+  // ─── Branches ───────────────────────────────────
+
+  /** Get all branches */
+  async getBranches() {
+    const response = await api.get<ApiResponse<BranchDto[]>>('/api/v1/settings/branches');
+    return response.data;
+  },
+
+  /** Get branch by ID */
+  async getBranchById(id: string) {
+    const response = await api.get<ApiResponse<BranchDto>>(`/api/v1/settings/branches/${id}`);
+    return response.data;
+  },
+
+  /** Create branch */
+  async createBranch(data: CreateBranchRequest) {
+    const response = await api.post<ApiResponse<BranchDto>>('/api/v1/settings/branches', data);
+    return response.data;
+  },
+
+  /** Update branch */
+  async updateBranch(id: string, data: UpdateBranchRequest) {
+    const response = await api.put<ApiResponse<BranchDto>>(`/api/v1/settings/branches/${id}`, data);
+    return response.data;
+  },
+
+  /** Delete branch */
+  async deleteBranch(id: string) {
+    const response = await api.delete<ApiResponse<void>>(`/api/v1/settings/branches/${id}`);
     return response.data;
   },
 

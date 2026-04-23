@@ -10,6 +10,7 @@ import {
   CheckSquare,
   GraduationCap,
   BookOpen,
+  Package,
   Wallet,
   BarChart2,
   Bell,
@@ -81,6 +82,15 @@ const navItems: NavItem[] = [
       { label: 'Доходы и расходы', href: '/finance' },
       { label: 'Платежи студентов', href: '/finance/student-payments' },
       { label: 'Зарплаты', href: '/finance/salary' },
+    ],
+  },
+  {
+    icon: Package,
+    label: 'Складской учет',
+    href: '/inventory',
+    submenu: [
+      { label: 'Инвентаризация', href: '/inventory' },
+      { label: 'Склад', href: '/warehouse' },
     ],
   },
   {

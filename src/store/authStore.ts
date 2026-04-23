@@ -16,6 +16,8 @@ type AuthState = {
   roles: string[];
   permissions: string[];
   tenantId: string | null;
+  branchId: string | null;
+  branchIds: string[];
   loading: boolean;
   error: string | null;
 
@@ -25,11 +27,26 @@ type AuthState = {
   hydrate: () => void;
   fetchProfile: () => Promise<void>;
   clearError: () => void;
+  setBranchId: (branchId: string) => void;
 };
 
 function extractTenantId(claims: Record<string, unknown>): string | null {
   const tenantId = claims.tenant_id;
   return typeof tenantId === 'string' && tenantId.trim() ? tenantId : null;
+}
+
+function extractBranchIds(claims: Record<string, unknown>): string[] {
+  const directBranchIds = claims.branch_ids;
+  if (Array.isArray(directBranchIds)) {
+    return directBranchIds.filter((branchId): branchId is string => typeof branchId === 'string' && branchId.trim());
+  }
+
+  const directBranchId = claims.branch_id;
+  if (typeof directBranchId === 'string' && directBranchId.trim()) {
+    return [directBranchId];
+  }
+
+  return [];
 }
 
 function extractRoles(claims: Record<string, unknown>): string[] {
@@ -62,6 +79,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   roles: [],
   permissions: [],
   tenantId: null,
+  branchId: null,
+  branchIds: [],
   loading: false,
   error: null,
 
@@ -79,12 +98,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Decode JWT to get claims
       const claims = decodeJwt(tokenData.access_token);
       const tenantId = extractTenantId(claims);
+      const branchIds = extractBranchIds(claims);
+      const branchId = branchIds[0] || null;
       const roles = extractRoles(claims);
       const permissions = extractPermissions(claims);
 
       if (tenantId) {
         localStorage.setItem('tenant_id', tenantId);
       }
+      if (branchId) {
+        localStorage.setItem('branch_id', branchId);
+      }
+      localStorage.setItem('branch_ids', JSON.stringify(branchIds));
 
       // Persist auth info
       localStorage.setItem(
@@ -92,6 +117,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         JSON.stringify({
           email: loginValue,
           tenantId,
+          branchId,
+          branchIds,
           roles,
           permissions,
         })
@@ -103,6 +130,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         roles,
         permissions,
         tenantId,
+        branchId,
+        branchIds,
         loading: false,
         error: null,
       });
@@ -184,6 +213,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('tenant_id');
+      localStorage.removeItem('branch_id');
+      localStorage.removeItem('branch_ids');
     }
     set({
       isAuthenticated: false,
@@ -192,6 +223,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       roles: [],
       permissions: [],
       tenantId: null,
+      branchId: null,
+      branchIds: [],
       error: null,
     });
   },
@@ -206,6 +239,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const {
             email,
             tenantId: storedTenantId,
+            branchId: storedBranchId,
+            branchIds: storedBranchIds,
             roles: storedRoles,
             permissions: storedPermissions,
           } = JSON.parse(stored);
@@ -220,18 +255,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
 
           const tenantId = extractTenantId(claims) || storedTenantId || null;
+          const tokenBranchIds = extractBranchIds(claims);
+          const branchIds = tokenBranchIds.length > 0
+            ? tokenBranchIds
+            : Array.isArray(storedBranchIds)
+              ? storedBranchIds.filter((item): item is string => typeof item === 'string' && item.trim())
+              : [];
+
+          // Respect user-selected branchId if it's still in the allowed branch_ids list.
+          // If not, fall back to the first branch from claims.
+          let branchId: string | null = null;
+          if (storedBranchId && branchIds.includes(storedBranchId)) {
+            branchId = storedBranchId;
+          } else {
+            branchId = branchIds[0] || storedBranchId || null;
+          }
           const roles = extractRoles(claims);
           const permissions = extractPermissions(claims);
 
           if (tenantId) {
             localStorage.setItem('tenant_id', tenantId);
           }
+          // Only sync branch_id in localStorage if it changed.
+          const currentStoredBranchId = localStorage.getItem('branch_id');
+          if (branchId && branchId !== currentStoredBranchId) {
+            localStorage.setItem('branch_id', branchId);
+          }
+          localStorage.setItem('branch_ids', JSON.stringify(branchIds));
 
           localStorage.setItem(
             'edu_crm_auth',
             JSON.stringify({
               email,
               tenantId,
+              branchId,
+              branchIds,
               roles: roles.length > 0 ? roles : storedRoles || [],
               permissions: permissions.length > 0 ? permissions : storedPermissions || [],
             })
@@ -241,6 +299,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             isAuthenticated: true,
             userEmail: email,
             tenantId,
+            branchId,
+            branchIds,
             roles: roles.length > 0 ? roles : storedRoles || [],
             permissions: permissions.length > 0 ? permissions : storedPermissions || [],
           });
@@ -258,11 +318,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const response = await getProfile();
       if (response.success && response.data) {
         const profilePermissions = response.data.permissions ?? get().permissions;
+        const newBranchIds = response.data.branchIds ?? get().branchIds;
+
+        // Preserve user-selected branchId if it's still in the returned branchIds list.
+        const currentBranchId = get().branchId;
+        const resolvedBranchId = currentBranchId && newBranchIds.includes(currentBranchId)
+          ? currentBranchId
+          : (newBranchIds[0] ?? currentBranchId ?? null);
 
         set({
           user: response.data,
           userEmail: response.data.email,
           roles: response.data.roles,
+          branchIds: newBranchIds,
+          branchId: resolvedBranchId,
           permissions: profilePermissions,
         });
       }
@@ -272,4 +341,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  setBranchId: (branchId: string) => {
+    // Validate that the branch is in the user's allowed branchIds.
+    const currentBranchIds = get().branchIds;
+    if (currentBranchIds.length > 0 && !currentBranchIds.includes(branchId)) {
+      return; // branch not in user's scope
+    }
+
+    localStorage.setItem('branch_id', branchId);
+
+    // Sync edu_crm_auth
+    const authRaw = localStorage.getItem('edu_crm_auth');
+    if (authRaw) {
+      try {
+        const parsed = JSON.parse(authRaw) as Record<string, unknown>;
+        const existingBranchIds = Array.isArray(parsed.branchIds)
+          ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim())
+          : [];
+        const nextBranchIds = existingBranchIds.includes(branchId)
+          ? existingBranchIds
+          : [branchId, ...existingBranchIds];
+        localStorage.setItem('edu_crm_auth', JSON.stringify({
+          ...parsed,
+          branchId,
+          branchIds: nextBranchIds,
+        }));
+        localStorage.setItem('branch_ids', JSON.stringify(nextBranchIds));
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    set({ branchId });
+  },
 }));

@@ -35,6 +35,7 @@ export interface UserDto {
   firstName: string;
   lastName: string;
   staffId: string | null;
+  branchIds?: string[];
   roles: string[];
   permissions?: string[];
   permissionsSource?: string | null;
@@ -50,7 +51,20 @@ export interface CreateUserRequest {
   lastName: string;
   password: string;
   role: string;
+  staffId?: string | null;
+  branchIds?: string[];
   tenantId?: string;
+  permissions?: string[];
+  permissionsSource?: string;
+}
+
+export interface UpdateUserRequest {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  role?: string;
+  staffId?: string | null;
+  branchIds?: string[];
   permissions?: string[];
   permissionsSource?: string;
 }
@@ -646,6 +660,32 @@ export interface FinanceCategoryConfigDto {
   createdAt: string;
   updatedAt: string | null;
 }
+
+export interface BranchDto {
+  id: string;
+  name: string;
+  code: string | null;
+  address: string | null;
+  phone: string | null;
+  active: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBranchRequest {
+  name: string;
+  code?: string;
+  address?: string;
+  phone?: string;
+  active?: boolean;
+  isDefault?: boolean;
+}
+
+export type UpdateBranchRequest = Partial<CreateBranchRequest> & {
+  active?: boolean;
+  isDefault?: boolean;
+};
 
 // Backward-compat aliases
 export type IncomeCategoryDto = FinanceCategoryConfigDto;
@@ -1327,3 +1367,146 @@ export interface CreateStudentPaymentRequest {
 }
 
 export type UpdateStudentPaymentRequest = Partial<CreateStudentPaymentRequest>;
+
+// ─── Student Call Logs ──────────────────────────────────────────
+
+export interface StudentCallLogDto {
+  id: string;
+  studentId: string;
+  callerStaffId: string | null;
+  callerName: string | null;
+  callDate: string;
+  callTime: string;
+  callResult: string | null;
+  notes: string | null;
+  followUpRequired: boolean;
+  followUpDate: string | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedBy: string | null;
+  updatedByName: string | null;
+  updatedAt: string;
+  updateReason: string | null;
+}
+
+export interface SaveStudentCallLogRequest {
+  studentId: string;
+  callerStaffId?: string;
+  callDate: string;
+  callTime: string;
+  callResult?: string;
+  notes?: string;
+  followUpRequired?: boolean;
+  followUpDate?: string;
+  updateReason?: string;
+}
+
+// ─── Inventory ──────────────────────────────────────────────────
+
+export interface InventoryItemDto {
+  id: string;
+  branchId: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  unitId: string | null;
+  unitName: string | null;
+  unitAbbreviation: string | null;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  barcode: string | null;
+  brand: string | null;
+  model: string | null;
+  quantity: number;
+  minQuantity: number | null;
+  maxQuantity: number | null;
+  pricePerUnit: number | null;
+  sellingPrice: number | null;
+  currency: string | null;
+  totalValue: number;
+  location: string | null;
+  supplier: string | null;
+  supplierContact: string | null;
+  status: string;
+  isActive: boolean | null;
+  isTracked: boolean | null;
+  requiresReorder: boolean | null;
+  imageUrl: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateInventoryItemRequest {
+  categoryId?: string;
+  unitId: string;
+  sku?: string;
+  barcode?: string;
+  name: string;
+  description?: string;
+  brand?: string;
+  model?: string;
+  quantity: number;
+  minQuantity?: number;
+  maxQuantity?: number;
+  pricePerUnit?: number;
+  sellingPrice?: number;
+  currency?: string;
+  location?: string;
+  supplier?: string;
+  supplierContact?: string;
+  isTracked?: boolean;
+  imageUrl?: string;
+  notes?: string;
+}
+
+export interface UpdateInventoryItemRequest {
+  categoryId?: string;
+  name?: string;
+  description?: string;
+  sku?: string;
+  brand?: string;
+  model?: string;
+  quantity?: number;
+  minQuantity?: number;
+  maxQuantity?: number;
+  pricePerUnit?: number;
+  sellingPrice?: number;
+  location?: string;
+  supplier?: string;
+  supplierContact?: string;
+  isTracked?: boolean;
+  imageUrl?: string;
+  notes?: string;
+}
+
+// ─── Branch Analytics ───────────────────────────────────────────
+
+export interface BranchAnalyticsDto {
+  branchId: string;
+  branchName: string;
+  branchCode: string;
+  studentsCount: number;
+  activeStudents: number;
+  revenue: number;
+  revenueDeltaPct: number;
+  lessonsCount: number;
+  avgAttendance: number;
+  attendanceRate: number;
+  subscriptionsSold: number;
+  newStudents: number;
+  droppedStudents: number;
+  retentionRate: number;
+}
+
+export interface BranchAnalyticsResponse {
+  branches: BranchAnalyticsDto[];
+  totalBranches: number;
+  totalRevenue: number;
+  totalStudents: number;
+  totalLessons: number;
+  avgAttendanceRate: number;
+  topBranchByRevenue: BranchAnalyticsDto | null;
+  topBranchByAttendance: BranchAnalyticsDto | null;
+}

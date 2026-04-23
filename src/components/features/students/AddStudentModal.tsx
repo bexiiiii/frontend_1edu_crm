@@ -405,36 +405,6 @@ export const AddStudentModal = ({
           placeholder="Улица, дом, квартира"
         />
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
-          <Input
-            label="Договор"
-            labelSuffix="(опционально)"
-            value={contract}
-            onChange={(event) => setContract(event.target.value)}
-            placeholder="DOG-2026-001"
-          />
-          <label className="flex items-end">
-            <span className="flex h-11 w-full items-center gap-3 rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm text-[#3d4756]">
-              <input
-                type="checkbox"
-                checked={stateOrderParticipant}
-                onChange={(event) => setStateOrderParticipant(event.target.checked)}
-              />
-              Госзаказ
-            </span>
-          </label>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
-            label="Заказчик / customer"
-            labelSuffix="(опционально)"
-            value={customer}
-            onChange={(event) => setCustomer(event.target.value)}
-            placeholder="Заказчик или плательщик"
-          />
-        </div>
-
         <div>
           <label className="mb-2 block text-sm font-medium text-gray-700">
             Дополнительная информация

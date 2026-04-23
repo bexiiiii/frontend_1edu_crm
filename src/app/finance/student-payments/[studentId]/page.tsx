@@ -1,10 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Edit2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Loader2, MessageCircle, Phone, Plus, Send, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
+import { Modal } from '@/components/ui/Modal';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
 import { PaymentAmountChangeReasonModal } from '@/components/features/finance/PaymentAmountChangeReasonModal';
 import {
@@ -18,10 +19,13 @@ import {
   studentPaymentsService,
   studentsService,
   subscriptionsService,
+  studentCallLogsService,
   type CreateStudentPaymentRequest,
   type PaymentAmountChangeReasonCode,
   type StudentPaymentDto,
   type StudentPaymentHistoryResponse,
+  type StudentCallLogDto,
+  type SaveStudentCallLogRequest,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 
@@ -46,7 +50,15 @@ interface PaymentRow {
   courseName: string;
 }
 
-type PaymentHistoryTab = 'SUBSCRIPTIONS' | 'PAYMENTS' | 'MONTHLY';
+type PaymentHistoryTab = 'SUBSCRIPTIONS' | 'PAYMENTS' | 'MONTHLY' | 'CALLS';
+
+const CALL_RESULTS: Array<{ value: string; label: string }> = [
+  { value: 'NO_ANSWER', label: 'Не ответил' },
+  { value: 'BUSY', label: 'Занят' },
+  { value: 'CALLBACK', label: 'Перезвонить' },
+  { value: 'SUCCESS', label: 'Успешно' },
+  { value: 'OTHER', label: 'Другое' },
+];
 
 type SubscriptionStatusValue = StudentPaymentHistoryResponse['subscriptions'][number]['subscriptionStatus'];
 
@@ -68,6 +80,7 @@ const PAYMENT_HISTORY_TABS: Array<{ id: PaymentHistoryTab; label: string }> = [
   { id: 'SUBSCRIPTIONS', label: 'Абонементы' },
   { id: 'PAYMENTS', label: 'Платежи' },
   { id: 'MONTHLY', label: 'Помесячно' },
+  { id: 'CALLS', label: 'Обзвоны' },
 ];
 
 function getStudentFullName(student: {
@@ -81,6 +94,33 @@ function getStudentFullName(student: {
   }
 
   return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+}
+
+function normalizePhoneForMessenger(phone: string): string {
+  const digitsOnly = phone.replace(/\D/g, '');
+
+  if (digitsOnly.length === 11 && digitsOnly.startsWith('8')) {
+    return `7${digitsOnly.slice(1)}`;
+  }
+
+  return digitsOnly;
+}
+
+function getPrimaryPhone(student: {
+  phone?: string | null;
+  studentPhone?: string | null;
+  parentPhone?: string | null;
+  additionalPhones?: string[] | null;
+}): string | null {
+  const candidates = [
+    student.phone,
+    student.studentPhone,
+    student.parentPhone,
+    ...(student.additionalPhones ?? []),
+  ];
+
+  const firstPhone = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+  return firstPhone?.trim() || null;
 }
 
 function formatMoney(value: number): string {
@@ -127,6 +167,17 @@ export default function StudentPaymentHistoryPage() {
     payload: null,
   });
   const [activeTab, setActiveTab] = useState<PaymentHistoryTab>('SUBSCRIPTIONS');
+  const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
+  const [editingCallLog, setEditingCallLog] = useState<StudentCallLogDto | null>(null);
+  const [callLogForm, setCallLogForm] = useState<SaveStudentCallLogRequest>({
+    studentId: studentId || '',
+    callDate: new Date().toISOString().split('T')[0],
+    callTime: new Date().toTimeString().slice(0, 5),
+    callResult: null,
+    notes: null,
+    followUpRequired: false,
+    followUpDate: null,
+  });
 
   const {
     data: studentData,
@@ -174,11 +225,29 @@ export default function StudentPaymentHistoryPage() {
     [studentId]
   );
 
+  const {
+    data: callLogsData,
+    loading: callLogsLoading,
+    error: callLogsError,
+    refetch: refetchCallLogs,
+  } = useApi(
+    () =>
+      studentId
+        ? studentCallLogsService.getByStudent(studentId)
+        : Promise.resolve({ content: [], page: 0, size: 0, totalElements: 0, totalPages: 0, first: true, last: true, hasNext: false, hasPrevious: false }),
+    [studentId]
+  );
+
   const createPaymentMutation = useMutation((data: CreateStudentPaymentRequest) => studentPaymentsService.create(data));
   const updatePaymentMutation = useMutation(({ id, data }: { id: string; data: CreateStudentPaymentRequest }) =>
     studentPaymentsService.update(id, data)
   );
   const deletePaymentMutation = useMutation((id: string) => studentPaymentsService.delete(id));
+  const createCallLogMutation = useMutation((data: SaveStudentCallLogRequest) => studentCallLogsService.create(data));
+  const updateCallLogMutation = useMutation(({ id, data }: { id: string; data: SaveStudentCallLogRequest }) =>
+    studentCallLogsService.update(id, data)
+  );
+  const deleteCallLogMutation = useMutation((id: string) => studentCallLogsService.delete(id));
 
   const studentName = useMemo(() => {
     if (!studentData) {
@@ -402,6 +471,58 @@ export default function StudentPaymentHistoryPage() {
     await refetchHistory();
   };
 
+  const openAddCallLog = () => {
+    setEditingCallLog(null);
+    setCallLogForm({
+      studentId: studentId || '',
+      callDate: new Date().toISOString().split('T')[0],
+      callTime: new Date().toTimeString().slice(0, 5),
+      callResult: null,
+      notes: null,
+      followUpRequired: false,
+      followUpDate: null,
+    });
+    setIsCallLogModalOpen(true);
+  };
+
+  const openEditCallLog = (log: StudentCallLogDto) => {
+    setEditingCallLog(log);
+    setCallLogForm({
+      studentId: log.studentId,
+      callDate: log.callDate,
+      callTime: log.callTime,
+      callResult: log.callResult,
+      notes: log.notes,
+      followUpRequired: log.followUpRequired,
+      followUpDate: log.followUpDate,
+    });
+    setIsCallLogModalOpen(true);
+  };
+
+  const closeCallLogModal = () => {
+    setIsCallLogModalOpen(false);
+    setEditingCallLog(null);
+  };
+
+  const handleSaveCallLog = async () => {
+    if (editingCallLog) {
+      await updateCallLogMutation.mutate({ id: editingCallLog.id, data: callLogForm });
+    } else {
+      await createCallLogMutation.mutate(callLogForm);
+    }
+    closeCallLogModal();
+    await refetchCallLogs();
+  };
+
+  const handleDeleteCallLog = async (id: string) => {
+    if (!confirm('Удалить эту запись обзвона?')) {
+      return;
+    }
+
+    await deleteCallLogMutation.mutate(id);
+    await refetchCallLogs();
+  };
+
   if (!studentId) {
     return (
       <div className="space-y-4">
@@ -422,7 +543,45 @@ export default function StudentPaymentHistoryPage() {
       <div className="crm-surface p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-[#1f2530]">История платежей: {studentName}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold text-[#1f2530]">История платежей: {studentName}</h2>
+
+              {(() => {
+                const primaryPhone = studentData ? getPrimaryPhone(studentData) : null;
+                const messengerPhone = primaryPhone ? normalizePhoneForMessenger(primaryPhone) : null;
+                const whatsappUrl = messengerPhone ? `https://wa.me/${messengerPhone}` : null;
+                const telegramUrl = messengerPhone ? `tg://resolve?phone=${messengerPhone}` : null;
+
+                if (!whatsappUrl && !telegramUrl) return null;
+
+                return (
+                  <div className="flex items-center gap-1.5">
+                    {whatsappUrl && (
+                      <a
+                        href={whatsappUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Открыть WhatsApp: ${primaryPhone}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#dbe2e8] bg-white p-1.5 transition-colors hover:bg-[#eefaf1]"
+                      >
+                        <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                      </a>
+                    )}
+                    {telegramUrl && (
+                      <a
+                        href={telegramUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Открыть Telegram: ${primaryPhone}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#dbe2e8] bg-white p-1.5 transition-colors hover:bg-[#eef5ff]"
+                      >
+                        <img src="/logo/telegram.svg" alt="Telegram" className="h-4 w-4" />
+                      </a>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
             <p className="mt-1 text-sm text-[#7f8897]">
               {studentData?.email || studentData?.phone || `ID: ${studentId}`}
             </p>
@@ -666,6 +825,111 @@ export default function StudentPaymentHistoryPage() {
               </div>
             </div>
           ) : null}
+
+          {activeTab === 'CALLS' ? (
+            <div className="crm-table-wrap overflow-hidden">
+              <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
+                <p className="text-sm font-medium text-[#4b5563]">История обзвонов</p>
+                <Button size="sm" icon={Phone} onClick={openAddCallLog}>
+                  Добавить звонок
+                </Button>
+              </div>
+              {callLogsLoading ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
+                </div>
+              ) : callLogsError ? (
+                <div className="mx-6 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {callLogsError}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="crm-table-head">
+                      <tr>
+                        <th className="crm-table-th">#</th>
+                        <th className="crm-table-th">Дата и время</th>
+                        <th className="crm-table-th">Инициатор</th>
+                        <th className="crm-table-th">Результат</th>
+                        <th className="crm-table-th">Заметки</th>
+                        <th className="crm-table-th">Перезвонить</th>
+                        <th className="crm-table-th">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody className="crm-table-body">
+                      {(callLogsData?.content ?? []).length > 0 ? (
+                        (callLogsData?.content ?? []).map((log, index) => {
+                          const callResultLabel = CALL_RESULTS.find(r => r.value === log.callResult)?.label || log.callResult || '—';
+                          
+                          return (
+                            <tr key={log.id} className="crm-table-row">
+                              <td className="crm-table-cell">{index + 1}</td>
+                              <td className="crm-table-cell">
+                                <div className="text-sm font-semibold text-[#202938]">{log.callDate}</div>
+                                <div className="text-xs text-[#8690a0]">{log.callTime}</div>
+                              </td>
+                              <td className="crm-table-cell">
+                                <div className="text-sm text-[#202938]">{log.callerName || '—'}</div>
+                                <div className="text-xs text-[#8690a0]">{log.createdByName ? `Создан: ${log.createdByName}` : ''}</div>
+                              </td>
+                              <td className="crm-table-cell">
+                                <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${
+                                  log.callResult === 'SUCCESS' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
+                                  log.callResult === 'CALLBACK' ? 'border-amber-200 bg-amber-50 text-amber-700' :
+                                  log.callResult === 'NO_ANSWER' || log.callResult === 'BUSY' ? 'border-rose-200 bg-rose-50 text-rose-700' :
+                                  'border-slate-200 bg-slate-100 text-slate-600'
+                                }`}>
+                                  {callResultLabel}
+                                </span>
+                              </td>
+                              <td className="crm-table-cell">
+                                <div className="max-w-xs truncate text-sm text-[#667085]">{log.notes || '—'}</div>
+                              </td>
+                              <td className="crm-table-cell">
+                                {log.followUpRequired && log.followUpDate ? (
+                                  <div className="text-sm text-amber-700">{log.followUpDate}</div>
+                                ) : (
+                                  <span className="text-sm text-[#8690a0]">—</span>
+                                )}
+                              </td>
+                              <td className="crm-table-cell">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditCallLog(log)}
+                                    disabled={updateCallLogMutation.loading || deleteCallLogMutation.loading}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="Редактировать"
+                                  >
+                                    <Edit2 className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteCallLog(log.id)}
+                                    disabled={deleteCallLogMutation.loading || updateCallLogMutation.loading}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#c34c4c] transition-colors hover:bg-[#fff1f1] disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="Удалить"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr className="crm-table-row">
+                          <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                            Записей обзвонов пока нет
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : null}
         </>
       )}
 
@@ -698,6 +962,96 @@ export default function StudentPaymentHistoryPage() {
         onConfirm={handleConfirmReason}
         isSubmitting={updatePaymentMutation.loading}
       />
+
+      <Modal
+        isOpen={isCallLogModalOpen}
+        onClose={closeCallLogModal}
+        title={editingCallLog ? 'Редактировать звонок' : 'Добавить звонок'}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#202938]">Дата звонка</label>
+              <input
+                type="date"
+                value={callLogForm.callDate}
+                onChange={(e) => setCallLogForm({ ...callLogForm, callDate: e.target.value })}
+                className="crm-select"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#202938]">Время</label>
+              <input
+                type="time"
+                value={callLogForm.callTime}
+                onChange={(e) => setCallLogForm({ ...callLogForm, callTime: e.target.value })}
+                className="crm-select"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#202938]">Результат</label>
+            <select
+              value={callLogForm.callResult || ''}
+              onChange={(e) => setCallLogForm({ ...callLogForm, callResult: e.target.value || null })}
+              className="crm-select"
+            >
+              <option value="">Не выбрано</option>
+              {CALL_RESULTS.map((result) => (
+                <option key={result.value} value={result.value}>
+                  {result.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#202938]">Заметки</label>
+            <textarea
+              value={callLogForm.notes || ''}
+              onChange={(e) => setCallLogForm({ ...callLogForm, notes: e.target.value || null })}
+              className="crm-input"
+              rows={3}
+              placeholder="Добавить заметку..."
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="followUpRequired"
+              checked={callLogForm.followUpRequired}
+              onChange={(e) => setCallLogForm({ ...callLogForm, followUpRequired: e.target.checked })}
+              className="h-4 w-4 rounded border-[#dbe2e8] text-[#467aff] focus:ring-[#467aff]"
+            />
+            <label htmlFor="followUpRequired" className="text-sm font-medium text-[#202938]">
+              Требуется перезвонить
+            </label>
+          </div>
+
+          {callLogForm.followUpRequired && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#202938]">Дата перезвона</label>
+              <input
+                type="date"
+                value={callLogForm.followUpDate || ''}
+                onChange={(e) => setCallLogForm({ ...callLogForm, followUpDate: e.target.value || null })}
+                className="crm-select"
+              />
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={closeCallLogModal}>
+              Отмена
+            </Button>
+            <Button onClick={handleSaveCallLog} disabled={createCallLogMutation.loading || updateCallLogMutation.loading}>
+              {createCallLogMutation.loading || updateCallLogMutation.loading ? 'Сохранение...' : 'Сохранить'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

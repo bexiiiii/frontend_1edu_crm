@@ -25,15 +25,32 @@
 20. [Lesson Service (8126)](#20-lesson-service-8126)
 21. [Settings Service (8128)](#21-settings-service-8128)
 22. [Audit Service (8130)](#22-audit-service-8130)
-23. [Справочник Enum-ов](#23-справочник-enum-ов)
+23. [Inventory Service (8132)](#23-inventory-service-8132)
+24. [Справочник Enum-ов](#24-справочник-enum-ов)
 
 ---
 
 ## 0. Release Notes (2026-04-18)
 
+- **Multi-branch support (tenant-scoped)**:
+  - добавлены CRUD endpoints филиалов в `settings-service`: `GET/POST/PUT/DELETE /api/v1/settings/branches`;
+  - в tenant schema добавлена таблица `tenant_branches` c default-филиалом `Главный филиал` (`code=MAIN`);
+  - context филиала поддерживается через `X-Branch-ID` header и JWT claims `branch_id` / `branch_ids`;
+  - **API Gateway (`TenantHeaderFilter`)** форвардит `X-Branch-ID` во все downstream сервисы; приоритизация: header > JWT `branch_id` > первый из `branch_ids`;
+  - активный branch context прокидывается в PostgreSQL через `app.branch_id` и используется branch-aware запросами / RLS; если у пользователя ровно один доступный филиал, backend выбирает его автоматически.
+- **Branch-scoped user access (auth-service)**:
+  - в `CreateUserRequest`/`UpdateUserRequest` и `UserDto` добавлено поле `branchIds`;
+  - backend не позволяет назначать пользователю филиалы вне скоупа текущего администратора (`BRANCH_ACCESS_DENIED`);
+  - если администратор сам ограничен несколькими филиалами, `branchIds` обязательны (`BRANCH_SCOPE_REQUIRED`).
+- **Teacher self-scope enforcement (server-side)**:
+  - для `ROLE_TEACHER` доступ к расписанию, занятиям и посещаемости ограничен только собственными записями;
+  - попытки чтения/изменения чужих записей возвращают `403 TEACHER_SCOPE_DENIED`;
+  - для teacher-токена обязателен валидный claim `staff_id` (`TEACHER_STAFF_ID_REQUIRED` / `TEACHER_STAFF_ID_INVALID`).
+
 - **Analytics Excel export**: добавлены отдельные download endpoint'ы (`/export`) для 8 аналитических экранов с табличным `.xlsx` (несколько листов, структурированные колонки, без JSON-blob в одной ячейке).
 - **Today analytics data quality**:
-  - в блоке `debtors` долг считается по подпискам со статусами `ACTIVE | EXPIRED | FROZEN` (и legacy `COMPLETED`), что устраняет пропуски должников;
+  - endpoint `GET /api/v1/payments/student-payments/debtors` поддерживает фильтр по `month=YYYY-MM` и опциональный date-range `fromDate`/`toDate` (оба параметра передаются парой);
+  - в текущей реализации `debtors` считает долг по подпискам, активным в выбранном периоде, со статусами `ACTIVE | EXPIRED`;
   - в блоке `upcomingBirthdays` возраст/`daysUntil` считается на backend с корректной обработкой `29 февраля` в невисокосный год.
 - **Analytics cache freshness**: для analytics-кэшей уменьшены TTL (операционные виджеты обновляются быстрее), плюс добавлена tenant-aware инвалидация через RabbitMQ (`audit.tenant`).
 - **File URL for frontend**: `file-service` теперь возвращает URL на основе `MINIO_PUBLIC_URL` (если задан), fallback — `MINIO_URL`; это нужно для корректных ссылок в браузере.
@@ -77,6 +94,29 @@
 
 ---
 
+## 0.1 Release Notes (2026-04-23)
+
+- **Branch filtering fixed**: API Gateway теперь корректно форвардит `X-Branch-ID` header во все бизнес-сервисы. Ранее header терялся на уровне gateway, из-за чего при переключении филиала отображались данные главного филиала.
+  - `TenantHeaderFilter` извлекает branch context из `X-Branch-ID` header или JWT claims (`branch_id` / `branch_ids`) и прокидывает его downstream;
+  - branch-aware repository methods добавлены в `staff-service` (search), `course-service` (list/search), `lesson-service` (list by date/type/status), `schedule-service` (by room/search);
+  - cache keys обновлены для включения branch context: `schedules`, `rooms`, `courses`, `lessons`, `inventory`, `inventory-categories`, `inventory-units`.
+
+- **Student Call Logs fixed**: исправлена ошибка `500 Internal Server Error` на всех endpoint'ах `/api/v1/students/call-logs/*`.
+  - колонки `created_by` / `updated_by` конвертированы из `UUID` в `VARCHAR(36)` для совместимости с `BaseEntity`;
+  - миграция `V32__fix_call_log_audit_columns.sql` применяется автоматически для всех tenant-схем.
+
+- **Inventory Service available**: исправлена ошибка `404 Not Found` на `/api/v1/inventory/*`.
+  - добавлен маршрут в API Gateway для `inventory-service` (порт 8132);
+  - circuit breaker instance `inventoryService` сконфигурирован с fallback;
+  - все endpoints `/api/v1/inventory/**` теперь доступны через gateway.
+
+- **Branch-scoped data isolation**: все бизнес-сервисы теперь строго фильтруют данные по активному филиалу.
+  - при запросе без `X-Branch-ID` данные всех филиалов возвращаются (поведение для SUPER_ADMIN);
+  - при наличии branch context в запросе — только данные этого филиала;
+  - аналитика (`/api/v1/analytics/*`) также фильтруется по branch — графики и отчёты показывают только данные выбранного филиала.
+
+---
+
 ## 1. Общая информация
 
 ### Базовый URL
@@ -111,6 +151,7 @@
 | lesson-service | 8126 | 9126 |
 | settings-service | 8128 | 9128 |
 | audit-service | 8130 | — |
+| inventory-service | 8132 | 9132 |
 
 ### Маршрутная таблица API Gateway (`localhost:8090`)
 
@@ -153,6 +194,7 @@
 ```http
 Authorization: Bearer <access_token>
 Content-Type: application/json
+X-Branch-ID: <branch_uuid>   # optional
 ```
 
 > `X-Tenant-ID` не нужен для обычного tenant frontend. Gateway и backend сами берут tenant context из JWT claim `tenant_id`.
@@ -167,6 +209,15 @@ Content-Type: application/json
 > Если tenant context не удалось определить, backend вернёт `400`:
 > - `TENANT_CONTEXT_REQUIRED` — tenant context отсутствует;
 > - `INVALID_TENANT_ID` — передан некорректный `X-Tenant-ID`.
+
+### Branch context и branch isolation
+
+- `X-Branch-ID` передавай как UUID активного филиала, если пользователь может переключать филиалы в UI.
+- Если в JWT есть `branch_ids`, то переданный `X-Branch-ID` обязан входить в этот список. Иначе backend вернёт `403 BRANCH_ACCESS_DENIED`.
+- Если в `branch_ids` ровно один филиал и заголовок не передан, backend выбирает его автоматически.
+- Если филиалов несколько и заголовок не передан, backend пытается использовать JWT claim `branch_id`. Если и он не определён, branch context остаётся пустым, и branch-aware запросы выполняются в tenant-wide режиме внутри текущего tenant.
+- Активный branch context прокидывается в PostgreSQL session variable `app.branch_id`; branch-aware сервисы и RLS-политики используют её для фильтрации данных.
+- После переключения филиала фронтенд должен отправлять новый `X-Branch-ID` на все последующие запросы, где важна branch-изоляция.
 
 ### Как получить токен
 
@@ -205,6 +256,8 @@ grant_type=password&client_id=1edu-web-app&username=<login>&password=<pass>
 ```json
 {
   "tenant_id": "tenant-uuid",
+  "branch_id": "branch-uuid",
+  "branch_ids": ["branch-uuid-1", "branch-uuid-2"],
   "permissions": ["STUDENTS_VIEW", "LESSONS_CREATE"],
   "realm_access": {
     "roles": ["TENANT_ADMIN", "offline_access", "uma_authorization"]
@@ -213,6 +266,8 @@ grant_type=password&client_id=1edu-web-app&username=<login>&password=<pass>
 ```
 
 > `tenant_id` — UUID тенанта в JWT. Для обычных пользователей фронт хранит его только как контекст UI; вручную копировать его в `X-Tenant-ID` не требуется.
+> `branch_id` — активный филиал пользователя (если задан).
+> `branch_ids` — список филиалов, к которым у пользователя есть доступ.
 > `permissions` — гранулярные права (через `permissions-mapper` клиента `1edu-web-app`).
 > `realm_access.roles` — роли пользователя; именно их backend использует в `@PreAuthorize("hasRole(...)")`.
 
@@ -220,7 +275,7 @@ grant_type=password&client_id=1edu-web-app&username=<login>&password=<pass>
 > - role-backed permissions (из `RoleConfig` / Keycloak role attributes), либо
 > - user override (`PUT /api/v1/auth/users/{id}/permissions`).
 >
-> В `auth-service` при старте автоматически провижинятся нужные Keycloak User Profile attributes (`permissions`, `permissions_source`, `tenant_id`, `staff_id`, `photoUrl`, `language`), чтобы custom-role permissions стабильно попадали в токен и корректно работал `hasAuthority(...)`.
+> В `auth-service` при старте автоматически провижинятся нужные Keycloak User Profile attributes (`permissions`, `permissions_source`, `tenant_id`, `staff_id`, `branch_ids`, `photoUrl`, `language`), чтобы custom-role permissions стабильно попадали в токен и корректно работал `hasAuthority(...)`.
 
 ---
 
@@ -854,6 +909,7 @@ interface UserDto {
   firstName: string;
   lastName: string;
   staffId: string | null;
+  branchIds: string[];
   roles: string[];
   permissions: string[];
   permissionsSource: string | null;   // USER | ROLE:<keycloakRoleName>
@@ -880,6 +936,7 @@ interface UserDto {
   "password": "password123",
   "role": "TEACHER",
   "staffId": "staff-uuid",
+  "branchIds": ["branch-uuid-1", "branch-uuid-2"],
   "tenantId": "uuid",
   "permissions": ["STUDENTS_VIEW", "LESSONS_CREATE"]
 }
@@ -889,6 +946,11 @@ interface UserDto {
 
 > Tenant scope берётся из JWT claim `tenant_id`.
 > Если запрос идёт от обычного `TENANT_ADMIN`, backend привязывает нового пользователя к текущему tenant context и не позволяет создать пользователя в другом tenant через произвольный `tenantId` в body.
+>
+> Branch scope:
+> - если в `branchIds` передан список, пользователь ограничивается этими филиалами;
+> - если администратор сам branch-scoped, backend запрещает назначать `branchIds` вне его скоупа (`BRANCH_ACCESS_DENIED`);
+> - если администратор branch-scoped и имеет доступ сразу к нескольким филиалам, `branchIds` обязателен (`BRANCH_SCOPE_REQUIRED`).
 >
 > При назначении роли backend наполняет `permissions` и `permissionsSource` так:
 > - если в запросе передан `permissions`, source = `USER`;
@@ -938,6 +1000,7 @@ interface UserDto {
   "firstName": "Иван",
   "lastName": "Петров",
   "staffId": "staff-uuid",
+  "branchIds": ["branch-uuid-1"],
   "role": "MANAGER",
   "permissions": ["STUDENTS_VIEW", "LEADS_CREATE"]
 }
@@ -1229,6 +1292,115 @@ interface StudentStatsDto {
   dropped: number;
 }
 ```
+
+---
+
+### 8.5 Журнал обзвонов студентов (Call Logs)
+
+#### `POST /api/v1/students/call-logs` — Создать запись обзвона
+**Доступ:** `TENANT_ADMIN` | `MANAGER` | `RECEPTIONIST` | `STUDENTS_EDIT`
+
+**Request Body:**
+```typescript
+interface SaveStudentCallLogRequest {
+  studentId: string;           // UUID студента (обязательно)
+  callerStaffId?: string;      // UUID сотрудника, который звонил
+  callDate: string;            // YYYY-MM-DD (обязательно)
+  callTime: string;            // HH:MM (обязательно)
+  callResult?: string;         // Результат звонка
+  notes?: string;              // Заметки
+  followUpRequired?: boolean;  // Требуется повторный звонок (default: false)
+  followUpDate?: string;       // YYYY-MM-DD — дата следующего звонка
+  updateReason?: string;       // Для create не требуется, используется на update
+}
+```
+
+**Response:** `ApiResponse<StudentCallLogDto>`
+
+```typescript
+interface StudentCallLogDto {
+  id: string;
+  studentId: string;
+  callerStaffId: string | null;
+  callerName: string | null;
+  callDate: string;
+  callTime: string;
+  callResult: string | null;
+  notes: string | null;
+  followUpRequired: boolean;
+  followUpDate: string | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedBy: string | null;
+  updatedByName: string | null;
+  updatedAt: string;
+  updateReason: string | null;
+}
+```
+
+---
+
+#### `PUT /api/v1/students/call-logs/{id}` — Изменить запись обзвона
+**Доступ:** `TENANT_ADMIN` | `MANAGER` | `RECEPTIONIST` | `STUDENTS_EDIT`
+
+**Request Body:** `SaveStudentCallLogRequest`
+
+**Важно:**
+- backend использует тот же DTO, что и для create, поэтому `studentId`, `callDate`, `callTime` остаются обязательными;
+- поле `updateReason` обязательно при редактировании.
+
+**Ошибки:**
+- `CALL_LOG_UPDATE_REASON_REQUIRED` — не указана причина изменения
+
+---
+
+#### `DELETE /api/v1/students/call-logs/{id}?reason=` — Удалить запись обзвона
+**Доступ:** **Только `TENANT_ADMIN` | `MANAGER`**
+
+**Query Params:**
+- `reason` (обязательно): причина удаления
+
+**Ошибки:**
+- `CALL_LOG_DELETE_REASON_REQUIRED` — не указана причина удаления
+
+---
+
+#### `GET /api/v1/students/call-logs/student/{studentId}` — История обзвонов студента
+**Доступ:** `TENANT_ADMIN` | `MANAGER` | `RECEPTIONIST` | `TEACHER` | `STUDENTS_VIEW`
+
+**Query Params:**
+- `page` (default `0`), `size` (default `20`)
+
+**Response:** `ApiResponse<PageResponse<StudentCallLogDto>>`
+
+> Сортировка: `callDate DESC, callTime DESC`
+
+---
+
+#### `GET /api/v1/students/call-logs/student/{studentId}/range` — История обзвонов за период
+**Доступ:** `TENANT_ADMIN` | `MANAGER` | `RECEPTIONIST` | `TEACHER` | `STUDENTS_VIEW`
+
+**Query Params:**
+- `fromDate` (обязательно): `YYYY-MM-DD`
+- `toDate` (обязательно): `YYYY-MM-DD`
+- `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<StudentCallLogDto>>`
+
+> Диапазон дат включительный (`BETWEEN fromDate AND toDate`), сортировка `callDate DESC, callTime DESC`
+
+---
+
+#### `GET /api/v1/students/call-logs/caller/{staffId}` — Обзвоны сотрудника
+**Доступ:** **Только `TENANT_ADMIN` | `MANAGER`**
+
+**Query Params:**
+- `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<StudentCallLogDto>>`
+
+> Все endpoints `call-logs` branch-scoped по активному branch context (`X-Branch-ID` / JWT `branch_id`).
 
 ---
 
@@ -1602,6 +1774,9 @@ interface ScheduleDto {
 ---
 
 ### 11.2 Расписание / Группы (`/api/v1/schedules`)
+
+> Для `ROLE_TEACHER` backend принудительно ограничивает доступ только собственными расписаниями (по JWT claim `staff_id`).
+> Попытки обратиться к чужому расписанию возвращают `403 TEACHER_SCOPE_DENIED`.
 
 #### `POST /api/v1/schedules` — Создать группу/расписание
 **Доступ:** `TENANT_ADMIN` | `GROUPS_CREATE`
@@ -1979,6 +2154,11 @@ type PaymentAmountChangeReasonCode =
 #### `GET /api/v1/payments/student-payments/student/{studentId}` — История платежей студента
 **Доступ:** `TENANT_ADMIN` | `FINANCE_VIEW`
 
+**Query Params:**
+- `fromMonth` (optional): `YYYY-MM` — фильтр по начальному месяцу
+- `toMonth` (optional): `YYYY-MM` — фильтр по конечному месяцу
+
+> Если `fromMonth`/`toMonth` не указаны — возвращаются все месяцы.
 > Если студент был добавлен в курс через `studentIds` в `POST/PUT /api/v1/courses`, здесь автоматически появится course subscription.
 > Для такого auto-created course subscription:
 > - `courseId` будет заполнен;
@@ -2056,6 +2236,18 @@ interface MonthlyStudentDto {
 #### `GET /api/v1/payments/student-payments/debtors` — Должники
 **Доступ:** `TENANT_ADMIN` | `FINANCE_VIEW`
 
+**Query Params:**
+- `month` (optional): `YYYY-MM` — целевой месяц, который задаёт верхнюю границу расчёта долга (по умолчанию текущий)
+- `fromDate` (optional): `YYYY-MM-DD` — нижняя граница периода
+- `toDate` (optional): `YYYY-MM-DD` — верхняя граница периода
+
+**Правила:**
+- `fromDate` и `toDate` используются только парой;
+- `fromDate <= toDate`;
+- если передан диапазон, `toDate` дополнительно ограничивается концом выбранного `month` (или текущего месяца, если `month` не передан);
+- если `fromDate` оказался позже этой верхней границы, endpoint возвращает пустой список `[]`;
+- в текущей реализации долг считается по подпискам, активным в выбранном периоде, со статусами `ACTIVE` и `EXPIRED`.
+
 **Response:** `ApiResponse<List<StudentDebtDto>>`
 
 ```typescript
@@ -2067,6 +2259,11 @@ interface StudentDebtDto {
   monthlyExpected: number;
 }
 ```
+
+**Ошибки валидации:** `400 BUSINESS_ERROR`
+- если передан только один из параметров `fromDate` / `toDate`;
+- если `fromDate > toDate`;
+- если `month` не в формате `YYYY-MM`.
 
 ---
 
@@ -2123,6 +2320,11 @@ interface KpayInvoiceDto {
 
 Если `month` не передан, используется текущий месяц.
 
+Важно:
+- это **bulk endpoint** — создаёт счета по всем релевантным подпискам за месяц;
+- для счёта на одного ученика используйте `POST /api/v1/payments/kpay/invoices/single`;
+- request body строгий: поддерживается только поле `month`, лишние поля возвращают `400`.
+
 **Response:** `ApiResponse<GenerateKpayInvoicesResponse>`
 
 ```typescript
@@ -2134,6 +2336,33 @@ interface GenerateKpayInvoicesResponse {
   failed: number;
 }
 ```
+
+#### `POST /api/v1/payments/kpay/invoices/single` — Создать KPAY счёт для одного ученика
+**Доступ:** `TENANT_ADMIN` | `FINANCE_CREATE`
+
+Позволяет вручную выставить счёт по выбранному ученику:
+- с авто-суммой (из активного абонемента), либо
+- с ручной суммой (`amount`).
+
+**Request Body:**
+```json
+{
+  "studentId": "uuid",
+  "subscriptionId": "uuid-optional",
+  "month": "2026-04",
+  "recipientField": "PARENT_PHONE",
+  "amount": 25000,
+  "currency": "KZT"
+}
+```
+
+Пояснения:
+- `subscriptionId` optional: если не передан, backend выберет подходящий активный/expired абонемент ученика для указанного месяца;
+- `recipientField`: `PHONE | STUDENT_PHONE | PARENT_PHONE | ADDITIONAL_PHONE_1`;
+- `amount` optional: если не передан, сумма считается автоматически из абонемента.
+- при наличии нескольких релевантных абонементов у ученика рекомендуется передавать `subscriptionId` явно.
+
+**Response:** `ApiResponse<KpayInvoiceDto>`
 
 #### `GET /api/v1/payments/kpay/invoices` — Список KPAY счетов
 **Доступ:** `TENANT_ADMIN` | `FINANCE_VIEW`
@@ -2205,6 +2434,11 @@ interface ApiPayInvoiceDto {
 
 Если `month` не передан, используется текущий месяц.
 
+Важно:
+- это **bulk endpoint** — создаёт счета по всем релевантным подпискам за месяц;
+- для счёта на одного ученика используйте `POST /api/v1/payments/apipay/invoices/single`;
+- request body строгий: поддерживается только поле `month`, лишние поля возвращают `400`.
+
 **Response:** `ApiResponse<GenerateApiPayInvoicesResponse>`
 
 ```typescript
@@ -2217,12 +2451,47 @@ interface GenerateApiPayInvoicesResponse {
 }
 ```
 
+#### `POST /api/v1/payments/apipay/invoices/single` — Создать ApiPay счёт для одного ученика
+**Доступ:** `TENANT_ADMIN` | `FINANCE_CREATE`
+
+Позволяет вручную выставить счёт по выбранному ученику:
+- с авто-суммой (из активного абонемента), либо
+- с ручной суммой (`amount`).
+
+**Request Body:**
+```json
+{
+  "studentId": "uuid",
+  "subscriptionId": "uuid-optional",
+  "month": "2026-04",
+  "recipientField": "PARENT_PHONE",
+  "amount": 25000,
+  "currency": "KZT",
+  "description": "Оплата за апрель"
+}
+```
+
+Пояснения:
+- `subscriptionId` optional: если не передан, backend выберет подходящий активный/expired абонемент ученика для указанного месяца;
+- `recipientField`: `PHONE | STUDENT_PHONE | PARENT_PHONE | ADDITIONAL_PHONE_1`;
+- `amount` optional: если не передан, сумма считается автоматически из абонемента;
+- для ApiPay телефон автоматически нормализуется к формату `8XXXXXXXXXX`.
+- при наличии нескольких релевантных абонементов у ученика рекомендуется передавать `subscriptionId` явно.
+- если счёт за этот `subscriptionId + month` уже существует и НЕ оплачен (`CREATED/PENDING/FAILED/CANCELLED/EXPIRED/REFUNDED`), endpoint перевыставляет счёт (reissue) вместо ошибки дубликата;
+- если счёт уже `PAID`, endpoint возвращает `APIPAY_INVOICE_ALREADY_PAID`.
+
+**Response:** `ApiResponse<ApiPayInvoiceDto>`
+
 #### `GET /api/v1/payments/apipay/invoices` — Список ApiPay счетов
 **Доступ:** `TENANT_ADMIN` | `FINANCE_VIEW`
 
 **Query Params:**
 - `month` (optional): `YYYY-MM`
 - `status` (optional): `CREATED | PENDING | PAID | FAILED | CANCELLED | EXPIRED | REFUNDED`
+
+Поведение:
+- список сортируется по `updatedAt DESC`, поэтому перевыставленный (reissue) счёт и любые webhook-обновления статуса отображаются вверху таблицы;
+- webhook-статусы (`pending/paid/cancelled/expired/...`) отражаются в этом же списке без дополнительного endpoint.
 
 **Response:** `ApiResponse<List<ApiPayInvoiceDto>>`
 
@@ -2235,12 +2504,19 @@ interface GenerateApiPayInvoicesResponse {
 **Доступ:** public webhook endpoint (без JWT, проброшен через gateway)
 
 Headers:
-- `X-Webhook-Signature: sha256=<hex>`
+- `X-Webhook-Signature: sha256=<hex>` (предпочтительно)
+- также поддерживаются: `Signature`, `X-Signature`
+
+Формат подписи:
+- `sha256=<hex>`
+- либо raw-hex (`64` символа) — будет нормализован на backend.
 
 Поведение:
 - webhook обновляет статус `apipay_invoices`;
 - подпись webhook валидируется HMAC-SHA256 (секрет из tenant settings);
 - при статусе `PAID` автоматически записывает платеж в `student_payments` и связывает его с `apipay_invoices.studentPaymentId`.
+- при отсутствии подписи webhook возвращает `400` (`APIPAY_SIGNATURE_MISSING`), кроме sandbox payload (`invoice.is_sandbox=true`) — такие повторные уведомления принимаются без подписи;
+- при некорректной подписи webhook возвращает `400` (`APIPAY_SIGNATURE_INVALID`).
 
 ---
 
@@ -2658,7 +2934,7 @@ interface ExpiredSubscriptionDto {
 ```
 
 Примечания по расчётам:
-- `debtors` формируется по отрицательному балансу `SUM(payments) - SUM(subscriptions)` с учётом подписок в статусах `ACTIVE | EXPIRED | FROZEN` (и legacy `COMPLETED`).
+- `debtors` использует `GET /api/v1/payments/student-payments/debtors`: backend считает помесячный долг по подпискам, активным в выбранном периоде, со статусами `ACTIVE | EXPIRED`; опциональный `fromDate/toDate` сужает окно расчёта и ограничивается концом выбранного месяца.
 - `upcomingBirthdays.daysUntil` и `turnsAge` считаются на backend с корректной обработкой даты рождения `29 февраля`.
 
 ---
@@ -3541,6 +3817,9 @@ interface AttendanceDto {
 
 ### 20.1 Занятия (`/api/v1/lessons`)
 
+> Для `ROLE_TEACHER` backend принудительно ограничивает доступ только собственными занятиями (по JWT claim `staff_id`).
+> Попытки обратиться к чужому занятию возвращают `403 TEACHER_SCOPE_DENIED`.
+
 #### `POST /api/v1/lessons` — Создать занятие
 **Доступ:** `TENANT_ADMIN` | `LESSONS_CREATE`
 
@@ -3694,6 +3973,7 @@ interface AttendanceDto {
 > - окно редактирования посещаемости контролируется `settings.attendanceWindowDays`;
 > - после истечения окна API возвращает ошибку `ATTENDANCE_EDIT_WINDOW_EXPIRED`;
 > - attendance-операции запрещены для неактивных студентов (`STUDENT_NOT_ACTIVE`);
+> - для `ROLE_TEACHER` доступ к attendance ограничен только занятиями этого преподавателя (`TEACHER_SCOPE_DENIED`);
 > - при 3-м пропуске за неделю автоматически создаётся IN_APP уведомление в tenant notification log;
 > - такие tenant-level уведомления доступны ролям `MANAGER` и `RECEPTIONIST` (а также `SUPER_ADMIN`), но не выдаются как общий поток для `TENANT_ADMIN`.
 
@@ -4212,8 +4492,18 @@ interface GoogleDriveBackupSettingsDto {
 
 Поведение:
 - валидируется подписанный `state` (tenant-aware);
+- tenant контекст для callback берётся из `state` (заголовок `X-Tenant-ID` не требуется);
 - access token сохраняется в tenant settings;
 - интеграция автоматически включается (`enabled=true`).
+- сразу после успешного OAuth backend делает best-effort автозапуск первого backup (ошибка backup не откатывает подключение интеграции);
+- при успешной авторизации callback делает redirect (`302`) на frontend settings страницу (`https://app.1edu.kz/settings` по умолчанию).
+
+Если backend отвечает `GOOGLE_DRIVE_OAUTH_NOT_CONFIGURED`, на сервере не заданы OAuth env-переменные:
+- `ONDEEDU_GOOGLE_DRIVE_OAUTH_CLIENT_ID`
+- `ONDEEDU_GOOGLE_DRIVE_OAUTH_CLIENT_SECRET`
+
+Опциональная настройка redirect URL:
+- `ondeedu.frontend.settings-url` (default: `https://app.1edu.kz/settings`)
 
 #### `PUT /api/v1/settings/google-drive-backup` — Обновить настройки backup в Google Drive
 **Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
@@ -4231,7 +4521,7 @@ interface GoogleDriveBackupSettingsDto {
 - `accessToken` tenant-scoped и в ответах masked;
 - `accessToken` можно не передавать при OAuth-connect flow (callback сохранит токен автоматически);
 - если `folderId` не указан, файл загружается в root Google Drive пользователя;
-- backup запускается вручную.
+- backup можно запускать вручную; первый запуск также выполняется автоматически после OAuth callback.
 
 #### `POST /api/v1/settings/google-drive-backup/run` — Запустить backup в Google Drive
 **Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
@@ -4279,8 +4569,15 @@ interface YandexDiskBackupSettingsDto {
 
 Поведение:
 - валидируется подписанный `state` (tenant-aware);
+- tenant контекст для callback берётся из `state` (заголовок `X-Tenant-ID` не требуется);
 - access token сохраняется в tenant settings;
 - интеграция автоматически включается (`enabled=true`).
+- сразу после успешного OAuth backend делает best-effort автозапуск первого backup (ошибка backup не откатывает подключение интеграции);
+- при успешной авторизации callback делает redirect (`302`) на frontend settings страницу (`https://app.1edu.kz/settings` по умолчанию).
+
+Если backend отвечает `YANDEX_DISK_OAUTH_NOT_CONFIGURED`, на сервере не заданы OAuth env-переменные:
+- `ONDEEDU_YANDEX_DISK_OAUTH_CLIENT_ID`
+- `ONDEEDU_YANDEX_DISK_OAUTH_CLIENT_SECRET`
 
 #### `PUT /api/v1/settings/yandex-disk-backup` — Обновить настройки backup в Yandex Disk
 **Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
@@ -4298,7 +4595,7 @@ interface YandexDiskBackupSettingsDto {
 - `folderPath` по умолчанию `disk:/1edu-backups`;
 - `accessToken` tenant-scoped и в ответах masked;
 - `accessToken` можно не передавать при OAuth-connect flow (callback сохранит токен автоматически);
-- backup запускается вручную.
+- backup можно запускать вручную; первый запуск также выполняется автоматически после OAuth callback.
 
 #### `POST /api/v1/settings/yandex-disk-backup/run` — Запустить backup в Yandex Disk
 **Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
@@ -4622,6 +4919,63 @@ interface FinanceCategoryConfigDto {
 
 ---
 
+### 21.8 Филиалы (`/api/v1/settings/branches`)
+
+```typescript
+interface BranchDto {
+  id: string;
+  name: string;
+  code: string | null;
+  address: string | null;
+  phone: string | null;
+  active: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+#### `GET /api/v1/settings/branches` — Список филиалов тенанта
+**Доступ:** `TENANT_ADMIN`, `MANAGER`, `RECEPTIONIST`, `TEACHER` или permission `SETTINGS_VIEW`
+
+**Response:** `ApiResponse<List<BranchDto>>`
+
+#### `POST /api/v1/settings/branches` — Создать филиал
+**Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
+
+**Request Body:**
+```json
+{
+  "name": "Филиал на Чиланзаре",
+  "code": "CHIL-01",
+  "address": "Ташкент, Чиланзар 12",
+  "phone": "+998901112233",
+  "active": true,
+  "isDefault": false
+}
+```
+
+**Response:** `ApiResponse<BranchDto>`
+
+#### `PUT /api/v1/settings/branches/{id}` — Обновить филиал
+**Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
+
+**Request Body:** (те же поля, что и в create)
+
+**Response:** `ApiResponse<BranchDto>`
+
+#### `DELETE /api/v1/settings/branches/{id}` — Удалить филиал
+**Доступ:** `TENANT_ADMIN` или permission `SETTINGS_EDIT`
+
+**Response:** `ApiResponse<Void>`
+
+> Backend guards для филиалов:
+> - нельзя создать/переименовать филиал в дублирующее имя: `DUPLICATE_BRANCH`;
+> - всегда должен оставаться минимум 1 филиал: `LAST_BRANCH`;
+> - всегда должен оставаться минимум 1 активный филиал: `LAST_ACTIVE_BRANCH`.
+
+---
+
 ## 22. Audit Service (8130)
 
 `audit-service` принимает события из RabbitMQ и сохраняет их в MongoDB:
@@ -4714,7 +5068,440 @@ interface TenantAuditLog {
 
 ---
 
-## 23. Справочник Enum-ов
+## 23. Inventory Service (8132)
+
+`inventory-service` — управление складом и инвентарём: позиции склада, движения остатков, категории, единицы измерения и сводная статистика.
+
+> Все endpoints ниже branch-scoped по активному branch context (`X-Branch-ID` / JWT `branch_id`). Если активный филиал не выбран, сервис работает в tenant-wide режиме внутри текущего tenant, поэтому для branch-aware UI фронтенду лучше всегда отправлять `X-Branch-ID`.
+
+### 23.1 Позиции инвентаря (Items)
+
+#### `POST /api/v1/inventory/items` — Создать позицию инвентаря
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:**
+```typescript
+interface CreateInventoryItemRequest {
+  categoryId?: string;       // UUID категории
+  unitId: string;            // UUID единицы измерения (обязательно)
+  sku?: string;              // Уникален в пределах активного branch
+  barcode?: string;
+  name: string;              // Обязательно
+  description?: string;
+  brand?: string;
+  model?: string;
+  quantity: number;          // BigDecimal, обязательно
+  minQuantity?: number;      // BigDecimal
+  maxQuantity?: number;      // BigDecimal
+  pricePerUnit?: number;     // BigDecimal
+  sellingPrice?: number;     // BigDecimal
+  currency?: string;         // По умолчанию "UZS"
+  location?: string;
+  supplier?: string;
+  supplierContact?: string;
+  isTracked?: boolean;       // По умолчанию true
+  imageUrl?: string;
+  notes?: string;
+}
+```
+
+**Response:** `ApiResponse<InventoryItemDto>`
+
+```typescript
+interface InventoryItemDto {
+  id: string;
+  branchId: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  unitId: string | null;
+  unitName: string | null;
+  unitAbbreviation: string | null;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  barcode: string | null;
+  brand: string | null;
+  model: string | null;
+  quantity: number;
+  minQuantity: number | null;
+  maxQuantity: number | null;
+  pricePerUnit: number | null;
+  sellingPrice: number | null;
+  currency: string | null;
+  totalValue: number;
+  location: string | null;
+  supplier: string | null;
+  supplierContact: string | null;
+  status: string;            // Сейчас: IN_STOCK | LOW_STOCK | OUT_OF_STOCK
+  isActive: boolean | null;
+  isTracked: boolean | null;
+  requiresReorder: boolean | null;
+  imageUrl: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+**Примечания:**
+- если `quantity > 0`, backend автоматически создаёт стартовую транзакцию `RECEIVED` с note `Initial stock`;
+- `status` и `requiresReorder` пересчитываются сервером на основе `quantity` / `minQuantity`.
+
+**Ошибки:**
+- `INVENTORY_DUPLICATE_SKU` — SKU уже существует в текущем branch
+- `RESOURCE_NOT_FOUND` — category или unit не найдены
+
+---
+
+#### `GET /api/v1/inventory/items/{id}` — Получить позицию инвентаря
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryItemDto>`
+
+---
+
+#### `GET /api/v1/inventory/items` — Список позиций инвентаря
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:**
+- `status` (optional): строковый статус позиции, обычно `IN_STOCK` | `LOW_STOCK` | `OUT_OF_STOCK`
+- `search` (optional): поиск по `name` (`ILIKE %query%`)
+- `page` (default `0`), `size` (default `20`)
+
+**Response:** `ApiResponse<PageResponse<InventoryItemDto>>`
+
+> Без `search` список сортируется по `createdAt DESC`.
+
+---
+
+#### `GET /api/v1/inventory/items/category/{categoryId}` — Позиции по категории
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:** `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<InventoryItemDto>>`
+
+---
+
+#### `GET /api/v1/inventory/items/reorder-required` — Позиции, требующие пополнения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:** `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<InventoryItemDto>>`
+
+> Возвращаются записи с `requiresReorder = true`, обычно это `LOW_STOCK` и `OUT_OF_STOCK`.
+
+---
+
+#### `PUT /api/v1/inventory/items/{id}` — Обновить позицию инвентаря
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:**
+```typescript
+interface UpdateInventoryItemRequest {
+  categoryId?: string;       // Поле есть в DTO, но текущая реализация его не применяет
+  name?: string;
+  description?: string;
+  sku?: string;
+  brand?: string;
+  model?: string;
+  quantity?: number;         // BigDecimal, >= 0
+  minQuantity?: number;      // BigDecimal, >= 0
+  maxQuantity?: number;      // BigDecimal
+  pricePerUnit?: number;     // BigDecimal
+  sellingPrice?: number;     // BigDecimal
+  location?: string;
+  supplier?: string;
+  supplierContact?: string;
+  isTracked?: boolean;
+  imageUrl?: string;
+  notes?: string;
+}
+```
+
+**Response:** `ApiResponse<InventoryItemDto>`
+
+**Примечания:**
+- `unitId` через `PUT` не меняется;
+- если изменился `quantity`, backend автоматически пишет служебную транзакцию:
+  - увеличение — `RECEIVED`
+  - уменьшение / ручная коррекция — `ADJUSTMENT`
+  - note: `Manual quantity adjustment`
+
+---
+
+#### `DELETE /api/v1/inventory/items/{id}` — Удалить позицию инвентаря
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Ошибки:**
+- `INVENTORY_DELETE_NOT_EMPTY` — нельзя удалить позицию с остатком больше 0
+
+---
+
+### 23.2 Транзакции (Transactions)
+
+#### `POST /api/v1/inventory/items/{itemId}/transactions` — Записать транзакцию
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:**
+```typescript
+interface CreateInventoryTransactionRequest {
+  transactionType: string;   // Enum: RECEIVED | ISSUED | RETURNED | ADJUSTMENT | WRITE_OFF | TRANSFER
+  quantity: number;          // BigDecimal, обязательно
+  referenceType?: string;
+  referenceId?: string;      // UUID
+  notes?: string;
+  reason?: string;
+}
+```
+
+**Response:** `ApiResponse<InventoryTransactionDto>`
+
+```typescript
+interface InventoryTransactionDto {
+  id: string;
+  branchId: string | null;
+  itemId: string;
+  itemName: string | null;
+  transactionType: string;
+  quantity: number;
+  quantityBefore: number | null;
+  quantityAfter: number | null;
+  referenceType: string | null;
+  referenceId: string | null;
+  referenceNumber: string | null;
+  performedBy: string | null;
+  approvedBy: string | null;
+  recipientId: string | null;
+  unitCost: number | null;
+  totalCost: number | null;
+  transactionDate: string;
+  notes: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+```
+
+**Бизнес-логика:**
+- `RECEIVED`, `RETURNED` — увеличивают остаток;
+- `ISSUED`, `WRITE_OFF` — уменьшают остаток, если хватает количества;
+- `ADJUSTMENT` — устанавливает абсолютное значение остатка;
+- enum содержит `TRANSFER`, но текущая сервисная логика не обрабатывает его и возвращает ошибку.
+
+**Ошибки:**
+- `INVENTORY_INSUFFICIENT_STOCK` — недостаточно остатков
+- `INVENTORY_INVALID_TRANSACTION` — неподдерживаемый тип транзакции (например, `TRANSFER`)
+
+---
+
+#### `GET /api/v1/inventory/items/{itemId}/transactions` — История транзакций позиции
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:** `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<InventoryTransactionDto>>`
+
+> Сортировка: `transactionDate DESC`
+
+---
+
+#### `GET /api/v1/inventory/transactions` — Фильтр транзакций по типу
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:**
+- `transactionType` (required): `RECEIVED` | `ISSUED` | `RETURNED` | `ADJUSTMENT` | `WRITE_OFF` | `TRANSFER`
+- `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<InventoryTransactionDto>>`
+
+---
+
+#### `GET /api/v1/inventory/transactions/date-range` — Транзакции за период
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Query Params:**
+- `fromDate` (required): ISO datetime
+- `toDate` (required): ISO datetime
+- `page`, `size`
+
+**Response:** `ApiResponse<PageResponse<InventoryTransactionDto>>`
+
+> Диапазон включительный (`transactionDate BETWEEN fromDate AND toDate`), сортировка `transactionDate DESC`
+
+---
+
+### 23.3 Категории (Categories)
+
+```typescript
+interface InventoryCategoryDto {
+  id: string;
+  branchId: string | null;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  isActive: boolean | null;
+  sortOrder: number | null;
+}
+```
+
+#### `GET /api/v1/inventory/categories` — Список категорий
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryCategoryDto[]>`
+
+> Сортировка: `sortOrder ASC, name ASC`
+
+---
+
+#### `GET /api/v1/inventory/categories/{id}` — Получить категорию
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryCategoryDto>`
+
+---
+
+#### `POST /api/v1/inventory/categories` — Создать категорию
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:**
+```typescript
+interface SaveInventoryCategoryRequest {
+  name: string;             // Обязательно
+  description?: string;
+  icon?: string;
+  sortOrder?: number;       // Если не передан, backend ставит 0
+}
+```
+
+**Response:** `ApiResponse<InventoryCategoryDto>`
+
+**Ошибки:**
+- `INVENTORY_DUPLICATE_CATEGORY` — категория с таким именем уже существует в текущем branch
+
+---
+
+#### `PUT /api/v1/inventory/categories/{id}` — Обновить категорию
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:** `SaveInventoryCategoryRequest`
+
+**Ошибки:**
+- `INVENTORY_SYSTEM_CATEGORY` — системную категорию нельзя менять
+
+---
+
+#### `DELETE /api/v1/inventory/categories/{id}` — Удалить категорию
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Ошибки:**
+- `INVENTORY_SYSTEM_CATEGORY` — системную категорию нельзя удалять
+- `INVENTORY_CATEGORY_IN_USE` — у категории есть связанные inventory items
+
+---
+
+### 23.4 Единицы измерения (Units)
+
+```typescript
+interface InventoryUnitDto {
+  id: string;
+  branchId: string | null;
+  name: string;
+  abbreviation: string;
+  unitType: string;         // piece | weight | length | volume | area
+  description: string | null;
+  isSystem: boolean | null;
+  isActive: boolean | null;
+}
+```
+
+#### `GET /api/v1/inventory/units` — Список единиц измерения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryUnitDto[]>`
+
+> Сортировка: `name ASC`
+
+---
+
+#### `GET /api/v1/inventory/units/{id}` — Получить единицу измерения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryUnitDto>`
+
+---
+
+#### `POST /api/v1/inventory/units` — Создать единицу измерения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:**
+```typescript
+interface SaveInventoryUnitRequest {
+  name: string;             // Обязательно
+  abbreviation: string;     // Обязательно
+  unitType: string;         // Обязательно
+  description?: string;
+}
+```
+
+**Response:** `ApiResponse<InventoryUnitDto>`
+
+**Ошибки:**
+- `INVENTORY_DUPLICATE_UNIT` — единица с таким именем уже существует
+- `INVENTORY_DUPLICATE_UNIT_ABBR` — аббревиатура уже существует
+
+---
+
+#### `PUT /api/v1/inventory/units/{id}` — Обновить единицу измерения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Request Body:** `SaveInventoryUnitRequest`
+
+**Ошибки:**
+- `INVENTORY_SYSTEM_UNIT` — системную единицу нельзя менять
+
+---
+
+#### `DELETE /api/v1/inventory/units/{id}` — Удалить единицу измерения
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_EDIT`
+
+**Ошибки:**
+- `INVENTORY_SYSTEM_UNIT` — системную единицу нельзя удалять
+
+---
+
+### 23.5 Статистика
+
+#### `GET /api/v1/inventory/stats` — Статистика склада
+**Доступ:** `TENANT_ADMIN` или `INVENTORY_VIEW`
+
+**Response:** `ApiResponse<InventoryStatsDto>`
+
+```typescript
+interface InventoryStatsDto {
+  totalItems: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  totalTransactions: number;
+  totalCategories: number;   // Считаются только активные категории
+}
+```
+
+---
+
+### 23.6 Системные данные (seed)
+
+При создании tenant schema миграция создаёт системные записи, которые в API помечены `isSystem = true` и не редактируются / не удаляются через обычные CRUD endpoints.
+
+**Единицы измерения (17 системных):**
+Штука (шт), Комплект (компл), Коробка (кор), Упаковка (упак), Килограмм (кг), Грамм (г), Литр (л), Миллилитр (мл), Метр (м), Сантиметр (см), Квадратный метр (м²), Рулон (рул), Лист (лист), Бутылка (бут), Пачка (пач), Банка (бан), Тюбик (тюб)
+
+**Категории (11 системных):**
+Учебники, Рабочие тетради, Канцтовары, Бумага и картон, Оборудование, Мебель, Расходные материалы, Хозяйственные товары, Электроника, Спортинвентарь, Другое
+
+---
+
+## 24. Справочник Enum-ов
 
 ```typescript
 // Студент
@@ -4764,6 +5551,11 @@ enum AttendanceStatus { PLANNED, ATTENDED, ABSENT, SICK, VACATION, AUTO_ATTENDED
 // Тенант
 enum TenantStatus { TRIAL, ACTIVE, INACTIVE, SUSPENDED, BANNED }
 enum TenantPlan { BASIC, EXTENDED, EXTENDED_PLUS }
+
+// Инвентарь
+enum InventoryItemStatus { IN_STOCK, LOW_STOCK, OUT_OF_STOCK }
+enum InventoryTransactionType { RECEIVED, ISSUED, RETURNED, ADJUSTMENT, WRITE_OFF, TRANSFER }
+enum InventoryUnitType { piece, weight, length, volume, area }
 ```
 
 ---

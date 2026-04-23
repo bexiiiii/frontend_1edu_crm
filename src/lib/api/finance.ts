@@ -109,8 +109,8 @@ export const studentPaymentsService = {
   },
 
   /** Get debtors list */
-  async getDebtors() {
-    const response = await api.get<ApiResponse<StudentDebtDto[]>>('/api/v1/payments/student-payments/debtors');
+  async getDebtors(params?: { month?: string; fromDate?: string; toDate?: string }) {
+    const response = await api.get<ApiResponse<StudentDebtDto[]>>('/api/v1/payments/student-payments/debtors', { params });
     return response.data;
   },
 };

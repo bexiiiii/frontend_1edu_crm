@@ -70,6 +70,11 @@ export const ANALYTICS_REPORTS: AnalyticsReport[] = [
     label: 'ИИ анализ диалогов',
     description: 'Анализ качества коммуникаций менеджеров с клиентами.',
   },
+  {
+    slug: 'branch-analytics',
+    label: 'Аналитика по филиалам',
+    description: 'Сравнение показателей филиалов: студенты, выручка, посещаемость и загрузка.',
+  },
 ];
 
 export const ANALYTICS_SUBMENU_ITEMS = ANALYTICS_REPORTS.map((report) => ({

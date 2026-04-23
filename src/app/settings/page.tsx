@@ -63,6 +63,7 @@ import {
   updateUser,
   type CreateRoomRequest,
   type CreateUserRequest,
+  type BranchDto,
   type SettingsDto,
   type TenantDto,
   type UserDto,
@@ -168,8 +169,10 @@ interface EditableUser {
   lastName: string;
   name: string;
   email: string;
+  staffId: string | null;
   role: string;
   displayRole: string;
+  branchIds: string[];
   permissions: string[];
   permissionsSource: string | null;
   permissionsLoaded: boolean;
@@ -487,6 +490,7 @@ export default function Settings() {
   });
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const currentBranchId = useAuthStore((state) => state.branchId);
   const tenantId = useAuthStore((state) => state.tenantId);
   const authRoles = useAuthStore((state) => state.roles);
   const authPermissions = useAuthStore((state) => state.permissions);
@@ -610,6 +614,7 @@ export default function Settings() {
     error: expenseCategoriesError,
     refetch: refetchExpenseCategories,
   } = useApi(() => settingsService.getExpenseCategories(), []);
+  const { data: branchesData } = useApi<BranchDto[]>(() => settingsService.getBranches(), []);
   const {
     data: integrationEnabledMap,
     refetch: refetchIntegrationEnabledMap,
@@ -673,8 +678,10 @@ export default function Settings() {
       lastName: user.lastName,
       name: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username,
       email: user.email || '',
+      staffId: user.staffId ?? null,
       role: getPrimaryRole(user.roles) || 'TEACHER',
       displayRole: getDisplayRole(user.roles),
+      branchIds: user.branchIds ?? [],
       permissions: user.permissions || [],
       permissionsSource: user.permissionsSource ?? null,
       permissionsLoaded: Array.isArray(user.permissions),
@@ -723,6 +730,15 @@ export default function Settings() {
       }))
       .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU'));
   }, [staffData]);
+
+  const branchOptionsForAuth = useMemo(() => {
+    return (branchesData || []).map((branch) => ({
+      id: branch.id,
+      name: branch.name,
+      code: branch.code,
+      active: branch.active,
+    }));
+  }, [branchesData]);
 
   // Map API rooms → local Room type
   const rooms = useMemo(() => {
@@ -828,6 +844,8 @@ export default function Settings() {
     firstName?: string;
     lastName?: string;
     role?: string;
+    staffId?: string | null;
+    branchIds?: string[];
     permissions?: string[];
     permissionsSource?: string;
   } }) => updateUser(payload.id, payload.data));
@@ -942,8 +960,10 @@ export default function Settings() {
         lastName: freshUser.lastName || user.lastName,
         name: [freshUser.firstName, freshUser.lastName].filter(Boolean).join(' ').trim() || freshUser.username || user.name,
         email: freshUser.email || user.email,
+        staffId: freshUser.staffId ?? user.staffId,
         role: getPrimaryRole(freshRoles) || user.role,
         displayRole: getDisplayRole(freshRoles),
+        branchIds: freshUser.branchIds ?? user.branchIds,
         permissions: freshUser.permissions || user.permissions,
         permissionsSource: freshUser.permissionsSource ?? user.permissionsSource,
         permissionsLoaded: Array.isArray(freshUser.permissions),
@@ -962,6 +982,15 @@ export default function Settings() {
   }, []);
 
   const handleSaveUser = useCallback(async (data: UserFormPayload) => {
+    const fallbackBranchIds =
+      data.branchIds?.length
+        ? data.branchIds
+        : selectedUser?.branchIds?.length
+          ? selectedUser.branchIds
+          : currentBranchId
+            ? [currentBranchId]
+            : undefined;
+
     if (selectedUser?.id) {
       await updateUserMutation.mutate({
         id: selectedUser.id,
@@ -970,6 +999,8 @@ export default function Settings() {
           firstName: data.firstName.trim(),
           lastName: data.lastName.trim(),
           role: data.role,
+          staffId: data.staffId ?? null,
+          branchIds: fallbackBranchIds,
         },
       });
       pushToast({ message: 'Пользователь обновлён. Для применения прав выполните refresh токена или повторный вход.', tone: 'success' });
@@ -989,6 +1020,8 @@ export default function Settings() {
         lastName: data.lastName.trim(),
         password: data.password.trim(),
         role: data.role,
+        staffId: data.staffId ?? null,
+        branchIds: fallbackBranchIds,
         tenantId,
       });
       pushToast({ message: 'Пользователь создан. Права применятся после обновления токена/повторного входа.', tone: 'success' });
@@ -997,7 +1030,7 @@ export default function Settings() {
     await refetchUsers();
     setIsAddUserModalOpen(false);
     setSelectedUser(null);
-  }, [createUserMutation, refetchUsers, selectedUser, tenantId, updateUserMutation]);
+  }, [createUserMutation, currentBranchId, refetchUsers, selectedUser, tenantId, updateUserMutation]);
 
   const handleDeleteUser = useCallback(async (id: string) => {
     if (!confirm('Деактивировать пользователя?')) return;
@@ -2976,6 +3009,8 @@ export default function Settings() {
         initialValue={selectedUser}
         roleOptions={authUserRoleOptions}
         availableStaff={availableStaffForAuth}
+        branchOptions={branchOptionsForAuth}
+        defaultBranchId={currentBranchId}
         isSubmitting={createUserMutation.loading || updateUserMutation.loading}
       />
       <ResetUserPasswordModal

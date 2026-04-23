@@ -13,6 +13,7 @@ import type {
   SalesFunnelResponse,
   LeadConversionResponse,
   ManagerEfficiencyResponse,
+  BranchAnalyticsResponse,
 } from './types';
 
 function getFilenameFromDisposition(contentDisposition: string | undefined, fallback: string) {
@@ -169,5 +170,16 @@ export const analyticsService = {
   /** Download group attendance analytics report (xlsx) */
   async exportGroupAttendance(params: { groupId: string; months?: 6 | 12; from?: string; to?: string }) {
     return downloadAnalyticsExport('/api/v1/analytics/group-attendance/export', 'group-attendance-report.xlsx', params);
+  },
+
+  /** Get branch analytics */
+  async getBranches(params?: { from?: string; to?: string }) {
+    const response = await api.get<ApiResponse<BranchAnalyticsResponse>>('/api/v1/analytics/branches', { params });
+    return response.data;
+  },
+
+  /** Download branch analytics report (xlsx) */
+  async exportBranches(params?: { from?: string; to?: string }) {
+    return downloadAnalyticsExport('/api/v1/analytics/branches/export', 'branch-analytics-report.xlsx', params);
   },
 };

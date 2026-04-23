@@ -8,6 +8,7 @@ import {
   Edit2,
   GraduationCap,
   Loader2,
+  Phone,
   PlusCircle,
   Trash2,
   User,
@@ -36,6 +37,7 @@ import {
   financeService,
   lessonsService,
   schedulesService,
+  studentCallLogsService,
   studentPaymentsService,
   studentsService,
   subscriptionsService,
@@ -44,7 +46,9 @@ import {
   type AttendanceDto,
   type CourseDto,
   type LessonDto,
+  type SaveStudentCallLogRequest,
   type ScheduleDto,
+  type StudentCallLogDto,
   type StudentDto,
   type StudentPaymentDto,
   type StudentPaymentHistoryResponse,
@@ -54,7 +58,7 @@ import {
 } from '@/lib/api';
 import type { StudentFormValues } from '@/types/student';
 
-type StudentProfileTab = 'profile' | 'groups' | 'attendance' | 'payments';
+type StudentProfileTab = 'profile' | 'groups' | 'attendance' | 'payments' | 'calls';
 
 type StudentProfileData = {
   student: StudentDto;
@@ -62,6 +66,7 @@ type StudentProfileData = {
   attendanceHistory: AttendanceDto[];
   paymentHistory: StudentPaymentHistoryResponse | null;
   transactions: TransactionDto[];
+  callLogs: StudentCallLogDto[];
   schedulesById: Record<string, ScheduleDto>;
   coursesById: Record<string, CourseDto>;
   lessonsById: Record<string, LessonDto>;
@@ -72,6 +77,7 @@ const profileTabs: Array<{ id: StudentProfileTab; label: string }> = [
   { id: 'groups', label: 'Группы и абонементы' },
   { id: 'attendance', label: 'Посещаемость' },
   { id: 'payments', label: 'Оплаты' },
+  { id: 'calls', label: 'Звонки' },
 ];
 
 const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionDto['status'], string> = {
@@ -137,6 +143,28 @@ function getStudentDisplayName(student: StudentDto): string {
   return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
 }
 
+function getPrimaryPhone(student: StudentDto): string | null {
+  const candidates = [
+    student.phone,
+    student.studentPhone,
+    student.parentPhone,
+    ...(student.additionalPhones ?? []),
+  ];
+
+  const firstPhone = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+  return firstPhone?.trim() || null;
+}
+
+function normalizePhoneForMessenger(phone: string): string {
+  const digitsOnly = phone.replace(/\D/g, '');
+
+  if (digitsOnly.length === 11 && digitsOnly.startsWith('8')) {
+    return `7${digitsOnly.slice(1)}`;
+  }
+
+  return digitsOnly;
+}
+
 function compareIsoDateDesc(left: string, right: string): number {
   return new Date(right).getTime() - new Date(left).getTime();
 }
@@ -181,6 +209,23 @@ export default function StudentProfilePage() {
   const [activeTab, setActiveTab] = useState<StudentProfileTab>('profile');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
+  const [editingCallLog, setEditingCallLog] = useState<StudentCallLogDto | null>(null);
+  const [callLogForm, setCallLogForm] = useState<{
+    callDate: string;
+    callTime: string;
+    callResult: string;
+    notes: string;
+    followUpRequired: boolean;
+    followUpDate: string;
+  }>({
+    callDate: new Date().toISOString().slice(0, 10),
+    callTime: new Date().toTimeString().slice(0, 5),
+    callResult: '',
+    notes: '',
+    followUpRequired: false,
+    followUpDate: '',
+  });
   const [paymentForm, setPaymentForm] = useState<{
     subscriptionId: string;
     amount: string;
@@ -204,17 +249,19 @@ export default function StudentProfilePage() {
 
     const studentResponse = await studentsService.getById(studentId);
 
-    const [subscriptionsResult, attendanceResult, paymentHistoryResult, transactionsResult] = await Promise.all([
+    const [subscriptionsResult, attendanceResult, paymentHistoryResult, transactionsResult, callLogsResult] = await Promise.all([
       subscriptionsService.getByStudent(studentId, { page: 0, size: 200 }).catch(() => null),
       attendanceService.getStudentHistory(studentId, { page: 0, size: 200 }).catch(() => null),
       studentPaymentsService.getByStudent(studentId).catch(() => null),
       financeService.getStudentTransactions(studentId, { page: 0, size: 200 }).catch(() => null),
+      studentCallLogsService.getByStudent(studentId, { page: 0, size: 200 }).catch(() => null),
     ]);
 
     const subscriptions = subscriptionsResult?.data.content ?? [];
     const attendanceHistory = attendanceResult?.data.content ?? [];
     const paymentHistory = paymentHistoryResult?.data ?? null;
     const transactions = transactionsResult?.data.content ?? [];
+    const callLogs = callLogsResult?.data.content ?? [];
 
     const lessonIds = Array.from(new Set(attendanceHistory.map((row) => row.lessonId))).slice(0, 120);
 
@@ -306,6 +353,7 @@ export default function StudentProfilePage() {
         attendanceHistory,
         paymentHistory,
         transactions,
+        callLogs,
         schedulesById,
         coursesById,
         lessonsById,
@@ -322,6 +370,15 @@ export default function StudentProfilePage() {
   const deleteStudentMutation = useMutation((id: string) => studentsService.delete(id));
   const createPaymentMutation = useMutation((payload: CreateStudentPaymentRequest) =>
     studentPaymentsService.create(payload)
+  );
+  const createCallLogMutation = useMutation((payload: SaveStudentCallLogRequest) =>
+    studentCallLogsService.create(payload)
+  );
+  const updateCallLogMutation = useMutation(({ id, data }: { id: string; data: SaveStudentCallLogRequest }) =>
+    studentCallLogsService.update(id, data)
+  );
+  const deleteCallLogMutation = useMutation(({ id, reason }: { id: string; reason: string }) =>
+    studentCallLogsService.delete(id, reason)
   );
 
   const groupsCount = useMemo(() => {
@@ -511,6 +568,70 @@ export default function StudentProfilePage() {
     await refetch();
   };
 
+  const openAddCallLog = () => {
+    setEditingCallLog(null);
+    setCallLogForm({
+      callDate: new Date().toISOString().slice(0, 10),
+      callTime: new Date().toTimeString().slice(0, 5),
+      callResult: '',
+      notes: '',
+      followUpRequired: false,
+      followUpDate: '',
+    });
+    setIsCallLogModalOpen(true);
+  };
+
+  const openEditCallLog = (log: StudentCallLogDto) => {
+    setEditingCallLog(log);
+    setCallLogForm({
+      callDate: log.callDate,
+      callTime: log.callTime,
+      callResult: log.callResult || '',
+      notes: log.notes || '',
+      followUpRequired: log.followUpRequired,
+      followUpDate: log.followUpDate || '',
+    });
+    setIsCallLogModalOpen(true);
+  };
+
+  const handleSaveCallLog = async () => {
+    if (!studentId || !callLogForm.callDate || !callLogForm.callTime) {
+      return;
+    }
+
+    const payload: SaveStudentCallLogRequest = {
+      studentId,
+      callDate: callLogForm.callDate,
+      callTime: callLogForm.callTime,
+      callResult: callLogForm.callResult || undefined,
+      notes: callLogForm.notes || undefined,
+      followUpRequired: callLogForm.followUpRequired,
+      followUpDate: callLogForm.followUpDate || undefined,
+    };
+
+    if (editingCallLog) {
+      await updateCallLogMutation.mutate({
+        id: editingCallLog.id,
+        data: payload,
+      });
+    } else {
+      await createCallLogMutation.mutate(payload);
+    }
+
+    setIsCallLogModalOpen(false);
+    await refetch();
+  };
+
+  const handleDeleteCallLog = async (logId: string) => {
+    const reason = prompt('Укажите причину удаления:');
+    if (!reason?.trim()) {
+      return;
+    }
+
+    await deleteCallLogMutation.mutate({ id: logId, reason: reason.trim() });
+    await refetch();
+  };
+
   if (!studentId) {
     return (
       <div className="space-y-4">
@@ -550,6 +671,10 @@ export default function StudentProfilePage() {
   }
 
   const displayName = getStudentDisplayName(data.student);
+  const primaryPhone = getPrimaryPhone(data.student);
+  const messengerPhone = primaryPhone ? normalizePhoneForMessenger(primaryPhone) : '';
+  const whatsappUrl = messengerPhone ? `https://wa.me/${messengerPhone}` : null;
+  const telegramUrl = messengerPhone ? `tg://resolve?phone=${messengerPhone}` : null;
 
   return (
     <div className="space-y-4">
@@ -569,8 +694,34 @@ export default function StudentProfilePage() {
             )}
 
             <div className="min-w-0">
-              <h1 className="truncate text-2xl font-semibold text-[#1f2530]">{displayName}</h1>
-              <p className="mt-1 text-sm text-[#7f8794]">{data.student.customer || data.student.parentName || 'Без заказчика'}</p>
+              <div className="flex items-center gap-2">
+                <h1 className="truncate text-2xl font-semibold text-[#1f2530]">{displayName}</h1>
+
+                {whatsappUrl ? (
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Открыть WhatsApp: ${primaryPhone}`}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#dbe2e8] bg-white p-1 transition-colors hover:bg-[#eefaf1]"
+                  >
+                    <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                  </a>
+                ) : null}
+
+                {telegramUrl ? (
+                  <a
+                    href={telegramUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Открыть Telegram: ${primaryPhone}`}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#dbe2e8] bg-white p-1 transition-colors hover:bg-[#eef5ff]"
+                  >
+                    <img src="/logo/telegram.svg" alt="Telegram" className="h-4 w-4" />
+                  </a>
+                ) : null}
+              </div>
+              <p className="mt-1 text-sm text-[#7f8794]">{data.student.parentName || 'Родитель не указан'}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span
                   className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${STUDENT_STATUS_COLORS[data.student.status]}`}
@@ -639,6 +790,14 @@ export default function StudentProfilePage() {
             Добавить оплату
           </Button>
           <Button
+            variant="secondary"
+            icon={Phone}
+            onClick={openAddCallLog}
+            disabled={createCallLogMutation.loading}
+          >
+            Добавить звонок
+          </Button>
+          <Button
             variant="ghost"
             icon={Trash2}
             onClick={() => void handleDeleteStudent()}
@@ -690,18 +849,8 @@ export default function StudentProfilePage() {
               <p className="mt-1 text-sm font-semibold text-[#273142]">{data.student.loyalty || '—'}</p>
             </div>
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Договор</p>
-              <p className="mt-1 text-sm font-semibold text-[#273142]">{data.student.contract || '—'}</p>
-            </div>
-            <div>
               <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Скидка</p>
               <p className="mt-1 text-sm font-semibold text-[#273142]">{data.student.discount || '—'}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Госзаказ</p>
-              <p className="mt-1 text-sm font-semibold text-[#273142]">
-                {data.student.stateOrderParticipant ? 'Да' : 'Нет'}
-              </p>
             </div>
           </div>
 
@@ -953,6 +1102,98 @@ export default function StudentProfilePage() {
         </div>
       )}
 
+      {activeTab === 'calls' && (
+        <div className="crm-table-wrap overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
+            <p className="text-sm font-medium text-gray-700">
+              <Phone className="mr-2 inline h-4 w-4" />
+              История обзвонов: <span className="font-semibold text-gray-900">{data.callLogs.length}</span>
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="crm-table-head">
+                <tr>
+                  <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Дата</th>
+                  <th className="crm-table-th">Время</th>
+                  <th className="crm-table-th">Результат</th>
+                  <th className="crm-table-th">Заметки</th>
+                  <th className="crm-table-th">Повторный звонок</th>
+                  <th className="crm-table-th">Кем создано</th>
+                  <th className="crm-table-th">Действия</th>
+                </tr>
+              </thead>
+              <tbody className="crm-table-body">
+                {data.callLogs.length > 0 ? (
+                  data.callLogs.map((log, index) => (
+                    <tr key={log.id} className="crm-table-row">
+                      <td className="crm-table-cell">{index + 1}</td>
+                      <td className="crm-table-cell">{formatDate(log.callDate)}</td>
+                      <td className="crm-table-cell">{log.callTime}</td>
+                      <td className="crm-table-cell">
+                        {log.callResult ? (
+                          <span className="inline-flex rounded-lg border border-[#dbe2e8] bg-white px-2.5 py-1 text-xs font-medium text-[#5a6576]">
+                            {log.callResult}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="crm-table-cell max-w-xs truncate">{log.notes || '—'}</td>
+                      <td className="crm-table-cell">
+                        {log.followUpRequired ? (
+                          <div className="flex items-center gap-1">
+                            <span className="inline-flex rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                              Требуется
+                            </span>
+                            {log.followUpDate && (
+                              <span className="text-xs text-[#8a93a3]">{formatDate(log.followUpDate)}</span>
+                            )}
+                          </div>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="crm-table-cell">
+                        <div className="text-sm text-[#273142]">{log.createdByName || '—'}</div>
+                        <div className="text-xs text-[#8a93a3]">{formatDateTime(log.createdAt)}</div>
+                      </td>
+                      <td className="crm-table-cell">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openEditCallLog(log)}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff]"
+                            title="Редактировать"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteCallLog(log.id)}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#c34c4c] transition-colors hover:bg-[#fff1f1]"
+                            title="Удалить"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr className="crm-table-row">
+                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      История обзвонов отсутствует
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <AddStudentModal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
@@ -1082,6 +1323,99 @@ export default function StudentProfilePage() {
               статус: {SUBSCRIPTION_STATUS_LABELS[selectedSubscription.status]}
             </div>
           ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isCallLogModalOpen}
+        onClose={() => setIsCallLogModalOpen(false)}
+        title={editingCallLog ? 'Редактировать звонок' : 'Добавить звонок'}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setIsCallLogModalOpen(false)} disabled={createCallLogMutation.loading || updateCallLogMutation.loading}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => void handleSaveCallLog()}
+              disabled={
+                (createCallLogMutation.loading || updateCallLogMutation.loading) ||
+                !callLogForm.callDate ||
+                !callLogForm.callTime
+              }
+            >
+              {createCallLogMutation.loading || updateCallLogMutation.loading ? 'Сохраняем...' : 'Сохранить'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Дата звонка</label>
+              <input
+                type="date"
+                value={callLogForm.callDate}
+                onChange={(event) => setCallLogForm((prev) => ({ ...prev, callDate: event.target.value }))}
+                className="crm-input"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Время</label>
+              <input
+                type="time"
+                value={callLogForm.callTime}
+                onChange={(event) => setCallLogForm((prev) => ({ ...prev, callTime: event.target.value }))}
+                className="crm-input"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Результат звонка</label>
+            <input
+              type="text"
+              value={callLogForm.callResult}
+              onChange={(event) => setCallLogForm((prev) => ({ ...prev, callResult: event.target.value }))}
+              className="crm-input"
+              placeholder="Например: Дозвонились, согласовали оплату"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Заметки</label>
+            <textarea
+              value={callLogForm.notes}
+              onChange={(event) => setCallLogForm((prev) => ({ ...prev, notes: event.target.value }))}
+              rows={3}
+              className="crm-textarea resize-none"
+              placeholder="Дополнительные заметки по звонку"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="followUpRequired"
+              checked={callLogForm.followUpRequired}
+              onChange={(event) => setCallLogForm((prev) => ({ ...prev, followUpRequired: event.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 text-[#467aff] focus:ring-[#467aff]"
+            />
+            <label htmlFor="followUpRequired" className="text-sm font-medium text-[#5d6676]">
+              Требуется повторный звонок
+            </label>
+          </div>
+
+          {callLogForm.followUpRequired && (
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Дата повторного звонка</label>
+              <input
+                type="date"
+                value={callLogForm.followUpDate}
+                onChange={(event) => setCallLogForm((prev) => ({ ...prev, followUpDate: event.target.value }))}
+                className="crm-input"
+              />
+            </div>
+          )}
         </div>
       </Modal>
     </div>

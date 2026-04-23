@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Edit2, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { CalendarDays, Edit2, Loader2, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddIncomeModal } from '@/components/features/finance/AddIncomeModal';
@@ -78,6 +78,19 @@ function formatDate(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU');
 }
 
+function getTodayDate(): string {
+  const now = new Date();
+  const timezoneOffset = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - timezoneOffset).toISOString().slice(0, 10);
+}
+
+function shiftDays(date: string, delta: number): string {
+  const nextDate = new Date(`${date}T00:00:00`);
+  nextDate.setDate(nextDate.getDate() + delta);
+  const timezoneOffset = nextDate.getTimezoneOffset() * 60_000;
+  return new Date(nextDate.getTime() - timezoneOffset).toISOString().slice(0, 10);
+}
+
 export default function Finance() {
   const [activeTab, setActiveTab] = useState<FinanceTab>('INCOME');
   const [filters, setFilters] = useState<FinanceFilters>({
@@ -108,6 +121,10 @@ export default function Finance() {
     transactionId: null,
     payload: null,
   });
+  const hasPartialPeriod = Boolean(filters.periodStart) !== Boolean(filters.periodEnd);
+  const hasCompletePeriod = Boolean(filters.periodStart && filters.periodEnd);
+  const hasInvalidPeriod = hasCompletePeriod && filters.periodStart > filters.periodEnd;
+  const canUsePeriodRange = hasCompletePeriod && !hasInvalidPeriod;
 
   const { data: studentsPage } = useApi(() => studentsService.getAll({ page: 0, size: 500 }), []);
 
@@ -125,7 +142,7 @@ export default function Finance() {
   const { data: transactionsPage, loading, error, refetch } = useApi(() => {
     const params = { page: 0, size: 1000 };
 
-    if (filters.periodStart && filters.periodEnd) {
+    if (canUsePeriodRange) {
       return financeService.getByDate({
         ...params,
         from: filters.periodStart,
@@ -137,7 +154,7 @@ export default function Finance() {
       ...params,
       type: activeTab,
     });
-  }, [activeTab, filters.periodStart, filters.periodEnd]);
+  }, [activeTab, canUsePeriodRange, filters.periodEnd, filters.periodStart]);
 
   const createMutation = useMutation((data: CreateTransactionRequest) => financeService.createTransaction(data));
   const updateMutation = useMutation(({ id, data }: { id: string; data: Partial<CreateTransactionRequest> }) =>
@@ -180,24 +197,29 @@ export default function Finance() {
         return false;
       }
 
-      if (filters.periodStart && transaction.transactionDate < filters.periodStart) {
+      if (canUsePeriodRange && transaction.transactionDate < filters.periodStart) {
         return false;
       }
 
-      if (filters.periodEnd && transaction.transactionDate > filters.periodEnd) {
+      if (canUsePeriodRange && transaction.transactionDate > filters.periodEnd) {
         return false;
       }
 
       return true;
     });
-  }, [filters.periodEnd, filters.periodStart, filters.search, filters.status, filters.studentId, transactions]);
+  }, [canUsePeriodRange, filters.periodEnd, filters.periodStart, filters.search, filters.status, filters.studentId, transactions]);
 
   const summary = useMemo(
     () => ({
       totalAmount: filteredTransactions.reduce((sum, transaction) => sum + transaction.amount, 0),
       count: filteredTransactions.length,
+      periodLabel: canUsePeriodRange
+        ? `${formatDate(filters.periodStart)} - ${formatDate(filters.periodEnd)}`
+        : hasPartialPeriod
+          ? 'Укажите обе даты'
+          : 'За всё время',
     }),
-    [filteredTransactions]
+    [canUsePeriodRange, filteredTransactions, filters.periodEnd, filters.periodStart, hasPartialPeriod]
   );
 
   const financeTabs: { id: FinanceTab; label: string }[] = [
@@ -296,6 +318,55 @@ export default function Finance() {
 
   const totalColor =
     activeTab === 'EXPENSE' || activeTab === 'REFUND' ? 'text-red-600' : 'text-green-600';
+  const hasDirtyFilters =
+    filters.search.trim().length > 0 ||
+    filters.status !== 'all' ||
+    filters.studentId !== 'all' ||
+    Boolean(filters.periodStart) ||
+    Boolean(filters.periodEnd);
+  const periodFeedback = hasInvalidPeriod
+    ? 'Дата окончания должна быть не раньше даты начала.'
+    : hasPartialPeriod
+      ? 'Чтобы применить фильтр по периоду по документации API, укажите обе даты.'
+      : null;
+
+  const applyPreset = (preset: 'today' | 'week' | 'month') => {
+    const today = getTodayDate();
+
+    if (preset === 'today') {
+      setFilters((prev) => ({
+        ...prev,
+        periodStart: today,
+        periodEnd: today,
+      }));
+      return;
+    }
+
+    if (preset === 'week') {
+      setFilters((prev) => ({
+        ...prev,
+        periodStart: shiftDays(today, -6),
+        periodEnd: today,
+      }));
+      return;
+    }
+
+    setFilters((prev) => ({
+      ...prev,
+      periodStart: `${today.slice(0, 7)}-01`,
+      periodEnd: today,
+    }));
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      search: '',
+      status: 'all',
+      studentId: 'all',
+      periodStart: '',
+      periodEnd: '',
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -316,7 +387,64 @@ export default function Finance() {
       </div>
 
       <div className="crm-surface p-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-[#202938]">
+              Реестр: {FINANCE_TAB_LABELS[activeTab]}
+            </h2>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => applyPreset('today')}
+              className="inline-flex h-9 items-center rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm font-medium text-[#485465] transition-colors hover:bg-[#f4f7f9]"
+            >
+              Сегодня
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('week')}
+              className="inline-flex h-9 items-center rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm font-medium text-[#485465] transition-colors hover:bg-[#f4f7f9]"
+            >
+              7 дней
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('month')}
+              className="inline-flex h-9 items-center rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm font-medium text-[#485465] transition-colors hover:bg-[#f4f7f9]"
+            >
+              Этот месяц
+            </button>
+            {hasDirtyFilters ? (
+              <Button size="sm" variant="secondary" icon={RotateCcw} onClick={resetFilters}>
+                Сбросить
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-[#dbe2e8] bg-[#f8fafc] p-4">
+            <p className="text-sm text-[#7f8794]">Показано транзакций</p>
+            <p className="mt-1 text-2xl font-bold text-[#1f2530]">{summary.count}</p>
+          </div>
+          <div className="rounded-2xl border border-[#dbe2e8] bg-white p-4">
+            <p className="text-sm text-[#7f8794]">Сумма по выборке</p>
+            <p className={`mt-1 text-2xl font-bold ${totalColor}`}>
+              {summary.totalAmount.toLocaleString('ru-RU')} ₸
+            </p>
+          </div>
+          <div className="rounded-2xl border border-[#dbe2e8] bg-[#eef5ff] p-4">
+            <div className="flex items-center gap-2 text-sm text-[#6480b8]">
+              <CalendarDays className="h-4 w-4" />
+              Период
+            </div>
+            <p className="mt-1 text-lg font-semibold text-[#20314f]">{summary.periodLabel}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
@@ -371,15 +499,32 @@ export default function Finance() {
             className="crm-select"
           />
         </div>
+
+        {periodFeedback ? (
+          <div
+            className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+              hasInvalidPeriod
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-amber-200 bg-amber-50 text-amber-700'
+            }`}
+          >
+            {periodFeedback}
+          </div>
+        ) : null}
       </div>
 
       <div className="crm-table-wrap overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
-          <p className="text-sm font-medium text-gray-700">
-            Транзакций: <span className="font-semibold text-gray-900">{summary.count}</span>
-          </p>
-          <p className="text-sm font-medium text-gray-700">
-            Сумма: <span className={`font-semibold ${totalColor}`}>{summary.totalAmount.toLocaleString('ru-RU')} ₸</span>
+        <div className="flex flex-col gap-3 border-b border-[#e6ebf0] px-6 py-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-4 text-sm font-medium text-gray-700">
+            <p>
+              Транзакций: <span className="font-semibold text-gray-900">{summary.count}</span>
+            </p>
+            <p>
+              Сумма: <span className={`font-semibold ${totalColor}`}>{summary.totalAmount.toLocaleString('ru-RU')} ₸</span>
+            </p>
+          </div>
+          <p className="text-sm font-medium text-[#667085]">
+            Период выборки: <span className="font-semibold text-[#202938]">{summary.periodLabel}</span>
           </p>
         </div>
 

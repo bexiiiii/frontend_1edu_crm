@@ -22,16 +22,43 @@ function extractTenantIdFromClaims(claims: Record<string, unknown>): string | nu
   return typeof tenantId === 'string' && tenantId.trim() ? tenantId : null;
 }
 
+function extractBranchIdsFromClaims(claims: Record<string, unknown>): string[] {
+  const directBranchIds = claims.branch_ids;
+  if (Array.isArray(directBranchIds)) {
+    return directBranchIds.filter((branchId): branchId is string => typeof branchId === 'string' && branchId.trim());
+  }
+
+  const directBranchId = claims.branch_id;
+  if (typeof directBranchId === 'string' && directBranchId.trim()) {
+    return [directBranchId];
+  }
+
+  return [];
+}
+
+function getPrimaryBranchIdFromClaims(claims: Record<string, unknown>): string | null {
+  const branchIds = extractBranchIdsFromClaims(claims);
+  return branchIds[0] || null;
+}
+
 // Request interceptor — attach access token.
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('access_token');
     let tenantId = localStorage.getItem('tenant_id');
+    let branchId = localStorage.getItem('branch_id');
 
     if (!tenantId && token) {
       tenantId = extractTenantIdFromClaims(decodeJwt(token));
       if (tenantId) {
         localStorage.setItem('tenant_id', tenantId);
+      }
+    }
+
+    if (!branchId && token) {
+      branchId = getPrimaryBranchIdFromClaims(decodeJwt(token));
+      if (branchId) {
+        localStorage.setItem('branch_id', branchId);
       }
     }
 
@@ -43,6 +70,15 @@ api.interceptors.request.use((config) => {
         headers.set('X-Tenant-ID', tenantId);
       } else {
         headers['X-Tenant-ID'] = tenantId;
+      }
+    }
+
+    if (branchId && config.headers) {
+      const headers = config.headers as { set?: (name: string, value: string) => void } & Record<string, unknown>;
+      if (typeof headers.set === 'function') {
+        headers.set('X-Branch-ID', branchId);
+      } else {
+        headers['X-Branch-ID'] = branchId;
       }
     }
   }
@@ -74,12 +110,39 @@ api.interceptors.response.use(
         const refreshToken = localStorage.getItem('refresh_token');
         if (refreshToken) {
           const tokenData = await refreshAccessToken(refreshToken);
-          const nextTenantId = extractTenantIdFromClaims(decodeJwt(tokenData.access_token));
+          const claims = decodeJwt(tokenData.access_token);
+          const nextTenantId = extractTenantIdFromClaims(claims);
+          const nextBranchIds = extractBranchIdsFromClaims(claims);
+          const nextBranchId = nextBranchIds[0] || null;
           localStorage.setItem('access_token', tokenData.access_token);
           localStorage.setItem('refresh_token', tokenData.refresh_token);
           if (nextTenantId) {
             localStorage.setItem('tenant_id', nextTenantId);
           }
+
+          // Preserve user-selected branchId if it's still in the new branch_ids list.
+          const currentBranchId = localStorage.getItem('branch_id');
+          const resolvedBranchId = currentBranchId && nextBranchIds.includes(currentBranchId)
+            ? currentBranchId
+            : nextBranchId;
+
+          if (resolvedBranchId) {
+            localStorage.setItem('branch_id', resolvedBranchId);
+          }
+          localStorage.setItem('branch_ids', JSON.stringify(nextBranchIds));
+
+          // Sync with zustand store if available (avoid circular import in SSR).
+          if (typeof window !== 'undefined') {
+            try {
+              const { useAuthStore } = await import('@/store/authStore');
+              if (resolvedBranchId) {
+                useAuthStore.getState().setBranchId(resolvedBranchId);
+              }
+            } catch {
+              // Store not available or import failed, localStorage is already updated.
+            }
+          }
+
           originalRequest.headers.Authorization = `Bearer ${tokenData.access_token}`;
           return api(originalRequest);
         }
@@ -176,6 +239,7 @@ export interface UserDto {
   firstName: string;
   lastName: string;
   staffId: string | null;
+  branchIds?: string[];
   roles: string[];
   permissions?: string[];
   permissionsSource?: string | null;
@@ -231,7 +295,20 @@ export interface CreateUserRequest {
   lastName: string;
   password: string;
   role: string;
+  staffId?: string | null;
+  branchIds?: string[];
   tenantId?: string;
+  permissions?: string[];
+  permissionsSource?: string;
+}
+
+export interface UpdateUserRequest {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  role?: string;
+  staffId?: string | null;
+  branchIds?: string[];
   permissions?: string[];
   permissionsSource?: string;
 }
@@ -330,14 +407,7 @@ export async function getUserById(id: string): Promise<ApiResponse<UserDto>> {
 }
 
 /** Update user */
-export async function updateUser(id: string, data: {
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  role?: string;
-  permissions?: string[];
-  permissionsSource?: string;
-}): Promise<ApiResponse<UserDto>> {
+export async function updateUser(id: string, data: UpdateUserRequest): Promise<ApiResponse<UserDto>> {
   const response = await api.put<ApiResponse<UserDto>>(`/api/v1/auth/users/${id}`, data);
   return response.data;
 }
@@ -380,4 +450,6 @@ export { notificationsService } from './api/notifications';
 export { settingsService } from './api/settings';
 export { auditService } from './api/audit';
 export { roomsService } from './api/rooms';
+export { studentCallLogsService } from './api/callLogs';
+export { inventoryService } from './api/inventory';
 export * from './api/types';

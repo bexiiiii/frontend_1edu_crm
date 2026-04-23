@@ -17,3 +17,5 @@ export * from './analytics';
 export * from './reports';
 export * from './audit';
 export * from './rooms';
+export * from './callLogs';
+export * from './inventory';
