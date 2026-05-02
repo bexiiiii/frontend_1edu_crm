@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { BarChart3, DollarSign, Download, Loader2, TrendingDown, TrendingUp, Users } from 'lucide-react';
+import { BarChart3, DollarSign, Download, Loader2, Users } from 'lucide-react';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 
@@ -30,7 +30,7 @@ export default function BranchAnalyticsPage() {
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const dateRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth]);
 
-  const { data, loading, error, refetch } = useApi(
+  const { data, loading, error } = useApi(
     () => analyticsService.getBranches({ from: dateRange.from, to: dateRange.to }),
     [dateRange.from, dateRange.to]
   );
@@ -56,20 +56,15 @@ export default function BranchAnalyticsPage() {
 
   const branches = useMemo(() => data?.branches ?? [], [data]);
   const totalRevenue = data?.totalRevenue ?? 0;
+  const totalExpenses = data?.totalExpenses ?? 0;
   const totalStudents = data?.totalStudents ?? 0;
-  const totalLessons = data?.totalLessons ?? 0;
-  const avgAttendanceRate = data?.avgAttendanceRate ?? 0;
-  const topBranchByRevenue = data?.topBranchByRevenue;
-  const topBranchByAttendance = data?.topBranchByAttendance;
+  const totalLeads = data?.totalLeads ?? 0;
+  const avgAttendanceRate = data?.avgAttendance ?? 0;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-[#1f2530]">Аналитика по филиалам</h1>
-          <p className="mt-1 text-sm text-[#7f8794]">Сравнение показателей филиалов</p>
-        </div>
+      {/* Export */}
+      <div className="flex justify-end">
         <button
           type="button"
           onClick={handleExport}
@@ -102,7 +97,7 @@ export default function BranchAnalyticsPage() {
             </div>
             <div>
               <p className="text-sm text-[#7f8794]">Филиалов</p>
-              <p className="text-2xl font-bold text-[#1f2530]">{data?.totalBranches ?? 0}</p>
+              <p className="text-2xl font-bold text-[#1f2530]">{branches.length}</p>
             </div>
           </div>
         </div>
@@ -121,12 +116,12 @@ export default function BranchAnalyticsPage() {
 
         <div className="crm-surface p-5">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-blue-50 p-2.5">
-              <Users className="h-5 w-5 text-blue-600" />
+            <div className="rounded-xl bg-rose-50 p-2.5">
+              <DollarSign className="h-5 w-5 text-rose-600" />
             </div>
             <div>
-              <p className="text-sm text-[#7f8794]">Студентов</p>
-              <p className="text-2xl font-bold text-[#1f2530]">{totalStudents}</p>
+              <p className="text-sm text-[#7f8794]">Общие расходы</p>
+              <p className="text-2xl font-bold text-rose-700">{formatMoney(totalExpenses)}</p>
             </div>
           </div>
         </div>
@@ -142,33 +137,24 @@ export default function BranchAnalyticsPage() {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Top Branches */}
-      {(topBranchByRevenue || topBranchByAttendance) && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {topBranchByRevenue && (
-            <div className="crm-surface border border-emerald-200 bg-emerald-50 p-5">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-emerald-600" />
-                <p className="text-sm font-semibold text-emerald-700">Лучший по выручке</p>
-              </div>
-              <p className="mt-2 text-lg font-bold text-[#1f2530]">{topBranchByRevenue.branchName}</p>
-              <p className="text-sm text-emerald-700">{formatMoney(topBranchByRevenue.revenue)}</p>
+        <div className="crm-surface p-5 md:col-span-2 xl:col-span-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <p className="text-sm text-[#7f8794]">Всего студентов</p>
+              <p className="mt-1 text-xl font-bold text-[#1f2530]">{totalStudents}</p>
             </div>
-          )}
-          {topBranchByAttendance && (
-            <div className="crm-surface border border-blue-200 bg-blue-50 p-5">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-blue-600" />
-                <p className="text-sm font-semibold text-blue-700">Лучший по посещаемости</p>
-              </div>
-              <p className="mt-2 text-lg font-bold text-[#1f2530]">{topBranchByAttendance.branchName}</p>
-              <p className="text-sm text-blue-700">{topBranchByAttendance.attendanceRate}%</p>
+            <div>
+              <p className="text-sm text-[#7f8794]">Всего лидов</p>
+              <p className="mt-1 text-xl font-bold text-[#1f2530]">{totalLeads}</p>
             </div>
-          )}
+            <div>
+              <p className="text-sm text-[#7f8794]">Прибыль (выручка - расходы)</p>
+              <p className="mt-1 text-xl font-bold text-[#1f2530]">{formatMoney(totalRevenue - totalExpenses)}</p>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Branches Table */}
       <div className="crm-table-wrap overflow-hidden">
@@ -187,14 +173,14 @@ export default function BranchAnalyticsPage() {
                 <th className="crm-table-th">#</th>
                 <th className="crm-table-th">Филиал</th>
                 <th className="crm-table-th">Студенты</th>
-                <th className="crm-table-th">Активные</th>
+                <th className="crm-table-th">Лиды</th>
+                <th className="crm-table-th">Активные абонементы</th>
                 <th className="crm-table-th">Выручка</th>
-                <th className="crm-table-th">Динамика</th>
+                <th className="crm-table-th">Расходы</th>
                 <th className="crm-table-th">Уроки</th>
                 <th className="crm-table-th">Посещаемость</th>
-                <th className="crm-table-th">Новые</th>
-                <th className="crm-table-th">Отток</th>
-                <th className="crm-table-th">Удержание</th>
+                <th className="crm-table-th">Загрузка групп</th>
+                <th className="crm-table-th">Сотрудники</th>
               </tr>
             </thead>
             <tbody className="crm-table-body">
@@ -204,33 +190,16 @@ export default function BranchAnalyticsPage() {
                   <td className="crm-table-cell">
                     <div>
                       <p className="font-semibold text-[#202938]">{branch.branchName}</p>
-                      <p className="text-xs text-[#8690a0]">{branch.branchCode}</p>
+                      <p className="text-xs text-[#8690a0]">ID: {branch.branchId.slice(0, 8)}...</p>
                     </div>
                   </td>
-                  <td className="crm-table-cell">{branch.studentsCount}</td>
-                  <td className="crm-table-cell">
-                    <span className="rounded-md bg-emerald-50 px-2 py-1 text-sm font-medium text-emerald-700">
-                      {branch.activeStudents}
-                    </span>
-                  </td>
+                  <td className="crm-table-cell">{branch.studentCount}</td>
+                  <td className="crm-table-cell">{branch.leadCount}</td>
+                  <td className="crm-table-cell">{branch.activeSubscriptions}</td>
                   <td className="crm-table-cell font-semibold text-[#202938]">
                     {formatMoney(branch.revenue)}
                   </td>
-                  <td className="crm-table-cell">
-                    {branch.revenueDeltaPct > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-700">
-                        <TrendingUp className="h-3 w-3" />
-                        +{branch.revenueDeltaPct}%
-                      </span>
-                    ) : branch.revenueDeltaPct < 0 ? (
-                      <span className="inline-flex items-center gap-1 text-rose-700">
-                        <TrendingDown className="h-3 w-3" />
-                        {branch.revenueDeltaPct}%
-                      </span>
-                    ) : (
-                      <span className="text-[#8690a0]">0%</span>
-                    )}
-                  </td>
+                  <td className="crm-table-cell font-semibold text-rose-700">{formatMoney(branch.expenses)}</td>
                   <td className="crm-table-cell">{branch.lessonsCount}</td>
                   <td className="crm-table-cell">
                     <div className="flex items-center gap-2">
@@ -245,27 +214,10 @@ export default function BranchAnalyticsPage() {
                   </td>
                   <td className="crm-table-cell">
                     <span className="rounded-md bg-blue-50 px-2 py-1 text-sm font-medium text-blue-700">
-                      +{branch.newStudents}
+                      {branch.groupLoad}%
                     </span>
                   </td>
-                  <td className="crm-table-cell">
-                    <span className="rounded-md bg-rose-50 px-2 py-1 text-sm font-medium text-rose-700">
-                      {branch.droppedStudents}
-                    </span>
-                  </td>
-                  <td className="crm-table-cell">
-                    <span
-                      className={`rounded-md px-2 py-1 text-sm font-medium ${
-                        branch.retentionRate >= 80
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : branch.retentionRate >= 60
-                            ? 'bg-amber-50 text-amber-700'
-                            : 'bg-rose-50 text-rose-700'
-                      }`}
-                    >
-                      {branch.retentionRate}%
-                    </span>
-                  </td>
+                  <td className="crm-table-cell">{branch.staffCount}</td>
                 </tr>
               ))}
             </tbody>

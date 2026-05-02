@@ -18,6 +18,7 @@ import {
   type CreateTaskRequest,
   type UpdateTaskRequest,
 } from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 import { useApi, useMutation } from '@/hooks/useApi';
 
 function getStaffFullName(staff: {
@@ -83,7 +84,13 @@ export default function Tasks() {
     taskId: null,
   });
 
-  const { data: staffPage } = useApi(() => staffService.getAll({ page: 0, size: 500 }), []);
+  const { roles, permissions } = useAuthStore();
+  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
+
+  const { data: staffPage } = useApi(
+    () => (canViewStaff ? staffService.getAll({ page: 0, size: 500 }) : Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 })),
+    [canViewStaff]
+  );
 
   const staffOptions = useMemo(
     () =>

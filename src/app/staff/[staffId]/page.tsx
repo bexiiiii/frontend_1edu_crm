@@ -39,9 +39,14 @@ import {
   type StudentDto,
   type UpdateStaffRequest,
 } from '@/lib/api';
+import {
+  formatScheduleDays,
+  formatSchedulePeriod,
+  formatScheduleTimeRange,
+} from '@/lib/scheduleUtils';
 import type { StaffFormValues } from '@/types/employee';
 
-type StaffProfileTab = 'profile' | 'groups' | 'students' | 'salary';
+type StaffProfileTab = 'profile' | 'groups' | 'schedule' | 'students' | 'salary';
 
 type StaffProfileData = {
   staff: StaffDto;
@@ -54,19 +59,10 @@ type StaffProfileData = {
 const profileTabs: Array<{ id: StaffProfileTab; label: string }> = [
   { id: 'profile', label: 'Профиль' },
   { id: 'groups', label: 'Группы' },
+  { id: 'schedule', label: 'Расписание' },
   { id: 'students', label: 'Ученики' },
   { id: 'salary', label: 'Зарплата' },
 ];
-
-const DAY_OF_WEEK_LABELS: Record<string, string> = {
-  MONDAY: 'Пн',
-  TUESDAY: 'Вт',
-  WEDNESDAY: 'Ср',
-  THURSDAY: 'Чт',
-  FRIDAY: 'Пт',
-  SATURDAY: 'Сб',
-  SUNDAY: 'Вс',
-};
 
 const SCHEDULE_STATUS_LABELS: Record<ScheduleDto['status'], string> = {
   ACTIVE: 'Активна',
@@ -100,20 +96,6 @@ function formatDate(value: string | null | undefined): string {
   return new Date(value).toLocaleDateString('ru-RU');
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return '—';
-  }
-
-  return new Date(value).toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function formatMonthLabel(month: string): string {
   if (!month) {
     return '—';
@@ -135,11 +117,13 @@ function formatMoney(amount: number | null | undefined, currency = 'KZT'): strin
 }
 
 function getStaffDisplayName(staff: StaffDto): string {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
+  const composedName = [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ').trim();
+
+  if (composedName) {
+    return composedName;
   }
 
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
+  return staff.fullName?.trim() || 'Без имени';
 }
 
 function getStudentDisplayName(student: StudentDto): string {
@@ -148,14 +132,6 @@ function getStudentDisplayName(student: StudentDto): string {
   }
 
   return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
-}
-
-function formatScheduleDays(daysOfWeek: ScheduleDto['daysOfWeek']): string {
-  if (!daysOfWeek.length) {
-    return '—';
-  }
-
-  return daysOfWeek.map((day) => DAY_OF_WEEK_LABELS[day] || day).join(', ');
 }
 
 function compareIsoDateDesc(left: string, right: string): number {
@@ -285,18 +261,34 @@ export default function StaffProfilePage() {
       }>;
     }
 
-    return data.schedules.map((schedule) => ({
-      id: schedule.id,
-      name: schedule.name,
-      courseName: schedule.courseId
-        ? (data.coursesById[schedule.courseId]?.name || schedule.courseId)
-        : 'Без курса',
-      studentsCount: data.studentsByGroupId[schedule.id]?.length ?? 0,
-      scheduleText: `${formatScheduleDays(schedule.daysOfWeek)} • ${schedule.startTime.slice(0, 5)} - ${schedule.endTime.slice(0, 5)}`,
-      periodText: `${formatDate(schedule.startDate)} - ${formatDate(schedule.endDate)}`,
-      status: schedule.status,
-    }));
+    return data.schedules
+      .slice()
+      .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.startTime.localeCompare(right.startTime))
+      .map((schedule) => ({
+        id: schedule.id,
+        name: schedule.name,
+        courseName: schedule.courseId
+          ? (data.coursesById[schedule.courseId]?.name || schedule.courseId)
+          : 'Без курса',
+        studentsCount: data.studentsByGroupId[schedule.id]?.length ?? 0,
+        scheduleText: `${formatScheduleDays(schedule.daysOfWeek)} • ${formatScheduleTimeRange(schedule.startTime, schedule.endTime)}`,
+        periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
+        status: schedule.status,
+      }));
   }, [data]);
+
+  const scheduleRows = useMemo(
+    () =>
+      groupRows.map((group) => ({
+        id: group.id,
+        name: group.name,
+        courseName: group.courseName,
+        scheduleText: group.scheduleText,
+        periodText: group.periodText,
+        status: group.status,
+      })),
+    [groupRows]
+  );
 
   const studentRows = useMemo(() => {
     if (!data) {
@@ -672,6 +664,51 @@ export default function StaffProfilePage() {
                   <tr className="crm-table-row">
                     <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Для сотрудника пока не найдено групп
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'schedule' && (
+        <div className="crm-table-wrap overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
+            <p className="text-sm font-medium text-gray-700">
+              <GraduationCap className="mr-2 inline h-4 w-4" />
+              Расписаний преподавателя: <span className="font-semibold text-gray-900">{scheduleRows.length}</span>
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="crm-table-head">
+                <tr>
+                  <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Группа</th>
+                  <th className="crm-table-th">Курс</th>
+                  <th className="crm-table-th">Расписание</th>
+                  <th className="crm-table-th">Период</th>
+                  <th className="crm-table-th">Статус</th>
+                </tr>
+              </thead>
+              <tbody className="crm-table-body">
+                {scheduleRows.length > 0 ? (
+                  scheduleRows.map((schedule, index) => (
+                    <tr key={schedule.id} className="crm-table-row">
+                      <td className="crm-table-cell">{index + 1}</td>
+                      <td className="crm-table-cell">{schedule.name}</td>
+                      <td className="crm-table-cell">{schedule.courseName}</td>
+                      <td className="crm-table-cell">{schedule.scheduleText}</td>
+                      <td className="crm-table-cell">{schedule.periodText}</td>
+                      <td className="crm-table-cell">{SCHEDULE_STATUS_LABELS[schedule.status]}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr className="crm-table-row">
+                    <td colSpan={6} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      Для сотрудника пока не найдено расписаний
                     </td>
                   </tr>
                 )}

@@ -61,6 +61,11 @@ export const ANALYTICS_REPORTS: AnalyticsReport[] = [
     description: 'Посещаемость групп с детализацией по занятиям и ученикам.',
   },
   {
+    slug: 'teacher-course-attendance',
+    label: 'Посещаемость курса преподавателя',
+    description: 'Детальная посещаемость по занятиям выбранного курса за месяц.',
+  },
+  {
     slug: 'payment-reconciliation',
     label: 'Сверка платежей',
     description: 'Сопоставление платежей, начислений и задолженностей.',

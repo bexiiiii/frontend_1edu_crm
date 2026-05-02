@@ -324,11 +324,7 @@ export default function ApiPayInvoicesPage() {
                         <td className="crm-table-cell !px-4 !py-2.5">{index + 1}</td>
 
                         <td className="crm-table-cell !px-4 !py-2.5">
-                          <div className="space-y-0.5">
-                            <div className="text-sm font-semibold text-[#1f2530]">{studentName}</div>
-                            <div className="text-xs text-[#7d8795]">Student ID: {formatShortId(invoice.studentId)}</div>
-                            <div className="text-xs text-[#7d8795]">Subscription: {formatShortId(invoice.subscriptionId)}</div>
-                          </div>
+                          <div className="text-sm font-semibold text-[#1f2530]">{studentName}</div>
                         </td>
 
                         <td className="crm-table-cell !px-4 !py-2.5">
@@ -369,11 +365,15 @@ export default function ApiPayInvoicesPage() {
                               onClick={() => void handleViewDetails(invoice.id)}
                               className="text-xs font-medium text-[#3568eb] hover:text-[#2f5fd0]"
                             >
-                              Merchant: {invoice.merchantInvoiceId}
+                              {invoice.merchantInvoiceId}
                             </button>
-                            <div className="text-xs text-[#667183]">External: {invoice.externalInvoiceId || '—'}</div>
-                            <div className="text-xs text-[#667183]">Txn: {invoice.externalTransactionId || '—'}</div>
-                            <div className="text-xs text-[#667183]">Метод оплаты: {invoice.externalPaymentMethod || '—'}</div>
+                            {invoice.externalInvoiceId && (
+                              <div className="text-xs text-[#667183]">
+                                {invoice.externalInvoiceId}
+                                {invoice.externalTransactionId && ` · ${invoice.externalTransactionId}`}
+                                {invoice.externalPaymentMethod && ` · ${invoice.externalPaymentMethod}`}
+                              </div>
+                            )}
 
                             {invoice.paymentUrl ? (
                               <a

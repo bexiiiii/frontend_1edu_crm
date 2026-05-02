@@ -15,6 +15,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
@@ -45,6 +46,7 @@ import {
   type CreateStudentRequest,
   type AttendanceDto,
   type CourseDto,
+  type CourseEnrollmentDto,
   type LessonDto,
   type SaveStudentCallLogRequest,
   type ScheduleDto,
@@ -56,18 +58,25 @@ import {
   type TransactionDto,
   type UpdateStudentRequest,
 } from '@/lib/api';
+import {
+  formatScheduleDays,
+  formatSchedulePeriod,
+  formatScheduleTimeRange,
+} from '@/lib/scheduleUtils';
 import type { StudentFormValues } from '@/types/student';
 
-type StudentProfileTab = 'profile' | 'groups' | 'attendance' | 'payments' | 'calls';
+type StudentProfileTab = 'profile' | 'groups' | 'schedule' | 'attendance' | 'payments' | 'calls';
 
 type StudentProfileData = {
   student: StudentDto;
   subscriptions: SubscriptionDto[];
+  courseEnrollments: CourseEnrollmentDto[];
   attendanceHistory: AttendanceDto[];
   paymentHistory: StudentPaymentHistoryResponse | null;
   transactions: TransactionDto[];
   callLogs: StudentCallLogDto[];
   schedulesById: Record<string, ScheduleDto>;
+  courseSchedulesById: Record<string, ScheduleDto[]>;
   coursesById: Record<string, CourseDto>;
   lessonsById: Record<string, LessonDto>;
 };
@@ -75,6 +84,7 @@ type StudentProfileData = {
 const profileTabs: Array<{ id: StudentProfileTab; label: string }> = [
   { id: 'profile', label: 'Профиль' },
   { id: 'groups', label: 'Группы и абонементы' },
+  { id: 'schedule', label: 'Расписание' },
   { id: 'attendance', label: 'Посещаемость' },
   { id: 'payments', label: 'Оплаты' },
   { id: 'calls', label: 'Звонки' },
@@ -192,6 +202,7 @@ function toFormValues(student: StudentDto): StudentFormValues {
     additionalInfo: student.additionalInfo || '',
     contract: student.contract || '',
     discount: student.discount || '',
+    discountPercent: student.discountPercent ?? '',
     comment: student.comment || '',
     stateOrderParticipant: Boolean(student.stateOrderParticipant),
     loyalty: student.loyalty || '',
@@ -204,12 +215,18 @@ export default function StudentProfilePage() {
   const router = useRouter();
   const params = useParams();
   const studentIdParam = params.studentId;
+  const currentStaffId = useAuthStore((s) => s.user?.staffId ?? null);
+  const currentUser = useAuthStore((s) => s.user);
   const studentId = Array.isArray(studentIdParam) ? studentIdParam[0] : studentIdParam;
 
   const [activeTab, setActiveTab] = useState<StudentProfileTab>('profile');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
+  const [isCallLogReasonModalOpen, setIsCallLogReasonModalOpen] = useState(false);
+  const [callLogPage, setCallLogPage] = useState(0);
+  const CALL_LOG_PAGE_SIZE = 8;
+  const [pendingCallLogPayload, setPendingCallLogPayload] = useState<null | { id: string; data: SaveStudentCallLogRequest }>(null);
   const [editingCallLog, setEditingCallLog] = useState<StudentCallLogDto | null>(null);
   const [callLogForm, setCallLogForm] = useState<{
     callDate: string;
@@ -218,6 +235,7 @@ export default function StudentProfilePage() {
     notes: string;
     followUpRequired: boolean;
     followUpDate: string;
+    updateReason: string;
   }>({
     callDate: new Date().toISOString().slice(0, 10),
     callTime: new Date().toTimeString().slice(0, 5),
@@ -225,6 +243,7 @@ export default function StudentProfilePage() {
     notes: '',
     followUpRequired: false,
     followUpDate: '',
+    updateReason: '',
   });
   const [paymentForm, setPaymentForm] = useState<{
     subscriptionId: string;
@@ -249,8 +268,9 @@ export default function StudentProfilePage() {
 
     const studentResponse = await studentsService.getById(studentId);
 
-    const [subscriptionsResult, attendanceResult, paymentHistoryResult, transactionsResult, callLogsResult] = await Promise.all([
+    const [subscriptionsResult, enrollmentsResult, attendanceResult, paymentHistoryResult, transactionsResult, callLogsResult] = await Promise.all([
       subscriptionsService.getByStudent(studentId, { page: 0, size: 200 }).catch(() => null),
+      coursesService.getStudentEnrollments(studentId).catch(() => null),
       attendanceService.getStudentHistory(studentId, { page: 0, size: 200 }).catch(() => null),
       studentPaymentsService.getByStudent(studentId).catch(() => null),
       financeService.getStudentTransactions(studentId, { page: 0, size: 200 }).catch(() => null),
@@ -258,6 +278,7 @@ export default function StudentProfilePage() {
     ]);
 
     const subscriptions = subscriptionsResult?.data.content ?? [];
+    const courseEnrollments = enrollmentsResult?.data ?? [];
     const attendanceHistory = attendanceResult?.data.content ?? [];
     const paymentHistory = paymentHistoryResult?.data ?? null;
     const transactions = transactionsResult?.data.content ?? [];
@@ -295,8 +316,8 @@ export default function StudentProfilePage() {
     subscriptions.forEach((subscription) => {
       if (subscription.courseId) courseIdsSet.add(subscription.courseId);
     });
-    Object.values(lessonsById).forEach((lesson) => {
-      if (lesson.courseId) courseIdsSet.add(lesson.courseId);
+    courseEnrollments.forEach((enrollment) => {
+      if (enrollment.courseId) courseIdsSet.add(enrollment.courseId);
     });
 
     if (paymentHistory) {
@@ -308,7 +329,7 @@ export default function StudentProfilePage() {
     const scheduleIds = Array.from(scheduleIdsSet);
     const courseIds = Array.from(courseIdsSet);
 
-    const [scheduleEntries, courseEntries] = await Promise.all([
+    const [scheduleEntries, courseScheduleEntries, courseEntries] = await Promise.all([
       Promise.all(
         scheduleIds.map(async (id) => {
           try {
@@ -316,6 +337,16 @@ export default function StudentProfilePage() {
             return [id, response.data] as const;
           } catch {
             return [id, null] as const;
+          }
+        })
+      ),
+      Promise.all(
+        courseIds.map(async (id) => {
+          try {
+            const response = await schedulesService.getAll({ page: 0, size: 200, courseId: id });
+            return [id, response.data.content] as const;
+          } catch {
+            return [id, [] as ScheduleDto[]] as const;
           }
         })
       ),
@@ -332,12 +363,20 @@ export default function StudentProfilePage() {
     ]);
 
     const schedulesById: Record<string, ScheduleDto> = {};
+    const courseSchedulesById: Record<string, ScheduleDto[]> = {};
     const coursesById: Record<string, CourseDto> = {};
 
     scheduleEntries.forEach(([id, value]) => {
       if (value) {
         schedulesById[id] = value;
       }
+    });
+
+    courseScheduleEntries.forEach(([courseId, schedules]) => {
+      courseSchedulesById[courseId] = schedules;
+      schedules.forEach((schedule) => {
+        schedulesById[schedule.id] = schedule;
+      });
     });
 
     courseEntries.forEach(([id, value]) => {
@@ -350,11 +389,13 @@ export default function StudentProfilePage() {
       data: {
         student: studentResponse.data,
         subscriptions,
+        courseEnrollments,
         attendanceHistory,
         paymentHistory,
         transactions,
         callLogs,
         schedulesById,
+        courseSchedulesById,
         coursesById,
         lessonsById,
       },
@@ -389,6 +430,21 @@ export default function StudentProfilePage() {
     return new Set(data.subscriptions.map((subscription) => subscription.groupId).filter(Boolean)).size;
   }, [data]);
 
+  const latestEnrollmentByCourseId = useMemo(() => {
+    const map = new Map<string, CourseEnrollmentDto>();
+
+    (data?.courseEnrollments ?? [])
+      .slice()
+      .sort((left, right) => compareIsoDateDesc(left.enrolledAt, right.enrolledAt))
+      .forEach((enrollment) => {
+        if (!map.has(enrollment.courseId)) {
+          map.set(enrollment.courseId, enrollment);
+        }
+      });
+
+    return map;
+  }, [data?.courseEnrollments]);
+
   const attendanceStats = useMemo(() => {
     if (!data) {
       return { total: 0, present: 0, rate: 0 };
@@ -399,6 +455,98 @@ export default function StudentProfilePage() {
     const rate = total > 0 ? Math.round((present / total) * 100) : 0;
 
     return { total, present, rate };
+  }, [data]);
+
+  const studentScheduleRows = useMemo(() => {
+    if (!data) {
+      return [] as Array<{
+        key: string;
+        groupName: string;
+        courseName: string;
+        daysText: string;
+        timeText: string;
+        periodText: string;
+        statusText: string;
+      }>;
+    }
+
+    const rows: Array<{
+      key: string;
+      groupName: string;
+      courseName: string;
+      daysText: string;
+      timeText: string;
+      periodText: string;
+      statusText: string;
+      startDate: string;
+      startTime: string;
+    }> = [];
+    const seenScheduleIds = new Set<string>();
+
+    data.subscriptions.forEach((subscription) => {
+      if (!subscription.groupId) {
+        return;
+      }
+
+      const schedule = data.schedulesById[subscription.groupId];
+      if (!schedule || seenScheduleIds.has(schedule.id)) {
+        return;
+      }
+
+      seenScheduleIds.add(schedule.id);
+
+      rows.push({
+        key: schedule.id,
+        groupName: schedule.name,
+        courseName: subscription.courseId
+          ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
+          : 'Без курса',
+        daysText: formatScheduleDays(schedule.daysOfWeek),
+        timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
+        periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
+        statusText: SUBSCRIPTION_STATUS_LABELS[subscription.status],
+        startDate: schedule.startDate,
+        startTime: schedule.startTime,
+      });
+    });
+
+    data.courseEnrollments
+      .filter((enrollment) => enrollment.enrollmentStatus === 'ACTIVE')
+      .forEach((enrollment) => {
+        const courseSchedules = data.courseSchedulesById[enrollment.courseId] ?? [];
+
+        courseSchedules.forEach((schedule) => {
+          if (seenScheduleIds.has(schedule.id)) {
+            return;
+          }
+
+          seenScheduleIds.add(schedule.id);
+
+          rows.push({
+            key: `${enrollment.courseId}-${schedule.id}`,
+            groupName: schedule.name,
+            courseName: enrollment.courseName || data.coursesById[enrollment.courseId]?.name || 'Неизвестный курс',
+            daysText: formatScheduleDays(schedule.daysOfWeek),
+            timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
+            periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
+            statusText: enrollment.enrollmentStatus === 'ACTIVE' ? 'Активна запись' : 'Удалена запись',
+            startDate: schedule.startDate,
+            startTime: schedule.startTime,
+          });
+        });
+      });
+
+    return rows
+      .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.startTime.localeCompare(right.startTime))
+      .map(({ key, groupName, courseName, daysText, timeText, periodText, statusText }) => ({
+        key,
+        groupName,
+        courseName,
+        daysText,
+        timeText,
+        periodText,
+        statusText,
+      }));
   }, [data]);
 
   const paymentRows = useMemo(() => {
@@ -568,6 +716,16 @@ export default function StudentProfilePage() {
     await refetch();
   };
 
+  const CALL_RESULTS = [
+    { value: 'NO_ANSWER', label: 'Не отвечает', color: 'border-rose-200 bg-rose-50 text-rose-700' },
+    { value: 'BUSY', label: 'Занято', color: 'border-orange-200 bg-orange-50 text-orange-700' },
+    { value: 'CALLBACK', label: 'Перезвонить', color: 'border-amber-200 bg-amber-50 text-amber-700' },
+    { value: 'SUCCESS', label: 'Успешно', color: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+    { value: 'INTERESTED', label: 'Заинтересован', color: 'border-sky-200 bg-sky-50 text-sky-700' },
+    { value: 'NOT_INTERESTED', label: 'Не заинтересован', color: 'border-slate-200 bg-slate-50 text-slate-600' },
+    { value: 'OTHER', label: 'Другое', color: 'border-gray-200 bg-gray-50 text-gray-600' },
+  ] as const;
+
   const openAddCallLog = () => {
     setEditingCallLog(null);
     setCallLogForm({
@@ -577,6 +735,7 @@ export default function StudentProfilePage() {
       notes: '',
       followUpRequired: false,
       followUpDate: '',
+      updateReason: '',
     });
     setIsCallLogModalOpen(true);
   };
@@ -590,6 +749,7 @@ export default function StudentProfilePage() {
       notes: log.notes || '',
       followUpRequired: log.followUpRequired,
       followUpDate: log.followUpDate || '',
+      updateReason: '',
     });
     setIsCallLogModalOpen(true);
   };
@@ -601,6 +761,7 @@ export default function StudentProfilePage() {
 
     const payload: SaveStudentCallLogRequest = {
       studentId,
+      callerStaffId: currentStaffId ?? undefined,
       callDate: callLogForm.callDate,
       callTime: callLogForm.callTime,
       callResult: callLogForm.callResult || undefined,
@@ -610,15 +771,25 @@ export default function StudentProfilePage() {
     };
 
     if (editingCallLog) {
-      await updateCallLogMutation.mutate({
-        id: editingCallLog.id,
-        data: payload,
-      });
+      // For edits: close main modal, open reason modal
+      setPendingCallLogPayload({ id: editingCallLog.id, data: payload });
+      setIsCallLogModalOpen(false);
+      setIsCallLogReasonModalOpen(true);
     } else {
       await createCallLogMutation.mutate(payload);
+      setIsCallLogModalOpen(false);
+      await refetch();
     }
+  };
 
-    setIsCallLogModalOpen(false);
+  const handleConfirmCallLogReason = async () => {
+    if (!pendingCallLogPayload) return;
+    await updateCallLogMutation.mutate({
+      id: pendingCallLogPayload.id,
+      data: { ...pendingCallLogPayload.data, updateReason: callLogForm.updateReason || undefined },
+    });
+    setIsCallLogReasonModalOpen(false);
+    setPendingCallLogPayload(null);
     await refetch();
   };
 
@@ -850,7 +1021,13 @@ export default function StudentProfilePage() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Скидка</p>
-              <p className="mt-1 text-sm font-semibold text-[#273142]">{data.student.discount || '—'}</p>
+              <p className="mt-1 text-sm font-semibold text-[#273142]">
+                {data.student.discountPercent != null && data.student.discountPercent > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-emerald-700">
+                    {data.student.discountPercent}%
+                  </span>
+                ) : data.student.discount || '—'}
+              </p>
             </div>
           </div>
 
@@ -896,39 +1073,94 @@ export default function StudentProfilePage() {
               </thead>
               <tbody className="crm-table-body">
                 {data.subscriptions.length > 0 ? (
-                  data.subscriptions.map((subscription, index) => (
-                    <tr key={subscription.id} className="crm-table-row">
+                  data.subscriptions.map((subscription, index) => {
+                    const enrollment = subscription.courseId
+                      ? latestEnrollmentByCourseId.get(subscription.courseId)
+                      : undefined;
+
+                    return (
+                      <tr key={subscription.id} className="crm-table-row">
+                        <td className="crm-table-cell">{index + 1}</td>
+                        <td className="crm-table-cell">
+                          {subscription.groupId
+                            ? data.schedulesById[subscription.groupId]?.name || 'Удаленная группа'
+                            : 'Без группы'}
+                        </td>
+                        <td className="crm-table-cell">
+                          {subscription.courseId
+                            ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
+                            : 'Без курса'}
+                        </td>
+                        <td className="crm-table-cell">
+                          {enrollment
+                            ? `${formatDate(enrollment.enrolledAt)} - ${formatDate(enrollment.removedAt)}`
+                            : `${formatDate(subscription.startDate)} - ${formatDate(subscription.endDate)}`}
+                        </td>
+                        <td className="crm-table-cell">
+                          {subscription.lessonsLeft} / {subscription.totalLessons}
+                        </td>
+                        <td className="crm-table-cell">{formatMoney(subscription.amount)}</td>
+                        <td className="crm-table-cell">
+                          <span
+                            className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${SUBSCRIPTION_STATUS_COLORS[subscription.status]}`}
+                          >
+                            {SUBSCRIPTION_STATUS_LABELS[subscription.status]}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr className="crm-table-row">
+                    <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      У студента пока нет активных групп или абонементов
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'schedule' && (
+        <div className="crm-table-wrap overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
+            <p className="text-sm font-medium text-gray-700">
+              <GraduationCap className="mr-2 inline h-4 w-4" />
+              Расписание ученика: <span className="font-semibold text-gray-900">{studentScheduleRows.length}</span>
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="crm-table-head">
+                <tr>
+                  <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Группа</th>
+                  <th className="crm-table-th">Курс</th>
+                  <th className="crm-table-th">Дни</th>
+                  <th className="crm-table-th">Время</th>
+                  <th className="crm-table-th">Период</th>
+                  <th className="crm-table-th">Статус</th>
+                </tr>
+              </thead>
+              <tbody className="crm-table-body">
+                {studentScheduleRows.length > 0 ? (
+                  studentScheduleRows.map((row, index) => (
+                    <tr key={row.key} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
-                      <td className="crm-table-cell">
-                        {subscription.groupId
-                          ? data.schedulesById[subscription.groupId]?.name || 'Удаленная группа'
-                          : 'Без группы'}
-                      </td>
-                      <td className="crm-table-cell">
-                        {subscription.courseId
-                          ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
-                          : 'Без курса'}
-                      </td>
-                      <td className="crm-table-cell">
-                        {formatDate(subscription.startDate)} - {formatDate(subscription.endDate)}
-                      </td>
-                      <td className="crm-table-cell">
-                        {subscription.lessonsLeft} / {subscription.totalLessons}
-                      </td>
-                      <td className="crm-table-cell">{formatMoney(subscription.amount)}</td>
-                      <td className="crm-table-cell">
-                        <span
-                          className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${SUBSCRIPTION_STATUS_COLORS[subscription.status]}`}
-                        >
-                          {SUBSCRIPTION_STATUS_LABELS[subscription.status]}
-                        </span>
-                      </td>
+                      <td className="crm-table-cell">{row.groupName}</td>
+                      <td className="crm-table-cell">{row.courseName}</td>
+                      <td className="crm-table-cell">{row.daysText}</td>
+                      <td className="crm-table-cell">{row.timeText}</td>
+                      <td className="crm-table-cell">{row.periodText}</td>
+                      <td className="crm-table-cell">{row.statusText}</td>
                     </tr>
                   ))
                 ) : (
                   <tr className="crm-table-row">
                     <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
-                      У студента пока нет активных групп или абонементов
+                      Для ученика пока не найдено расписаний
                     </td>
                   </tr>
                 )}
@@ -1008,6 +1240,69 @@ export default function StudentProfilePage() {
             </div>
           </div>
 
+          {/* Subscription summary — always show if there are subscriptions in payment history */}
+          {data.paymentHistory && data.paymentHistory.subscriptions.length > 0 && (
+            <div className="crm-table-wrap overflow-hidden">
+              <div className="border-b border-[#e6ebf0] px-6 py-4">
+                <p className="text-sm font-medium text-gray-700">Абонементы</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="crm-table-head">
+                    <tr>
+                      <th className="crm-table-th">Курс</th>
+                      <th className="crm-table-th">Период</th>
+                      <th className="crm-table-th">Статус</th>
+                      <th className="crm-table-th">Скидка</th>
+                      <th className="crm-table-th">Ежемесячно</th>
+                      <th className="crm-table-th">Оплачено</th>
+                      <th className="crm-table-th">Долг</th>
+                    </tr>
+                  </thead>
+                  <tbody className="crm-table-body">
+                    {data.paymentHistory.subscriptions.map((sub) => {
+                      const courseName = sub.courseId
+                        ? data.coursesById[sub.courseId]?.name || 'Неизвестный курс'
+                        : 'Без курса';
+                      const statusColors: Record<string, string> = {
+                        ACTIVE: 'border-green-200 bg-green-100 text-green-700',
+                        EXPIRED: 'border-gray-200 bg-gray-100 text-gray-700',
+                        CANCELLED: 'border-red-200 bg-red-100 text-red-700',
+                        FROZEN: 'border-sky-200 bg-sky-100 text-sky-700',
+                      };
+                      const statusLabels: Record<string, string> = {
+                        ACTIVE: 'Активен', EXPIRED: 'Истек', CANCELLED: 'Отменен', FROZEN: 'Заморожен',
+                      };
+                      return (
+                        <tr key={sub.subscriptionId} className="crm-table-row">
+                          <td className="crm-table-cell font-medium text-[#202938]">{courseName}</td>
+                          <td className="crm-table-cell text-sm text-[#667085]">
+                            {formatDate(sub.startDate)} — {sub.endDate ? formatDate(sub.endDate) : 'бессрочно'}
+                          </td>
+                          <td className="crm-table-cell">
+                            <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${statusColors[sub.subscriptionStatus] || 'border-gray-200 bg-gray-100 text-gray-700'}`}>
+                              {statusLabels[sub.subscriptionStatus] || sub.subscriptionStatus}
+                            </span>
+                          </td>
+                          <td className="crm-table-cell">
+                            {sub.discountPercent != null && sub.discountPercent > 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                {sub.discountPercent}%
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="crm-table-cell">{formatMoney(sub.monthlyExpected)}</td>
+                          <td className="crm-table-cell text-emerald-700">{formatMoney(sub.totalPaid)}</td>
+                          <td className="crm-table-cell text-rose-700 font-semibold">{formatMoney(sub.totalDebt)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="crm-table-wrap overflow-hidden">
             <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
               <p className="text-sm font-medium text-gray-700">
@@ -1047,7 +1342,7 @@ export default function StudentProfilePage() {
                   ) : (
                     <tr className="crm-table-row">
                       <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
-                        Платежи по студенту пока отсутствуют
+                        {data.paymentHistory ? 'Платежи ещё не внесены' : 'Нет данных об оплатах'}
                       </td>
                     </tr>
                   )}
@@ -1119,22 +1414,32 @@ export default function StudentProfilePage() {
                   <th className="crm-table-th">Время</th>
                   <th className="crm-table-th">Результат</th>
                   <th className="crm-table-th">Заметки</th>
-                  <th className="crm-table-th">Повторный звонок</th>
+                  <th className="crm-table-th">Перезвонить</th>
                   <th className="crm-table-th">Кем создано</th>
+                  <th className="crm-table-th">Причина изменения</th>
                   <th className="crm-table-th">Действия</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
                 {data.callLogs.length > 0 ? (
-                  data.callLogs.map((log, index) => (
+                  data.callLogs
+                    .slice(callLogPage * CALL_LOG_PAGE_SIZE, (callLogPage + 1) * CALL_LOG_PAGE_SIZE)
+                    .map((log, index) => {
+                    const callResultMeta = CALL_RESULTS.find((r) => r.value === log.callResult);
+                    const creatorName = log.callerName || log.createdByName || (
+                      currentUser && log.createdBy === currentUser.id
+                        ? `${currentUser.firstName} ${currentUser.lastName}`.trim() || currentUser.email
+                        : null
+                    );
+                    return (
                     <tr key={log.id} className="crm-table-row">
-                      <td className="crm-table-cell">{index + 1}</td>
+                      <td className="crm-table-cell">{callLogPage * CALL_LOG_PAGE_SIZE + index + 1}</td>
                       <td className="crm-table-cell">{formatDate(log.callDate)}</td>
                       <td className="crm-table-cell">{log.callTime}</td>
                       <td className="crm-table-cell">
                         {log.callResult ? (
-                          <span className="inline-flex rounded-lg border border-[#dbe2e8] bg-white px-2.5 py-1 text-xs font-medium text-[#5a6576]">
-                            {log.callResult}
+                          <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${callResultMeta?.color ?? 'border-[#dbe2e8] bg-white text-[#5a6576]'}`}>
+                            {callResultMeta?.label ?? log.callResult}
                           </span>
                         ) : (
                           '—'
@@ -1142,22 +1447,23 @@ export default function StudentProfilePage() {
                       </td>
                       <td className="crm-table-cell max-w-xs truncate">{log.notes || '—'}</td>
                       <td className="crm-table-cell">
-                        {log.followUpRequired ? (
-                          <div className="flex items-center gap-1">
-                            <span className="inline-flex rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                              Требуется
-                            </span>
-                            {log.followUpDate && (
-                              <span className="text-xs text-[#8a93a3]">{formatDate(log.followUpDate)}</span>
-                            )}
-                          </div>
-                        ) : (
-                          '—'
-                        )}
+                        {log.followUpDate
+                          ? <span className="text-sm text-[#273142]">{formatDate(log.followUpDate)}</span>
+                          : log.followUpRequired
+                            ? <span className="text-xs text-amber-600">Дата не указана</span>
+                            : '—'
+                        }
                       </td>
                       <td className="crm-table-cell">
-                        <div className="text-sm text-[#273142]">{log.createdByName || '—'}</div>
+                        <div className="text-sm font-semibold text-[#273142]">{creatorName || '—'}</div>
                         <div className="text-xs text-[#8a93a3]">{formatDateTime(log.createdAt)}</div>
+                      </td>
+                      <td className="crm-table-cell max-w-[180px]">
+                        {log.updateReason ? (
+                          <span className="text-sm text-[#273142]">{log.updateReason}</span>
+                        ) : (
+                          <span className="text-xs text-[#c0c7d0]">—</span>
+                        )}
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-1.5">
@@ -1180,10 +1486,10 @@ export default function StudentProfilePage() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                  );})
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       История обзвонов отсутствует
                     </td>
                   </tr>
@@ -1191,6 +1497,45 @@ export default function StudentProfilePage() {
               </tbody>
             </table>
           </div>
+          {data.callLogs.length > CALL_LOG_PAGE_SIZE && (
+            <div className="flex items-center justify-between border-t border-[#e6ebf0] px-6 py-3">
+              <span className="text-xs text-[#8a93a3]">
+                {callLogPage * CALL_LOG_PAGE_SIZE + 1}–{Math.min((callLogPage + 1) * CALL_LOG_PAGE_SIZE, data.callLogs.length)} из {data.callLogs.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCallLogPage((p) => Math.max(p - 1, 0))}
+                  disabled={callLogPage === 0}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#e0e3e8] bg-white text-sm text-[#4b5565] disabled:opacity-40 hover:bg-[#f4f6f8]"
+                >
+                  ‹
+                </button>
+                {Array.from({ length: Math.ceil(data.callLogs.length / CALL_LOG_PAGE_SIZE) }, (_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setCallLogPage(i)}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border text-sm font-medium transition-colors ${
+                      callLogPage === i
+                        ? 'border-[#467aff] bg-[#eef5ff] text-[#467aff]'
+                        : 'border-[#e0e3e8] bg-white text-[#4b5565] hover:bg-[#f4f6f8]'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCallLogPage((p) => Math.min(p + 1, Math.ceil(data.callLogs.length / CALL_LOG_PAGE_SIZE) - 1))}
+                  disabled={callLogPage >= Math.ceil(data.callLogs.length / CALL_LOG_PAGE_SIZE) - 1}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#e0e3e8] bg-white text-sm text-[#4b5565] disabled:opacity-40 hover:bg-[#f4f6f8]"
+                >
+                  ›
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1332,18 +1677,14 @@ export default function StudentProfilePage() {
         title={editingCallLog ? 'Редактировать звонок' : 'Добавить звонок'}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setIsCallLogModalOpen(false)} disabled={createCallLogMutation.loading || updateCallLogMutation.loading}>
+            <Button variant="ghost" onClick={() => setIsCallLogModalOpen(false)} disabled={createCallLogMutation.loading}>
               Отмена
             </Button>
             <Button
               onClick={() => void handleSaveCallLog()}
-              disabled={
-                (createCallLogMutation.loading || updateCallLogMutation.loading) ||
-                !callLogForm.callDate ||
-                !callLogForm.callTime
-              }
+              disabled={createCallLogMutation.loading || !callLogForm.callDate || !callLogForm.callTime}
             >
-              {createCallLogMutation.loading || updateCallLogMutation.loading ? 'Сохраняем...' : 'Сохранить'}
+              {createCallLogMutation.loading ? 'Сохраняем...' : editingCallLog ? 'Далее →' : 'Сохранить'}
             </Button>
           </>
         }
@@ -1372,13 +1713,23 @@ export default function StudentProfilePage() {
 
           <div>
             <label className="mb-2 block text-sm font-medium text-[#5d6676]">Результат звонка</label>
-            <input
-              type="text"
+            <select
               value={callLogForm.callResult}
-              onChange={(event) => setCallLogForm((prev) => ({ ...prev, callResult: event.target.value }))}
-              className="crm-input"
-              placeholder="Например: Дозвонились, согласовали оплату"
-            />
+              onChange={(event) => {
+                const value = event.target.value;
+                setCallLogForm((prev) => ({
+                  ...prev,
+                  callResult: value,
+                  ...(value === 'CALLBACK' && { followUpRequired: true }),
+                }));
+              }}
+              className="crm-select"
+            >
+              <option value="">— Не выбрано —</option>
+              {CALL_RESULTS.map((r) => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -1416,6 +1767,34 @@ export default function StudentProfilePage() {
               />
             </div>
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isCallLogReasonModalOpen}
+        onClose={() => { setIsCallLogReasonModalOpen(false); setPendingCallLogPayload(null); }}
+        title="Причина изменения"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setIsCallLogReasonModalOpen(false); setPendingCallLogPayload(null); }} disabled={updateCallLogMutation.loading}>
+              Отмена
+            </Button>
+            <Button onClick={() => void handleConfirmCallLogReason()} disabled={updateCallLogMutation.loading}>
+              {updateCallLogMutation.loading ? 'Сохраняем...' : 'Сохранить изменение'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-[#5d6676]">Укажите причину редактирования записи о звонке.</p>
+          <textarea
+            value={callLogForm.updateReason}
+            onChange={(event) => setCallLogForm((prev) => ({ ...prev, updateReason: event.target.value }))}
+            rows={3}
+            className="crm-textarea resize-none"
+            placeholder="Например: Исправлена дата звонка"
+            autoFocus
+          />
         </div>
       </Modal>
     </div>

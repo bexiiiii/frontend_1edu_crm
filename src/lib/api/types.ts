@@ -49,7 +49,7 @@ export interface CreateUserRequest {
   email: string;
   firstName: string;
   lastName: string;
-  password: string;
+  password?: string;
   role: string;
   staffId?: string | null;
   branchIds?: string[];
@@ -154,6 +154,7 @@ export interface StudentDto {
   additionalInfo: string | null;
   contract: string | null;
   discount: string | null;
+  discountPercent: number | null;
   comment: string | null;
   stateOrderParticipant: boolean | null;
   loyalty: string | null;
@@ -185,6 +186,7 @@ export interface CreateStudentRequest {
   additionalInfo?: string;
   contract?: string;
   discount?: string;
+  discountPercent?: number;
   comment?: string;
   stateOrderParticipant?: boolean;
   loyalty?: string;
@@ -254,6 +256,7 @@ export interface UpdateStaffRequest extends Partial<CreateStaffRequest> {
 export type CourseType = 'GROUP' | 'INDIVIDUAL';
 export type CourseFormat = 'OFFLINE' | 'ONLINE';
 export type CourseStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+export type CourseEnrollmentStatus = 'ACTIVE' | 'REMOVED';
 
 export interface CourseDto {
   id: string;
@@ -287,6 +290,18 @@ export interface CreateCourseRequest {
 
 export interface UpdateCourseRequest extends Partial<CreateCourseRequest> {
   status?: CourseStatus;
+}
+
+export interface CourseEnrollmentDto {
+  courseId: string;
+  courseName: string | null;
+  courseType: CourseType | null;
+  courseStatus: CourseStatus | null;
+  color: string | null;
+  basePrice: number | null;
+  enrolledAt: string;
+  removedAt: string | null;
+  enrollmentStatus: CourseEnrollmentStatus;
 }
 
 // ─── Schedule / Group ───────────────────────────────────────────
@@ -389,7 +404,16 @@ export interface CreateLessonRequest {
 
 // ─── Attendance ─────────────────────────────────────────────────
 
-export type AttendanceStatus = 'PLANNED' | 'ATTENDED' | 'ABSENT' | 'SICK' | 'VACATION' | 'AUTO_ATTENDED' | 'ONE_TIME_VISIT';
+export type AttendanceStatus =
+  | 'PLANNED'
+  | 'ATTENDED'
+  | 'ABSENT'
+  | 'SICK'
+  | 'VACATION'
+  | 'AUTO_ATTENDED'
+  | 'ONE_TIME_VISIT'
+  | 'NOT_MARKED'
+  | 'TRIAL';
 
 export interface AttendanceDto {
   id: string;
@@ -534,6 +558,7 @@ export interface SubscriptionDto {
   amount: number;
   currency: string;
   status: SubscriptionStatus;
+  discountPercent: number | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -988,11 +1013,64 @@ export interface TeacherAnalyticsResponse {
   }[];
 }
 
+export interface TeacherCourseDto {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface TeacherCourseAttendanceLessonDayDto {
+  lessonId: string;
+  date: string;
+  dayNumber: number;
+  dayOfWeek: string;
+}
+
+export interface TeacherCourseAttendanceCellDto {
+  lessonId: string;
+  date: string;
+  status: AttendanceStatus;
+}
+
+export interface TeacherCourseAttendanceStudentRowDto {
+  studentId: string;
+  studentName: string;
+  studentStatus: StudentStatus;
+  attendance: TeacherCourseAttendanceCellDto[];
+  attendedCount: number;
+  markedCount: number;
+  totalLessons: number;
+  rhythmPercent: number;
+}
+
 export interface GroupAttendanceResponse {
   groupId: string;
   groupName: string;
   avgAttendanceRate: number;
   monthly: { month: string; rate: number }[];
+}
+
+export interface CourseLessonDetail {
+  lessonId: string;
+  lessonDate: string;
+  lessonType: string;
+  totalStudents: number;
+  attendedCount: number;
+  absentCount: number;
+  plannedLessons: number;
+  attendanceRate: number;
+}
+
+export interface TeacherCourseAttendanceResponse {
+  teacherId: string;
+  teacherName: string;
+  courseId: string;
+  courseName: string;
+  month: string;
+  avgAttendanceRate: number;
+  totalLessons: number;
+  lessonDays: TeacherCourseAttendanceLessonDayDto[];
+  students: TeacherCourseAttendanceStudentRowDto[];
 }
 
 export interface FinanceReportResponse {
@@ -1140,6 +1218,7 @@ export interface SubscriptionPaymentSummaryDto {
   startDate: string;
   endDate: string | null;
   subscriptionStatus: SubscriptionStatus;
+  discountPercent?: number | null;
   totalPaid: number;
   totalDebt: number;
   months: MonthlyBreakdownDto[];
@@ -1171,6 +1250,7 @@ export interface MonthlyStudentDto {
   paid: number;
   debt: number;
   status: StudentPaymentMonthStatus;
+  discountPercent?: number | null;
 }
 
 export interface StudentDebtDto {
@@ -1179,6 +1259,7 @@ export interface StudentDebtDto {
   totalDebt: number;
   debtMonths: number;
   monthlyExpected: number;
+  discountPercent?: number | null;
 }
 
 export interface SalaryPaymentDto {
@@ -1481,32 +1562,151 @@ export interface UpdateInventoryItemRequest {
   notes?: string;
 }
 
+export interface InventoryCategoryDto {
+  id: string;
+  branchId: string | null;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  isActive: boolean | null;
+  sortOrder: number | null;
+}
+
+export interface InventoryUnitDto {
+  id: string;
+  branchId: string | null;
+  name: string;
+  abbreviation: string;
+  unitType: string;
+  description: string | null;
+  isSystem: boolean | null;
+  isActive: boolean | null;
+}
+
+export interface InventoryStatsDto {
+  totalItems: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  totalTransactions: number;
+  totalCategories: number;
+  totalInventoryValue: number;
+}
+
+export interface InventoryReportDto {
+  reportDate: string;
+  totalItems: number;
+  inStockCount: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  totalInventoryValue: number;
+  items: InventoryItemDto[];
+}
+
+export interface InventoryTransactionDto {
+  id: string;
+  branchId: string | null;
+  itemId: string;
+  itemName: string | null;
+  transactionType: string;
+  quantity: number;
+  quantityBefore: number | null;
+  quantityAfter: number | null;
+  referenceType: string | null;
+  referenceId: string | null;
+  referenceNumber: string | null;
+  performedBy: string | null;
+  approvedBy: string | null;
+  recipientId: string | null;
+  unitCost: number | null;
+  totalCost: number | null;
+  transactionDate: string;
+  notes: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface CreateInventoryTransactionRequest {
+  transactionType: string;
+  quantity: number;
+  referenceType?: string;
+  referenceId?: string;
+  notes?: string;
+  reason?: string;
+}
+
+export interface SaveInventoryCategoryRequest {
+  name: string;
+  description?: string;
+  icon?: string;
+  sortOrder?: number;
+}
+
+export interface SaveInventoryUnitRequest {
+  name: string;
+  abbreviation: string;
+  unitType: string;
+  description?: string;
+}
+
+export interface InventoryRevisionItemRequest {
+  itemId: string;
+  actualQuantity: number;
+  notes?: string;
+}
+
+export interface InventoryRevisionRequest {
+  revisionDate: string;
+  periodFrom?: string;
+  periodTo?: string;
+  notes?: string;
+  items: InventoryRevisionItemRequest[];
+}
+
+export interface InventoryRevisionLineDto {
+  itemId: string;
+  itemName: string;
+  systemQuantity: number;
+  actualQuantity: number;
+  difference: number;
+  discrepancyType: string;
+  transactionId: string | null;
+  notes: string | null;
+}
+
+export interface InventoryRevisionResultDto {
+  revisionId: string;
+  revisionDate: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  notes: string | null;
+  totalItems: number;
+  surplusItems: number;
+  shortageItems: number;
+  okItems: number;
+  lines: InventoryRevisionLineDto[];
+}
+
 // ─── Branch Analytics ───────────────────────────────────────────
 
 export interface BranchAnalyticsDto {
   branchId: string;
   branchName: string;
-  branchCode: string;
-  studentsCount: number;
-  activeStudents: number;
+  studentCount: number;
+  leadCount: number;
+  activeSubscriptions: number;
   revenue: number;
-  revenueDeltaPct: number;
+  expenses: number;
   lessonsCount: number;
-  avgAttendance: number;
   attendanceRate: number;
-  subscriptionsSold: number;
-  newStudents: number;
-  droppedStudents: number;
-  retentionRate: number;
+  groupLoad: number;
+  staffCount: number;
 }
 
 export interface BranchAnalyticsResponse {
   branches: BranchAnalyticsDto[];
-  totalBranches: number;
   totalRevenue: number;
+  totalExpenses: number;
   totalStudents: number;
-  totalLessons: number;
-  avgAttendanceRate: number;
-  topBranchByRevenue: BranchAnalyticsDto | null;
-  topBranchByAttendance: BranchAnalyticsDto | null;
+  totalLeads: number;
+  avgAttendance: number;
 }

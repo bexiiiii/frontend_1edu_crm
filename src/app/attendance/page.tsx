@@ -14,6 +14,7 @@ import {
   staffService,
   studentsService,
 } from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 import {
   ATTENDANCE_STATUS_COLORS,
   ATTENDANCE_STATUS_LABELS,
@@ -110,6 +111,8 @@ function getDominantAttendanceStatus(records: AttendanceDto[]): AttendanceStatus
 
 export default function AttendancePage() {
   const router = useRouter();
+  const { roles, permissions } = useAuthStore();
+  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [attendanceModalState, setAttendanceModalState] = useState({
@@ -119,10 +122,14 @@ export default function AttendancePage() {
   const selectedDateKey = useMemo(() => toDateInputValue(selectedDate), [selectedDate]);
 
   const { data, loading, error, refetch } = useApi(async () => {
+    const staffPromise = canViewStaff 
+      ? staffService.getAll({ page: 0, size: 500 })
+      : Promise.resolve({ data: { content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 } });
+
     const [lessonsResponse, schedulesResponse, staffResponse, roomsResponse] = await Promise.all([
       lessonsService.getAll({ date: selectedDateKey, page: 0, size: 100 }),
       schedulesService.getAll({ page: 0, size: 1000 }),
-      staffService.getAll({ page: 0, size: 500 }),
+      staffPromise,
       roomsService.getAll({ page: 0, size: 300 }),
     ]);
 
@@ -169,7 +176,7 @@ export default function AttendancePage() {
         attendanceByLessonId: Object.fromEntries(attendanceEntries),
       },
     };
-  }, [selectedDateKey]);
+  }, [selectedDateKey, canViewStaff]);
 
   const lessonsForDay = useMemo<AttendanceLessonRow[]>(() => {
     const schedulesMap = new Map((data?.schedules ?? []).map((schedule) => [schedule.id, schedule.name]));

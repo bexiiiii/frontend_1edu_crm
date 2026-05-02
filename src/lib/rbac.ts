@@ -19,24 +19,35 @@ const ALWAYS_ALLOWED_PREFIXES = [
 
 const ROUTE_RULES: AccessRule[] = [
   { prefix: '/logs', rolesAny: ['SUPER_ADMIN', 'TENANT_ADMIN'] },
-  { prefix: '/settings', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'], permissionsAny: ['SETTINGS_VIEW'] },
-  { prefix: '/notifications' },
-  { prefix: '/analytics/group-attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'TEACHER'], permissionsAny: ['ANALYTICS_VIEW', 'LESSONS_VIEW'] },
-  { prefix: '/analytics', rolesAny: ['TENANT_ADMIN', 'MANAGER'], permissionsAny: ['ANALYTICS_VIEW'] },
-  { prefix: '/finance', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['FINANCE_VIEW'] },
-  { prefix: '/students', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['STUDENTS_VIEW'] },
+  // Settings: all roles access their own profile tab; tab-level RBAC is handled inside the page
+  { prefix: '/settings', rolesAny: ['TENANT_ADMIN', 'RECEPTIONIST', 'ACCOUNTANT'], permissionsAny: ['SETTINGS_VIEW'] },
+  // Notifications: all operational roles
+  { prefix: '/notifications', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT'] },
+  // Analytics: teacher/accountant get limited analytics; teacher sees own group attendance
+  { prefix: '/analytics/group-attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'TEACHER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW', 'LESSONS_VIEW'] },
+  { prefix: '/analytics/teacher-course-attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'TEACHER', 'ACCOUNTANT'] },
+  { prefix: '/analytics', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW'] },
+  // Finance: ACCOUNTANT has full finance access
+  { prefix: '/finance', rolesAny: ['TENANT_ADMIN', 'ACCOUNTANT'], permissionsAny: ['FINANCE_VIEW', 'FINANCE_CREATE'] },
+  // Students: MANAGER, RECEPTIONIST, TEACHER can view
+  { prefix: '/students', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'], permissionsAny: ['STUDENTS_VIEW'] },
+  // Staff: TENANT_ADMIN only
   { prefix: '/staff', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['STAFF_VIEW'] },
-  { prefix: '/tasks', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['TASKS_VIEW'] },
-  { prefix: '/classes', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['GROUPS_VIEW'] },
-  { prefix: '/schedule', rolesAny: ['TENANT_ADMIN'], permissionsAny: ['GROUPS_VIEW'] },
-  {
-    prefix: '/attendance',
-    rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'],
-    permissionsAny: ['LESSONS_VIEW', 'LESSONS_MARK_ATTENDANCE'],
-  },
+  // Tasks: MANAGER can create/view/edit own
+  { prefix: '/tasks', rolesAny: ['TENANT_ADMIN', 'MANAGER'], permissionsAny: ['TASKS_VIEW'] },
+  // Classes & Schedule: MANAGER, RECEPTIONIST, TEACHER can view
+  { prefix: '/classes', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'], permissionsAny: ['GROUPS_VIEW'] },
+  { prefix: '/schedule', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'], permissionsAny: ['GROUPS_VIEW', 'LESSONS_VIEW'] },
+  // Attendance: MANAGER, RECEPTIONIST, TEACHER
+  { prefix: '/attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER'], permissionsAny: ['LESSONS_VIEW', 'LESSONS_MARK_ATTENDANCE'] },
+  // Leads/Kanban: MANAGER only
   { prefix: '/kanban', rolesAny: ['TENANT_ADMIN', 'MANAGER'], permissionsAny: ['LEADS_VIEW'] },
   { prefix: '/enrollments', rolesAny: ['TENANT_ADMIN', 'MANAGER'], permissionsAny: ['LEADS_VIEW'] },
-  { prefix: '/', rolesAny: ['TENANT_ADMIN', 'MANAGER'], permissionsAny: ['ANALYTICS_VIEW'] },
+  // Inventory & Warehouse: TENANT_ADMIN only
+  { prefix: '/inventory', rolesAny: ['TENANT_ADMIN'] },
+  { prefix: '/warehouse', rolesAny: ['TENANT_ADMIN'] },
+  // Home dashboard: accessible to all authenticated roles
+  { prefix: '/', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW'] },
 ];
 
 function normalizePath(pathname: string): string {
@@ -106,25 +117,25 @@ export function canAccessSettingsTab(tab: SettingsTab, roles: string[], permissi
     case 'user':
       return true;
     case 'company':
-      return hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER']) || hasAnyPermission(permissions, ['SETTINGS_VIEW']);
+      return hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT']) || hasAnyPermission(permissions, ['SETTINGS_VIEW']);
     case 'access':
       return hasAnyRole(roles, ['TENANT_ADMIN']);
     case 'roles':
       return hasAnyRole(roles, ['TENANT_ADMIN']);
     case 'rooms':
       return (
-        hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER']) ||
+        hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT']) ||
         hasAnyPermission(permissions, ['ROOMS_VIEW', 'SETTINGS_VIEW'])
       );
     case 'statuses':
       return (
-        hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER']) ||
+        hasAnyRole(roles, ['MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT']) ||
         hasAnyPermission(permissions, ['SETTINGS_VIEW', 'LESSONS_VIEW', 'LESSONS_MARK_ATTENDANCE', 'STAFF_VIEW'])
       );
     case 'finance':
-      return hasAnyRole(roles, ['MANAGER', 'ACCOUNTANT']) || hasAnyPermission(permissions, ['FINANCE_VIEW', 'SETTINGS_VIEW']);
+      return hasAnyRole(roles, ['ACCOUNTANT']) || hasAnyPermission(permissions, ['FINANCE_VIEW', 'SETTINGS_VIEW']);
     case 'integrations':
-      return hasAnyPermission(permissions, ['SETTINGS_VIEW']);
+      return hasAnyRole(roles, ['TENANT_ADMIN']) || hasAnyPermission(permissions, ['SETTINGS_VIEW']);
     default:
       return false;
   }

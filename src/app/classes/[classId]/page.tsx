@@ -1,27 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ArrowLeft, Edit2, FileText, Loader2, PlusCircle, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { Tabs } from '@/components/ui/vercel-tabs';
 import { useApi, useMutation } from '@/hooks/useApi';
 import {
   coursesService,
   roomsService,
+  schedulesService,
   staffService,
   studentsService,
   type CourseDto,
   type CourseStatus,
   type RoomDto,
+  type ScheduleDto,
   type StaffDto,
   type StudentDto,
 } from '@/lib/api';
+import {
+  formatScheduleDays,
+  formatSchedulePeriod,
+  formatScheduleTimeRange,
+} from '@/lib/scheduleUtils';
 import { COURSE_FORMATS, COURSE_STATUSES, COURSE_TYPES } from '@/constants/class';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
 import type { CourseFormValues } from '@/types/class';
+
+type ClassDetailsTab = 'students' | 'schedule';
 
 type ClassDetailsData = {
   course: CourseDto;
@@ -29,6 +39,18 @@ type ClassDetailsData = {
   room: RoomDto | null;
   students: StudentDto[];
   allStudents: StudentDto[];
+  schedules: ScheduleDto[];
+};
+
+const classDetailsTabs: Array<{ id: ClassDetailsTab; label: string }> = [
+  { id: 'students', label: 'Ученики' },
+  { id: 'schedule', label: 'Расписание' },
+];
+
+const SCHEDULE_STATUS_LABELS: Record<ScheduleDto['status'], string> = {
+  ACTIVE: 'Активна',
+  PAUSED: 'Пауза',
+  COMPLETED: 'Завершена',
 };
 
 function getStaffFullName(staff: StaffDto | null): string {
@@ -105,6 +127,7 @@ export default function ClassDetailsPage() {
   const [addSearch, setAddSearch] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentsPage, setStudentsPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<ClassDetailsTab>('students');
 
   const { data, loading, error, refetch } = useApi<ClassDetailsData | null>(async () => {
     if (!classId) {
@@ -125,10 +148,11 @@ export default function ClassDetailsPage() {
       return { data: null };
     }
 
-    const [teacherResult, roomResult, studentsPage] = await Promise.all([
+    const [teacherResult, roomResult, studentsPage, schedulesResult] = await Promise.all([
       course.teacherId ? staffService.getById(course.teacherId).catch(() => null) : Promise.resolve(null),
       course.roomId ? roomsService.getById(course.roomId).catch(() => null) : Promise.resolve(null),
       studentsService.getAll({ page: 0, size: 2000 }).catch(() => null),
+      schedulesService.getAll({ page: 0, size: 500, courseId: classId }).catch(() => null),
     ]);
 
     const allStudents = (studentsPage?.data.content ?? []).slice();
@@ -144,12 +168,16 @@ export default function ClassDetailsPage() {
         room: roomResult?.data ?? null,
         students,
         allStudents,
+        schedules: schedulesResult?.data.content ?? [],
       },
     };
   }, [classId]);
 
-  const addStudentMutation = useMutation(({ id, studentIds }: { id: string; studentIds: string[] }) =>
-    coursesService.update(id, { studentIds })
+  const addStudentMutation = useMutation(({ courseId: id, studentId }: { courseId: string; studentId: string }) =>
+    coursesService.enrollStudent(id, studentId)
+  );
+  const removeStudentMutation = useMutation(({ courseId: id, studentId }: { courseId: string; studentId: string }) =>
+    coursesService.removeStudent(id, studentId)
   );
   const updateCourseMutation = useMutation(({ id, data }: { id: string; data: CourseDto & { status?: CourseStatus } }) =>
     coursesService.update(id, {
@@ -174,12 +202,21 @@ export default function ClassDetailsPage() {
   const course = data?.course ?? null;
   const teacher = data?.teacher ?? null;
   const room = data?.room ?? null;
-  const students = data?.students ?? [];
-  const allStudents = data?.allStudents ?? [];
+  const students = useMemo(() => data?.students ?? [], [data?.students]);
+  const allStudents = useMemo(() => data?.allStudents ?? [], [data?.allStudents]);
+  const schedules = useMemo(() => data?.schedules ?? [], [data?.schedules]);
 
   const typeLabel = course ? COURSE_TYPES.find((item) => item.value === course.type)?.label ?? course.type : '—';
   const formatLabel = course ? COURSE_FORMATS.find((item) => item.value === course.format)?.label ?? course.format : '—';
   const statusConfig = course ? COURSE_STATUSES.find((item) => item.value === course.status) : undefined;
+  const teacherMap = useMemo(
+    () => new Map((teachersData?.content ?? []).map((teacherItem) => [teacherItem.id, getStaffFullName(teacherItem)])),
+    [teachersData]
+  );
+  const roomMap = useMemo(
+    () => new Map((roomsData?.content ?? []).map((roomItem) => [roomItem.id, roomItem.name])),
+    [roomsData]
+  );
 
   const filteredStudents = useMemo(() => {
     const query = studentSearch.trim().toLowerCase();
@@ -193,10 +230,6 @@ export default function ClassDetailsPage() {
       return name.includes(query) || phone.includes(query) || student.id.toLowerCase().includes(query);
     });
   }, [studentSearch, students]);
-
-  useEffect(() => {
-    setStudentsPage(1);
-  }, [studentSearch, students.length]);
 
   const totalStudentPages = Math.max(1, Math.ceil(filteredStudents.length / 10));
   const currentStudentsPage = Math.min(studentsPage, totalStudentPages);
@@ -234,6 +267,27 @@ export default function ClassDetailsPage() {
     () => allStudents.map((studentItem) => ({ id: studentItem.id, name: getStudentFullName(studentItem) })),
     [allStudents]
   );
+  const scheduleRows = useMemo(
+    () =>
+      schedules
+        .slice()
+        .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.startTime.localeCompare(right.startTime))
+        .map((schedule) => ({
+          id: schedule.id,
+          name: schedule.name,
+          teacherName: schedule.teacherId
+            ? teacherMap.get(schedule.teacherId) || '—'
+            : getStaffFullName(teacher),
+          roomName: schedule.roomId
+            ? roomMap.get(schedule.roomId) || '—'
+            : room?.name || '—',
+          daysText: formatScheduleDays(schedule.daysOfWeek),
+          timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
+          periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
+          status: schedule.status,
+        })),
+    [room?.name, roomMap, schedules, teacher, teacherMap]
+  );
 
   if (loading) {
     return (
@@ -266,11 +320,19 @@ export default function ClassDetailsPage() {
       return;
     }
 
-    const nextIds = Array.from(new Set([...(course.studentIds ?? []), selectedStudentId]));
-    await addStudentMutation.mutate({ id: course.id, studentIds: nextIds });
+    await addStudentMutation.mutate({ courseId: course.id, studentId: selectedStudentId });
     setAddModalOpen(false);
     setSelectedStudentId(null);
     setAddSearch('');
+    await refetch();
+  };
+
+  const handleRemoveStudent = async (studentId: string) => {
+    if (!course || !confirm('Удалить ученика из курса?')) {
+      return;
+    }
+
+    await removeStudentMutation.mutate({ courseId: course.id, studentId });
     await refetch();
   };
 
@@ -399,101 +461,175 @@ export default function ClassDetailsPage() {
         </div>
       </div>
 
-      <div className="crm-table-wrap overflow-hidden">
-        <div className="border-b border-[#e6ebf0] px-6 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-medium text-gray-700">
-              Найдено участников: <span className="font-semibold text-gray-900">{filteredStudents.length}</span>
+      <div className="crm-surface p-4">
+        <Tabs
+          tabs={classDetailsTabs}
+          activeTab={activeTab}
+          onTabChange={(tabId) => setActiveTab(tabId as ClassDetailsTab)}
+          className="w-fit"
+          aria-label="Вкладки карточки курса"
+        />
+      </div>
+
+      {activeTab === 'students' && (
+        <div className="crm-table-wrap overflow-hidden">
+          <div className="border-b border-[#e6ebf0] px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-medium text-gray-700">
+                Найдено участников: <span className="font-semibold text-gray-900">{filteredStudents.length}</span>
+              </p>
+
+              <div className="relative w-full max-w-xl">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a94a3]" />
+                <input
+                  type="text"
+                  value={studentSearch}
+                  onChange={(event) => {
+                    setStudentsPage(1);
+                    setStudentSearch(event.target.value);
+                  }}
+                  placeholder="Поиск по ученику, телефону или ID"
+                  className="crm-input crm-input-with-icon"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="crm-table-head">
+                <tr>
+                  <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Ученик</th>
+                  <th className="crm-table-th">Контакт</th>
+                  <th className="crm-table-th">Статус</th>
+                  <th className="crm-table-th">Действия</th>
+                </tr>
+              </thead>
+              <tbody className="crm-table-body">
+                {visibleStudents.length > 0 ? (
+                  visibleStudents.map((student, index) => (
+                    <tr key={student.id} className="crm-table-row">
+                      <td className="crm-table-cell">{(currentStudentsPage - 1) * 10 + index + 1}</td>
+                      <td className="crm-table-cell">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-semibold text-[#273142]">{getStudentFullName(student)}</div>
+                          <div className="text-xs text-[#8a93a3]">ID: {student.id}</div>
+                        </div>
+                      </td>
+                      <td className="crm-table-cell">{getStudentPrimaryContact(student)}</td>
+                      <td className="crm-table-cell">
+                        <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${STUDENT_STATUS_COLORS[student.status]}`}>
+                          {STUDENT_STATUS_LABELS[student.status]}
+                        </span>
+                      </td>
+                      <td className="crm-table-cell">
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            href={`/students/${student.id}`}
+                            className="inline-flex rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
+                            title="Карточка ученика"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveStudent(student.id)}
+                            disabled={removeStudentMutation.loading}
+                            className="inline-flex rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            title="Удалить из курса"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr className="crm-table-row">
+                    <td colSpan={5} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      Участники не найдены
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e6ebf0] px-6 py-4">
+            <p className="text-sm text-[#7f8794]">
+              Страница <span className="font-semibold text-[#1f2530]">{currentStudentsPage}</span> из{' '}
+              <span className="font-semibold text-[#1f2530]">{totalStudentPages}</span>
             </p>
 
-            <div className="relative w-full max-w-xl">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a94a3]" />
-              <input
-                type="text"
-                value={studentSearch}
-                onChange={(event) => setStudentSearch(event.target.value)}
-                placeholder="Поиск по ученику, телефону или ID"
-                className="crm-input crm-input-with-icon"
-              />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setStudentsPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentStudentsPage <= 1}
+              >
+                Назад
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setStudentsPage((prev) => Math.min(totalStudentPages, prev + 1))}
+                disabled={currentStudentsPage >= totalStudentPages}
+              >
+                Вперед
+              </Button>
             </div>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="crm-table-head">
-              <tr>
-                <th className="crm-table-th">#</th>
-                <th className="crm-table-th">Ученик</th>
-                <th className="crm-table-th">Контакт</th>
-                <th className="crm-table-th">Статус</th>
-                <th className="crm-table-th">Действия</th>
-              </tr>
-            </thead>
-            <tbody className="crm-table-body">
-              {visibleStudents.length > 0 ? (
-                visibleStudents.map((student, index) => (
-                  <tr key={student.id} className="crm-table-row">
-                    <td className="crm-table-cell">{(currentStudentsPage - 1) * 10 + index + 1}</td>
-                    <td className="crm-table-cell">
-                      <div className="space-y-0.5">
-                        <div className="text-sm font-semibold text-[#273142]">{getStudentFullName(student)}</div>
-                        <div className="text-xs text-[#8a93a3]">ID: {student.id}</div>
-                      </div>
-                    </td>
-                    <td className="crm-table-cell">{getStudentPrimaryContact(student)}</td>
-                    <td className="crm-table-cell">
-                      <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${STUDENT_STATUS_COLORS[student.status]}`}>
-                        {STUDENT_STATUS_LABELS[student.status]}
-                      </span>
-                    </td>
-                    <td className="crm-table-cell">
-                      <Link
-                        href={`/students/${student.id}`}
-                        className="inline-flex rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
-                        title="Карточка ученика"
-                      >
-                        <FileText className="h-4 w-4" />
-                      </Link>
+      )}
+
+      {activeTab === 'schedule' && (
+        <div className="crm-table-wrap overflow-hidden">
+          <div className="border-b border-[#e6ebf0] px-6 py-4">
+            <p className="text-sm font-medium text-gray-700">
+              Расписаний курса: <span className="font-semibold text-gray-900">{scheduleRows.length}</span>
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="crm-table-head">
+                <tr>
+                  <th className="crm-table-th">#</th>
+                  <th className="crm-table-th">Группа</th>
+                  <th className="crm-table-th">Преподаватель</th>
+                  <th className="crm-table-th">Кабинет</th>
+                  <th className="crm-table-th">Дни</th>
+                  <th className="crm-table-th">Время</th>
+                  <th className="crm-table-th">Период</th>
+                  <th className="crm-table-th">Статус</th>
+                </tr>
+              </thead>
+              <tbody className="crm-table-body">
+                {scheduleRows.length > 0 ? (
+                  scheduleRows.map((schedule, index) => (
+                    <tr key={schedule.id} className="crm-table-row">
+                      <td className="crm-table-cell">{index + 1}</td>
+                      <td className="crm-table-cell font-medium text-[#273142]">{schedule.name}</td>
+                      <td className="crm-table-cell">{schedule.teacherName}</td>
+                      <td className="crm-table-cell">{schedule.roomName}</td>
+                      <td className="crm-table-cell">{schedule.daysText}</td>
+                      <td className="crm-table-cell">{schedule.timeText}</td>
+                      <td className="crm-table-cell">{schedule.periodText}</td>
+                      <td className="crm-table-cell">{SCHEDULE_STATUS_LABELS[schedule.status]}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr className="crm-table-row">
+                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      Для курса пока не найдено расписаний
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr className="crm-table-row">
-                  <td colSpan={5} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
-                    Участники не найдены
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e6ebf0] px-6 py-4">
-          <p className="text-sm text-[#7f8794]">
-            Страница <span className="font-semibold text-[#1f2530]">{currentStudentsPage}</span> из{' '}
-            <span className="font-semibold text-[#1f2530]">{totalStudentPages}</span>
-          </p>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setStudentsPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentStudentsPage <= 1}
-            >
-              Назад
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setStudentsPage((prev) => Math.min(totalStudentPages, prev + 1))}
-              disabled={currentStudentsPage >= totalStudentPages}
-            >
-              Вперед
-            </Button>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
+      )}
 
       <AddClassModal
         isOpen={editModalOpen}

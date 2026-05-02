@@ -190,6 +190,10 @@ export default function StudentPaymentsPage() {
       ),
     [studentsPage]
   );
+  const studentDiscountMap = useMemo(
+    () => new Map((studentsPage?.content ?? []).map((student) => [student.id, student.discountPercent ?? null])),
+    [studentsPage]
+  );
   const courseMap = useMemo(
     () => new Map((coursesPage?.content ?? []).map((course) => [course.id, course.name])),
     [coursesPage]
@@ -639,6 +643,7 @@ export default function StudentPaymentsPage() {
                     <th className="crm-table-th">#</th>
                     <th className="crm-table-th">Ученик / абонемент</th>
                     <th className="crm-table-th">Общий долг</th>
+                    <th className="crm-table-th">Скидка</th>
                     <th className="crm-table-th">Глубина долга</th>
                     <th className="crm-table-th">Ежемесячный платёж</th>
                     <th className="crm-table-th">Действия</th>
@@ -667,6 +672,16 @@ export default function StudentPaymentsPage() {
                             </div>
                           </td>
                           <td className="crm-table-cell text-rose-700">{formatMoney(item.totalDebt)}</td>
+                          <td className="crm-table-cell">
+                            {(() => {
+                              const pct = item.discountPercent ?? studentDiscountMap.get(item.studentId) ?? null;
+                              return pct != null && pct > 0 ? (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                  {pct}%
+                                </span>
+                              ) : '—';
+                            })()}
+                          </td>
                           <td className="crm-table-cell">
                             <div className="flex flex-wrap items-center gap-2">
                               <span

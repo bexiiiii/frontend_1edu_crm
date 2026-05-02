@@ -23,6 +23,7 @@ import {
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { ScheduleCalendarItem, ScheduleFormValues } from '@/types/schedule';
+import { useAuthStore } from '@/store/authStore';
 
 const EVENT_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#ec4899', '#467aff'];
 
@@ -176,9 +177,12 @@ export default function Schedule() {
     () => coursesService.getAll({ page: 0, size: 500 }),
     []
   );
+  const { roles, permissions } = useAuthStore();
+  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
+
   const { data: teachersData, loading: teachersLoading } = useApi(
-    () => staffService.getTeachers({ page: 0, size: 300 }),
-    []
+    () => (canViewStaff ? staffService.getTeachers({ page: 0, size: 300 }) : Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 300 })),
+    [canViewStaff]
   );
   const { data: roomsData, loading: roomsLoading } = useApi(
     () => roomsService.getAll({ page: 0, size: 300 }),

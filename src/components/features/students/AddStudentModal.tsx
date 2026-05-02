@@ -48,8 +48,11 @@ function getDefaultValues(): StudentFormValues {
     grade: '',
     additionalInfo: '',
     contract: '',
+    discount: '',
+    discountPercent: '',
     comment: '',
     stateOrderParticipant: false,
+    loyalty: '',
     additionalPhones: '',
     notes: '',
   };
@@ -101,6 +104,7 @@ export const AddStudentModal = ({
   const [grade, setGrade] = useState(defaults.grade);
   const [additionalInfo, setAdditionalInfo] = useState(defaults.additionalInfo);
   const [contract, setContract] = useState(defaults.contract);
+  const [discountPercent, setDiscountPercent] = useState<number | ''>(defaults.discountPercent ?? '');
   const [comment, setComment] = useState(defaults.comment);
   const [stateOrderParticipant, setStateOrderParticipant] = useState(defaults.stateOrderParticipant);
   const [additionalPhones, setAdditionalPhones] = useState(defaults.additionalPhones);
@@ -171,6 +175,7 @@ export const AddStudentModal = ({
       grade: grade.trim() || undefined,
       additionalInfo: additionalInfo.trim() || undefined,
       contract: contract.trim() || undefined,
+      discountPercent: discountPercent !== '' ? Number(discountPercent) : undefined,
       comment: comment.trim() || undefined,
       stateOrderParticipant,
       additionalPhones: additionalPhones
@@ -395,6 +400,37 @@ export const AddStudentModal = ({
             onChange={(event) => setGrade(event.target.value)}
             placeholder="9"
           />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">
+              Скидка
+              <span className="ml-1 text-[#8c95a3]">(опционально)</span>
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={discountPercent}
+                onChange={(event) => {
+                  const v = event.target.value;
+                  if (v === '') { setDiscountPercent(''); return; }
+                  const n = Math.min(100, Math.max(0, Number(v)));
+                  setDiscountPercent(n);
+                }}
+                placeholder="0"
+                className="crm-input w-full pr-10"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-[#8c95a3]">%</span>
+            </div>
+            {discountPercent !== '' && Number(discountPercent) > 0 && (
+              <p className="mt-1 text-xs text-emerald-600">
+                {Number(discountPercent) === 100 ? 'Студент освобождён от оплаты' : `Ожидаемый взнос снижен на ${discountPercent}%`}
+              </p>
+            )}
+          </div>
         </div>
 
         <Input

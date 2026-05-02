@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Mail } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -76,7 +77,6 @@ export const AddUserModal = ({
   const [firstName, setFirstName] = useState(initialValue?.firstName ?? '');
   const [lastName, setLastName] = useState(initialValue?.lastName ?? '');
   const [email, setEmail] = useState(initialValue?.email ?? '');
-  const [password, setPassword] = useState('');
   const [role, setRole] = useState(initialValue?.role ?? 'TEACHER');
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>(
     initialValue?.branchIds?.length
@@ -91,7 +91,6 @@ export const AddUserModal = ({
     firstName?: boolean;
     lastName?: boolean;
     email?: boolean;
-    password?: boolean;
     branchIds?: boolean;
   }>({});
 
@@ -127,12 +126,6 @@ export const AddUserModal = ({
       return;
     }
 
-    if (!isEditing && !password.trim()) {
-      setFieldErrors({ password: true });
-      pushToast({ message: 'Пароль обязателен при создании пользователя.', tone: 'error' });
-      return;
-    }
-
     if (branchOptions.length > 0 && selectedBranchIds.length === 0) {
       setFieldErrors({ branchIds: true });
       pushToast({ message: 'Выберите хотя бы один филиал.', tone: 'error' });
@@ -146,7 +139,6 @@ export const AddUserModal = ({
         email: email.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        password: isEditing ? undefined : password.trim(),
         role,
         staffId: selectedStaffId || null,
         branchIds: selectedBranchIds,
@@ -156,7 +148,6 @@ export const AddUserModal = ({
       setFirstName('');
       setLastName('');
       setEmail('');
-      setPassword('');
       setRole('TEACHER');
       setSelectedStaffId('');
       setSelectedBranchIds(defaultBranchId ? [defaultBranchId] : []);
@@ -306,22 +297,7 @@ export const AddUserModal = ({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {!isEditing ? (
-            <Input
-              label="Пароль"
-              type="password"
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-                setFieldErrors((prev) => ({ ...prev, password: false }));
-              }}
-              placeholder="Введите пароль"
-              error={Boolean(fieldErrors.password)}
-            />
-          ) : (
-            <div />
-          )}
+        <div>
           <Select
             label="Роль"
             value={role}
@@ -334,6 +310,18 @@ export const AddUserModal = ({
             ))}
           </Select>
         </div>
+
+        {!isEditing && (
+          <div className="flex items-start gap-3 rounded-xl border border-[#cad8ff] bg-[#f1f6ff] px-4 py-3">
+            <Mail className="mt-0.5 h-5 w-5 shrink-0 text-[#467aff]" />
+            <div className="text-sm text-[#315fd0]">
+              <p className="font-semibold">Данные для входа отправятся на email</p>
+              <p className="mt-0.5 text-[#5d6676]">
+                Логин и сгенерированный пароль будут высланы на указанный email{email.trim() ? <> — <span className="font-semibold text-[#1f2530]">{email.trim()}</span></> : ''}. Пользователь сможет сменить пароль после первого входа.
+              </p>
+            </div>
+          </div>
+        )}
 
       </div>
     </Modal>

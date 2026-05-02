@@ -4,6 +4,7 @@ import type {
   PageResponse,
   PaginationParams,
   CourseDto,
+  CourseEnrollmentDto,
   CourseStatus,
   CourseType,
   CreateCourseRequest,
@@ -57,6 +58,24 @@ export const coursesService = {
     const response = await api.get<ApiResponse<PageResponse<CourseDto>>>(
       `/api/v1/courses/teacher/${teacherId}`, { params }
     );
+    return response.data;
+  },
+
+  /** Enroll a student into a course */
+  async enrollStudent(courseId: string, studentId: string) {
+    const response = await api.post<ApiResponse<CourseDto>>(`/api/v1/courses/${courseId}/students/${studentId}`);
+    return response.data;
+  },
+
+  /** Remove a student from a course */
+  async removeStudent(courseId: string, studentId: string) {
+    const response = await api.delete<ApiResponse<CourseDto>>(`/api/v1/courses/${courseId}/students/${studentId}`);
+    return response.data;
+  },
+
+  /** Get enrollment history for a student */
+  async getStudentEnrollments(studentId: string) {
+    const response = await api.get<ApiResponse<CourseEnrollmentDto[]>>(`/api/v1/courses/student/${studentId}/enrollments`);
     return response.data;
   },
 };

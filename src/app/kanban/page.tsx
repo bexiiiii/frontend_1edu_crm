@@ -15,6 +15,7 @@ import {
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { LeadDto, LeadStage } from '@/lib/api/types';
+import { useAuthStore } from '@/store/authStore';
 
 type LeadFormValues = {
   firstName: string;
@@ -670,7 +671,13 @@ export default function KanbanPage() {
     };
   }, [search]);
 
-  const { data: staffPage } = useApi(() => staffService.getAll({ page: 0, size: 500 }), []);
+  const { roles, permissions } = useAuthStore();
+  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
+
+  const { data: staffPage } = useApi(
+    () => (canViewStaff ? staffService.getAll({ page: 0, size: 500 }) : Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 })),
+    [canViewStaff]
+  );
 
   const staffOptions = useMemo(
     () =>

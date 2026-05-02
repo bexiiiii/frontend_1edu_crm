@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { PAYMENT_METHOD_LABELS } from '@/constants/finance';
+import { studentPaymentsService } from '@/lib/api/finance';
 import type {
   CreateStudentPaymentRequest,
   PaymentMethod,
@@ -81,6 +83,10 @@ export const AddStudentPaymentModal = ({
   const [notes, setNotes] = useState(initialValues?.notes || '');
   const [error, setError] = useState<string | null>(null);
 
+  const [usePartialCalc, setUsePartialCalc] = useState(false);
+  const [partialLoading, setPartialLoading] = useState(false);
+  const [partialResult, setPartialResult] = useState<{ suggestedAmount: number; remainingDebt: number } | null>(null);
+
   const selectedStudent = useMemo(
     () => students.find((student) => student.id === studentId) || null,
     [studentId, students]
@@ -94,6 +100,26 @@ export const AddStudentPaymentModal = ({
     setStudentId(nextStudentId);
     const nextSubscription = subscriptions.find((subscription) => subscription.studentId === nextStudentId);
     setSubscriptionId(nextSubscription?.id || '');
+    setPartialResult(null);
+  };
+
+  const handlePartialCalcToggle = async (checked: boolean) => {
+    setUsePartialCalc(checked);
+    setPartialResult(null);
+    if (!checked) return;
+    if (!subscriptionId || !paymentMonth) return;
+
+    setPartialLoading(true);
+    try {
+      const res = await studentPaymentsService.calculatePartial({ subscriptionId, month: paymentMonth });
+      const data = res.data;
+      setPartialResult(data);
+      setAmount(String(data.suggestedAmount));
+    } catch {
+      // silently ignore — user can still type amount manually
+    } finally {
+      setPartialLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -173,7 +199,7 @@ export const AddStudentPaymentModal = ({
           )}
         </div>
 
-        <Select label="Абонемент" value={subscriptionId} onChange={(event) => setSubscriptionId(event.target.value)}>
+        <Select label="Абонемент" value={subscriptionId} onChange={(event) => { setSubscriptionId(event.target.value); setPartialResult(null); }}>
           <option value="">Выберите абонемент</option>
           {availableSubscriptions.map((subscription) => (
             <option key={subscription.id} value={subscription.id}>
@@ -183,13 +209,32 @@ export const AddStudentPaymentModal = ({
         </Select>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
-            label="Сумма"
-            type="number"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            placeholder="0"
-          />
+          <div>
+            <Input
+              label="Сумма"
+              type="number"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              placeholder="0"
+            />
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-[#5d6676]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[#c8d2dc] accent-[#2f6feb]"
+                checked={usePartialCalc}
+                onChange={(event) => void handlePartialCalcToggle(event.target.checked)}
+                disabled={!subscriptionId || !paymentMonth || partialLoading}
+              />
+              {partialLoading ? (
+                <span className="flex items-center gap-1.5 text-[#2f6feb]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Рассчитываем...
+                </span>
+              ) : (
+                'Рассчитать остаток'
+              )}
+            </label>
+          </div>
           <Select label="Метод оплаты" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>
             {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
@@ -198,6 +243,13 @@ export const AddStudentPaymentModal = ({
             ))}
           </Select>
         </div>
+
+        {partialResult && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            <div>Рекомендуемая сумма: <span className="font-semibold">{partialResult.suggestedAmount.toLocaleString('ru-RU')} ₸</span></div>
+            <div className="mt-0.5 text-blue-600">Остаток долга после оплаты: {partialResult.remainingDebt.toLocaleString('ru-RU')} ₸</div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
@@ -210,7 +262,7 @@ export const AddStudentPaymentModal = ({
             label="Месяц оплаты"
             type="month"
             value={paymentMonth}
-            onChange={(event) => setPaymentMonth(event.target.value)}
+            onChange={(event) => { setPaymentMonth(event.target.value); setPartialResult(null); setUsePartialCalc(false); }}
           />
         </div>
 

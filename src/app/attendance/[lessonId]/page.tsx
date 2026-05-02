@@ -798,7 +798,6 @@ export default function AttendanceLessonPage() {
               {data.groupName !== 'Без группы' ? data.groupName : 'Урок без группы'}
             </p>
             <p className="mt-1 text-sm text-[#667084]">
-              {formatShortRuDate(data.lesson.lessonDate)} •{' '}
               {formatTimeRange(data.lesson.startTime, data.lesson.endTime)}
             </p>
           </div>

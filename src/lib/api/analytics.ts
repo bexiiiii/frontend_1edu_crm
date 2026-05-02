@@ -7,7 +7,9 @@ import type {
   RoomLoadResponse,
   RetentionResponse,
   TeacherAnalyticsResponse,
+  TeacherCourseDto,
   GroupAttendanceResponse,
+  TeacherCourseAttendanceResponse,
   FinanceReportResponse,
   SubscriptionReportResponse,
   SalesFunnelResponse,
@@ -172,6 +174,33 @@ export const analyticsService = {
     return downloadAnalyticsExport('/api/v1/analytics/group-attendance/export', 'group-attendance-report.xlsx', params);
   },
 
+  /** Get teacher course attendance details for month */
+  async getTeacherCourseAttendance(params: { teacherId: string; courseId: string; month?: string }) {
+    const response = await api.get<ApiResponse<TeacherCourseAttendanceResponse>>(
+      '/api/v1/analytics/teacher-course-attendance',
+      { params }
+    );
+    return response.data;
+  },
+
+  /** Get teacher courses for the attendance dropdown */
+  async getTeacherCourseAttendanceCourses(params: { teacherId: string }) {
+    const response = await api.get<ApiResponse<TeacherCourseDto[]>>(
+      '/api/v1/analytics/teacher-course-attendance/courses',
+      { params }
+    );
+    return response.data;
+  },
+
+  /** Download teacher course attendance report (xlsx) */
+  async exportTeacherCourseAttendance(params: { teacherId: string; courseId: string; month?: string }) {
+    return downloadAnalyticsExport(
+      '/api/v1/analytics/teacher-course-attendance/export',
+      'teacher-course-attendance.xlsx',
+      params
+    );
+  },
+
   /** Get branch analytics */
   async getBranches(params?: { from?: string; to?: string }) {
     const response = await api.get<ApiResponse<BranchAnalyticsResponse>>('/api/v1/analytics/branches', { params });
@@ -180,6 +209,6 @@ export const analyticsService = {
 
   /** Download branch analytics report (xlsx) */
   async exportBranches(params?: { from?: string; to?: string }) {
-    return downloadAnalyticsExport('/api/v1/analytics/branches/export', 'branch-analytics-report.xlsx', params);
+    return downloadAnalyticsExport('/api/v1/analytics/branches/export', 'branch-analytics.xlsx', params);
   },
 };

@@ -5,6 +5,63 @@ import { Input } from '@/components/ui/Input';
 import { pushToast } from '@/lib/toast';
 import type { Role } from '@/types/settings';
 
+const ROLE_LABELS_RU: Record<string, string> = {
+  TENANT_ADMIN: 'Администратор тенанта',
+  MANAGER: 'Руководитель',
+  RECEPTIONIST: 'Администратор ресепшена',
+  TEACHER: 'Преподаватель',
+  ACCOUNTANT: 'Бухгалтер',
+};
+
+const PERMISSION_LABELS_RU: Record<string, string> = {
+  STUDENTS_VIEW: 'Просмотр учеников',
+  STUDENTS_CREATE: 'Создание учеников',
+  STUDENTS_EDIT: 'Редактирование учеников',
+  STUDENTS_DELETE: 'Удаление учеников',
+  GROUPS_VIEW: 'Просмотр групп',
+  GROUPS_CREATE: 'Создание групп',
+  GROUPS_EDIT: 'Редактирование групп',
+  GROUPS_DELETE: 'Удаление групп',
+  ROOMS_VIEW: 'Просмотр кабинетов',
+  ROOMS_CREATE: 'Создание кабинетов',
+  ROOMS_EDIT: 'Редактирование кабинетов',
+  ROOMS_DELETE: 'Удаление кабинетов',
+  LESSONS_VIEW: 'Просмотр занятий',
+  LESSONS_CREATE: 'Создание занятий',
+  LESSONS_EDIT: 'Редактирование занятий',
+  LESSONS_DELETE: 'Удаление занятий',
+  LESSONS_MARK_ATTENDANCE: 'Отметка посещаемости',
+  LEADS_VIEW: 'Просмотр лидов',
+  LEADS_CREATE: 'Создание лидов',
+  LEADS_EDIT: 'Редактирование лидов',
+  LEADS_DELETE: 'Удаление лидов',
+  FINANCE_VIEW: 'Просмотр финансов',
+  FINANCE_CREATE: 'Создание финансовых операций',
+  FINANCE_EDIT: 'Редактирование финансовых операций',
+  SUBSCRIPTIONS_VIEW: 'Просмотр абонементов',
+  SUBSCRIPTIONS_CREATE: 'Создание абонементов',
+  SUBSCRIPTIONS_EDIT: 'Редактирование абонементов',
+  PRICE_LISTS_VIEW: 'Просмотр прайс-листов',
+  PRICE_LISTS_CREATE: 'Создание прайс-листов',
+  PRICE_LISTS_EDIT: 'Редактирование прайс-листов',
+  PRICE_LISTS_DELETE: 'Удаление прайс-листов',
+  TASKS_VIEW: 'Просмотр задач',
+  TASKS_CREATE: 'Создание задач',
+  TASKS_EDIT: 'Редактирование задач',
+  TASKS_DELETE: 'Удаление задач',
+  STAFF_VIEW: 'Просмотр сотрудников',
+  STAFF_CREATE: 'Создание сотрудников',
+  STAFF_EDIT: 'Редактирование сотрудников',
+  STAFF_DELETE: 'Удаление сотрудников',
+  ANALYTICS_VIEW: 'Просмотр аналитики',
+  REPORTS_VIEW: 'Просмотр отчётов',
+  SETTINGS_VIEW: 'Просмотр настроек',
+  SETTINGS_EDIT: 'Редактирование настроек',
+  INVENTORY_VIEW: 'Просмотр склада',
+  INVENTORY_EDIT: 'Редактирование склада',
+  INVENTORY_DELETE: 'Удаление со склада',
+};
+
 export interface RoleFormPayload {
   id?: string;
   name: string;
@@ -49,6 +106,8 @@ export const EditRoleModal = ({
   const [permissions, setPermissions] = useState<string[]>(role?.permissions || []);
   const [nameError, setNameError] = useState(false);
 
+  const getRoleLabel = (value: string) => ROLE_LABELS_RU[value] || value;
+
   const togglePermission = (permission: string) => {
     setPermissions((prev) =>
       prev.includes(permission)
@@ -82,7 +141,7 @@ export const EditRoleModal = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={role ? `Редактирование роли — ${role.name}` : 'Создать роль'}
+      title={role ? `Редактирование роли — ${getRoleLabel(role.name)}` : 'Создать роль'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
@@ -116,7 +175,7 @@ export const EditRoleModal = ({
         </div>
 
         <div>
-          <h3 className="mb-3 text-sm font-semibold text-gray-900">Permissions</h3>
+          <h3 className="mb-3 text-sm font-semibold text-gray-900">Права доступа</h3>
           <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] p-4">
             {availablePermissions.map((permission) => (
               <label key={permission} className="flex items-center gap-3 cursor-pointer">
@@ -126,7 +185,7 @@ export const EditRoleModal = ({
                   onChange={() => togglePermission(permission)}
                   className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
                 />
-                <span className="text-sm text-gray-700">{permission}</span>
+                <span className="text-sm text-gray-700">{PERMISSION_LABELS_RU[permission] || permission}</span>
               </label>
             ))}
           </div>

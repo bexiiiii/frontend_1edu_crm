@@ -60,18 +60,6 @@ export default function NotificationsPage() {
     status: 'all',
   });
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null);
-  const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
-  const [broadcastForm, setBroadcastForm] = useState({
-    subject: '',
-    body: '',
-    alsoEmail: true,
-  });
-  const [broadcastLoading, setBroadcastLoading] = useState(false);
-
-  const canBroadcastToAllUsers = useMemo(
-    () => roles.includes('TENANT_ADMIN') || roles.includes('SUPER_ADMIN'),
-    [roles]
-  );
 
   const {
     data: notifications,
@@ -94,46 +82,6 @@ export default function NotificationsPage() {
     TABLE_PAGE_SIZE,
     [filters.type, filters.status]
   );
-
-  const handleBroadcast = async () => {
-    const subject = broadcastForm.subject.trim();
-    const body = broadcastForm.body.trim();
-
-    if (!subject) {
-      pushToast({ message: 'Укажите тему уведомления.', tone: 'warning' });
-      return;
-    }
-
-    if (!body) {
-      pushToast({ message: 'Введите текст уведомления.', tone: 'warning' });
-      return;
-    }
-
-    setBroadcastLoading(true);
-    try {
-      const response = await notificationsService.broadcast({
-        subject,
-        body,
-        alsoEmail: broadcastForm.alsoEmail,
-      });
-
-      pushToast({
-        tone: 'success',
-        message: `Уведомление отправлено. Получателей: ${response.data.recipients}.`,
-      });
-
-      setBroadcastForm({ subject: '', body: '', alsoEmail: true });
-      setIsBroadcastModalOpen(false);
-      await refetch();
-    } catch (error: unknown) {
-      pushToast({
-        tone: 'error',
-        message: getErrorMessage(error, 'Не удалось отправить уведомление всем пользователям.'),
-      });
-    } finally {
-      setBroadcastLoading(false);
-    }
-  };
 
   const {
     data: selectedNotification,
@@ -179,11 +127,6 @@ export default function NotificationsPage() {
           <div>
             <h2 className="text-lg font-semibold text-[#202938]">Журнал уведомлений</h2>
           </div>
-          {canBroadcastToAllUsers ? (
-            <Button onClick={() => setIsBroadcastModalOpen(true)}>
-              Отправить всем
-            </Button>
-          ) : null}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -388,52 +331,6 @@ export default function NotificationsPage() {
             ) : null}
           </div>
         )}
-      </Modal>
-
-      <Modal
-        isOpen={canBroadcastToAllUsers && isBroadcastModalOpen}
-        onClose={() => setIsBroadcastModalOpen(false)}
-        title="Отправка всем пользователям"
-        footer={(
-          <>
-            <Button variant="ghost" onClick={() => setIsBroadcastModalOpen(false)}>
-              Отмена
-            </Button>
-            <Button onClick={() => void handleBroadcast()} disabled={broadcastLoading}>
-              {broadcastLoading ? 'Отправляем...' : 'Отправить всем'}
-            </Button>
-          </>
-        )}
-      >
-        <p className="text-sm text-[#7f8794]">
-          Отправьте общее уведомление сотрудникам вашего учебного центра.
-        </p>
-        <input
-          type="text"
-          value={broadcastForm.subject}
-          onChange={(event) => setBroadcastForm((prev) => ({ ...prev, subject: event.target.value }))}
-          placeholder="Тема уведомления"
-          className="crm-input"
-          maxLength={255}
-        />
-
-        <textarea
-          value={broadcastForm.body}
-          onChange={(event) => setBroadcastForm((prev) => ({ ...prev, body: event.target.value }))}
-          placeholder="Текст уведомления"
-          className="crm-textarea min-h-30"
-          maxLength={2000}
-        />
-
-        <label className="inline-flex items-center gap-2 text-sm text-[#556070]">
-          <input
-            type="checkbox"
-            checked={broadcastForm.alsoEmail}
-            onChange={(event) => setBroadcastForm((prev) => ({ ...prev, alsoEmail: event.target.checked }))}
-            className="h-4 w-4 rounded border-[#c9d3e0] text-[#467aff]"
-          />
-          Также отправить по email
-        </label>
       </Modal>
     </div>
   );

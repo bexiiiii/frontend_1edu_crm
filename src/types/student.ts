@@ -23,6 +23,7 @@ export interface StudentListItem {
   additionalInfo: string;
   contract: string;
   discount: string;
+  discountPercent: number | null;
   comment: string;
   stateOrderParticipant: boolean;
   loyalty: string;
@@ -54,6 +55,7 @@ export interface StudentFormValues {
   additionalInfo: string;
   contract: string;
   discount: string;
+  discountPercent: number | '';
   comment: string;
   stateOrderParticipant: boolean;
   loyalty: string;

@@ -111,6 +111,10 @@ export default function Header({
 
   // Sync with zustand auth store branchId
   const storeBranchId = useAuthStore((s) => s.branchId);
+  const storeBranchIds = useAuthStore((s) => s.branchIds);
+  const storeRoles = useAuthStore((s) => s.roles);
+  const isTenantAdmin = storeRoles.includes('TENANT_ADMIN');
+  const canSwitchBranch = isTenantAdmin || storeBranchIds.length > 1;
   useEffect(() => {
     if (storeBranchId && storeBranchId !== selectedBranchId) {
       setSelectedBranchId(storeBranchId);
@@ -330,7 +334,7 @@ export default function Header({
     try {
       const parsed = JSON.parse(authRaw) as Record<string, unknown>;
       const currentBranchIds = Array.isArray(parsed.branchIds)
-        ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim())
+        ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [];
 
       const nextBranchIds = currentBranchIds.includes(branchId)
@@ -349,11 +353,21 @@ export default function Header({
   };
 
   const handleBranchSelect = (branchId: string) => {
-    setSelectedBranchId(branchId);
     setIsBranchMenuOpen(false);
     persistBranchSelection(branchId);
     useAuthStore.getState().setBranchId(branchId);
-    pushToast({ message: 'Филиал переключен.', tone: 'success' });
+
+    // If on a detail page (last segment is a UUID/numeric ID), navigate to
+    // the section root so the new branch doesn't show a 404.
+    const pathname = window.location.pathname;
+    const segments = pathname.split('/').filter(Boolean);
+    const lastSegment = segments[segments.length - 1] ?? '';
+    const isDynamicId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lastSegment)
+      || /^\d+$/.test(lastSegment);
+    const targetPath = isDynamicId && segments.length > 1
+      ? '/' + segments.slice(0, -1).join('/')
+      : pathname;
+    window.location.href = targetPath;
   };
 
   const handleOpenCreateBranch = () => {
@@ -538,6 +552,7 @@ export default function Header({
           </button>
 
           <div ref={branchMenuRef} className="relative shrink-0">
+            {canSwitchBranch ? (
             <button
               type="button"
               onClick={() => setIsBranchMenuOpen((prev) => !prev)}
@@ -548,6 +563,12 @@ export default function Header({
               <span className="max-w-44 truncate">{selectedBranch?.name || 'Филиал'}</span>
               <ChevronDown className={`h-4 w-4 text-[#6f7a88] transition-transform ${isBranchMenuOpen ? 'rotate-180' : ''}`} />
             </button>
+            ) : (
+            <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#e0e3e8] bg-[#f6f8fa] px-3 text-sm font-medium text-[#4b5565]">
+              <Building2 className="h-4 w-4 text-[#6f7a88]" />
+              <span className="max-w-44 truncate">{selectedBranch?.name || 'Филиал'}</span>
+            </div>
+            )}
 
             {isBranchMenuOpen ? (
               <div className="absolute right-0 z-40 mt-2 w-72 overflow-hidden rounded-xl border border-[#dfe5ec] bg-white shadow-[0_14px_32px_rgba(15,23,42,0.14)]">

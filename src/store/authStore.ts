@@ -38,7 +38,7 @@ function extractTenantId(claims: Record<string, unknown>): string | null {
 function extractBranchIds(claims: Record<string, unknown>): string[] {
   const directBranchIds = claims.branch_ids;
   if (Array.isArray(directBranchIds)) {
-    return directBranchIds.filter((branchId): branchId is string => typeof branchId === 'string' && branchId.trim());
+    return directBranchIds.filter((branchId): branchId is string => typeof branchId === 'string' && branchId.trim().length > 0);
   }
 
   const directBranchId = claims.branch_id;
@@ -259,7 +259,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const branchIds = tokenBranchIds.length > 0
             ? tokenBranchIds
             : Array.isArray(storedBranchIds)
-              ? storedBranchIds.filter((item): item is string => typeof item === 'string' && item.trim())
+              ? storedBranchIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
               : [];
 
           // Respect user-selected branchId if it's still in the allowed branch_ids list.
@@ -343,10 +343,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   setBranchId: (branchId: string) => {
-    // Validate that the branch is in the user's allowed branchIds.
-    const currentBranchIds = get().branchIds;
-    if (currentBranchIds.length > 0 && !currentBranchIds.includes(branchId)) {
-      return; // branch not in user's scope
+    const { branchIds: currentBranchIds, roles } = get();
+    const isTenantAdmin = roles.includes('TENANT_ADMIN');
+    // Tenant admins can switch to any branch; regular users are restricted to their scope
+    if (!isTenantAdmin && currentBranchIds.length > 0 && !currentBranchIds.includes(branchId)) {
+      return;
     }
 
     localStorage.setItem('branch_id', branchId);
@@ -357,7 +358,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       try {
         const parsed = JSON.parse(authRaw) as Record<string, unknown>;
         const existingBranchIds = Array.isArray(parsed.branchIds)
-          ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim())
+          ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
           : [];
         const nextBranchIds = existingBranchIds.includes(branchId)
           ? existingBranchIds

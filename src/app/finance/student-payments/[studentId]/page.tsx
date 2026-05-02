@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Edit2, Loader2, MessageCircle, Phone, Plus, Send, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { Modal } from '@/components/ui/Modal';
@@ -152,6 +153,8 @@ export default function StudentPaymentHistoryPage() {
   const params = useParams();
   const studentIdParam = params.studentId;
   const studentId = Array.isArray(studentIdParam) ? studentIdParam[0] : studentIdParam;
+  const currentStaffId = useAuthStore((s) => s.user?.staffId ?? null);
+  const currentUser = useAuthStore((s) => s.user);
 
   const [paymentModalState, setPaymentModalState] = useState<PaymentModalState>({
     key: 0,
@@ -168,15 +171,18 @@ export default function StudentPaymentHistoryPage() {
   });
   const [activeTab, setActiveTab] = useState<PaymentHistoryTab>('SUBSCRIPTIONS');
   const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
+  const [isCallLogReasonModalOpen, setIsCallLogReasonModalOpen] = useState(false);
+  const [pendingCallLogUpdate, setPendingCallLogUpdate] = useState<null | { id: string; data: SaveStudentCallLogRequest }>(null);
+  const [callLogUpdateReason, setCallLogUpdateReason] = useState('');
   const [editingCallLog, setEditingCallLog] = useState<StudentCallLogDto | null>(null);
   const [callLogForm, setCallLogForm] = useState<SaveStudentCallLogRequest>({
     studentId: studentId || '',
     callDate: new Date().toISOString().split('T')[0],
     callTime: new Date().toTimeString().slice(0, 5),
-    callResult: null,
-    notes: null,
+    callResult: undefined,
+    notes: undefined,
     followUpRequired: false,
-    followUpDate: null,
+    followUpDate: undefined,
   });
 
   const {
@@ -234,7 +240,7 @@ export default function StudentPaymentHistoryPage() {
     () =>
       studentId
         ? studentCallLogsService.getByStudent(studentId)
-        : Promise.resolve({ content: [], page: 0, size: 0, totalElements: 0, totalPages: 0, first: true, last: true, hasNext: false, hasPrevious: false }),
+        : Promise.resolve({ data: { content: [], page: 0, size: 0, totalElements: 0, totalPages: 0, first: true, last: true, hasNext: false, hasPrevious: false } }),
     [studentId]
   );
 
@@ -247,7 +253,9 @@ export default function StudentPaymentHistoryPage() {
   const updateCallLogMutation = useMutation(({ id, data }: { id: string; data: SaveStudentCallLogRequest }) =>
     studentCallLogsService.update(id, data)
   );
-  const deleteCallLogMutation = useMutation((id: string) => studentCallLogsService.delete(id));
+  const deleteCallLogMutation = useMutation(({ id, reason }: { id: string; reason: string }) =>
+    studentCallLogsService.delete(id, reason)
+  );
 
   const studentName = useMemo(() => {
     if (!studentData) {
@@ -477,10 +485,10 @@ export default function StudentPaymentHistoryPage() {
       studentId: studentId || '',
       callDate: new Date().toISOString().split('T')[0],
       callTime: new Date().toTimeString().slice(0, 5),
-      callResult: null,
-      notes: null,
+      callResult: undefined,
+      notes: undefined,
       followUpRequired: false,
-      followUpDate: null,
+      followUpDate: undefined,
     });
     setIsCallLogModalOpen(true);
   };
@@ -491,10 +499,10 @@ export default function StudentPaymentHistoryPage() {
       studentId: log.studentId,
       callDate: log.callDate,
       callTime: log.callTime,
-      callResult: log.callResult,
-      notes: log.notes,
+      callResult: log.callResult ?? undefined,
+      notes: log.notes ?? undefined,
       followUpRequired: log.followUpRequired,
-      followUpDate: log.followUpDate,
+      followUpDate: log.followUpDate ?? undefined,
     });
     setIsCallLogModalOpen(true);
   };
@@ -506,20 +514,32 @@ export default function StudentPaymentHistoryPage() {
 
   const handleSaveCallLog = async () => {
     if (editingCallLog) {
-      await updateCallLogMutation.mutate({ id: editingCallLog.id, data: callLogForm });
+      setPendingCallLogUpdate({ id: editingCallLog.id, data: callLogForm });
+      setCallLogUpdateReason('');
+      closeCallLogModal();
+      setIsCallLogReasonModalOpen(true);
     } else {
-      await createCallLogMutation.mutate(callLogForm);
+      await createCallLogMutation.mutate({ ...callLogForm, callerStaffId: currentStaffId ?? undefined });
+      closeCallLogModal();
+      await refetchCallLogs();
     }
-    closeCallLogModal();
+  };
+
+  const handleConfirmCallLogReason = async () => {
+    if (!pendingCallLogUpdate) return;
+    await updateCallLogMutation.mutate({
+      id: pendingCallLogUpdate.id,
+      data: { ...pendingCallLogUpdate.data, updateReason: callLogUpdateReason || undefined },
+    });
+    setIsCallLogReasonModalOpen(false);
+    setPendingCallLogUpdate(null);
     await refetchCallLogs();
   };
 
   const handleDeleteCallLog = async (id: string) => {
-    if (!confirm('Удалить эту запись обзвона?')) {
-      return;
-    }
-
-    await deleteCallLogMutation.mutate(id);
+    const reason = prompt('Укажите причину удаления:');
+    if (!reason?.trim()) return;
+    await deleteCallLogMutation.mutate({ id, reason: reason.trim() });
     await refetchCallLogs();
   };
 
@@ -853,6 +873,7 @@ export default function StudentPaymentHistoryPage() {
                         <th className="crm-table-th">Результат</th>
                         <th className="crm-table-th">Заметки</th>
                         <th className="crm-table-th">Перезвонить</th>
+                        <th className="crm-table-th">Причина изменения</th>
                         <th className="crm-table-th">Действия</th>
                       </tr>
                     </thead>
@@ -869,8 +890,14 @@ export default function StudentPaymentHistoryPage() {
                                 <div className="text-xs text-[#8690a0]">{log.callTime}</div>
                               </td>
                               <td className="crm-table-cell">
-                                <div className="text-sm text-[#202938]">{log.callerName || '—'}</div>
-                                <div className="text-xs text-[#8690a0]">{log.createdByName ? `Создан: ${log.createdByName}` : ''}</div>
+                                <div className="text-sm font-semibold text-[#202938]">
+                                  {log.callerName || log.createdByName || (
+                                    currentUser && log.createdBy === currentUser.id
+                                      ? `${currentUser.firstName} ${currentUser.lastName}`.trim() || currentUser.email
+                                      : '—'
+                                  )}
+                                </div>
+                                <div className="text-xs text-[#8690a0]">{log.createdAt ? new Date(log.createdAt).toLocaleString('ru-RU') : ''}</div>
                               </td>
                               <td className="crm-table-cell">
                                 <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${
@@ -890,6 +917,13 @@ export default function StudentPaymentHistoryPage() {
                                   <div className="text-sm text-amber-700">{log.followUpDate}</div>
                                 ) : (
                                   <span className="text-sm text-[#8690a0]">—</span>
+                                )}
+                              </td>
+                              <td className="crm-table-cell max-w-45">
+                                {log.updateReason ? (
+                                  <span className="text-sm text-[#273142]">{log.updateReason}</span>
+                                ) : (
+                                  <span className="text-xs text-[#c0c7d0]">—</span>
                                 )}
                               </td>
                               <td className="crm-table-cell">
@@ -919,7 +953,7 @@ export default function StudentPaymentHistoryPage() {
                         })
                       ) : (
                         <tr className="crm-table-row">
-                          <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                          <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                             Записей обзвонов пока нет
                           </td>
                         </tr>
@@ -994,7 +1028,14 @@ export default function StudentPaymentHistoryPage() {
             <label className="mb-1 block text-sm font-medium text-[#202938]">Результат</label>
             <select
               value={callLogForm.callResult || ''}
-              onChange={(e) => setCallLogForm({ ...callLogForm, callResult: e.target.value || null })}
+              onChange={(e) => {
+                const value = e.target.value;
+                setCallLogForm((prev) => ({
+                  ...prev,
+                  callResult: value || undefined,
+                  ...(value === 'CALLBACK' && { followUpRequired: true }),
+                }));
+              }}
               className="crm-select"
             >
               <option value="">Не выбрано</option>
@@ -1010,7 +1051,7 @@ export default function StudentPaymentHistoryPage() {
             <label className="mb-1 block text-sm font-medium text-[#202938]">Заметки</label>
             <textarea
               value={callLogForm.notes || ''}
-              onChange={(e) => setCallLogForm({ ...callLogForm, notes: e.target.value || null })}
+              onChange={(e) => setCallLogForm({ ...callLogForm, notes: e.target.value || undefined })}
               className="crm-input"
               rows={3}
               placeholder="Добавить заметку..."
@@ -1036,7 +1077,7 @@ export default function StudentPaymentHistoryPage() {
               <input
                 type="date"
                 value={callLogForm.followUpDate || ''}
-                onChange={(e) => setCallLogForm({ ...callLogForm, followUpDate: e.target.value || null })}
+                onChange={(e) => setCallLogForm({ ...callLogForm, followUpDate: e.target.value || undefined })}
                 className="crm-select"
               />
             </div>
@@ -1046,8 +1087,34 @@ export default function StudentPaymentHistoryPage() {
             <Button variant="secondary" onClick={closeCallLogModal}>
               Отмена
             </Button>
-            <Button onClick={handleSaveCallLog} disabled={createCallLogMutation.loading || updateCallLogMutation.loading}>
-              {createCallLogMutation.loading || updateCallLogMutation.loading ? 'Сохранение...' : 'Сохранить'}
+            <Button onClick={handleSaveCallLog} disabled={createCallLogMutation.loading}>
+              {createCallLogMutation.loading ? 'Сохранение...' : editingCallLog ? 'Далее →' : 'Сохранить'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isCallLogReasonModalOpen}
+        onClose={() => { setIsCallLogReasonModalOpen(false); setPendingCallLogUpdate(null); }}
+        title="Причина изменения"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[#5d6676]">Укажите причину редактирования записи о звонке.</p>
+          <textarea
+            value={callLogUpdateReason}
+            onChange={(e) => setCallLogUpdateReason(e.target.value)}
+            rows={3}
+            className="crm-input"
+            placeholder="Например: Исправлена дата звонка"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => { setIsCallLogReasonModalOpen(false); setPendingCallLogUpdate(null); }} disabled={updateCallLogMutation.loading}>
+              Отмена
+            </Button>
+            <Button onClick={() => void handleConfirmCallLogReason()} disabled={updateCallLogMutation.loading}>
+              {updateCallLogMutation.loading ? 'Сохранение...' : 'Сохранить изменение'}
             </Button>
           </div>
         </div>

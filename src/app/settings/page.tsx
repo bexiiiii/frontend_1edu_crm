@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, KeyRound, Loader2, Trash2 } from 'lucide-react';
+import { Plus, Edit2, KeyRound, Loader2, Trash2, Ban } from 'lucide-react';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
@@ -188,6 +188,18 @@ const AUTH_USER_ROLE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'TEACHER', label: STAFF_ROLE_LABELS.TEACHER },
   { value: 'ACCOUNTANT', label: STAFF_ROLE_LABELS.ACCOUNTANT },
 ];
+
+const ROLE_LABELS_RU: Record<string, string> = {
+  TENANT_ADMIN: 'Администратор тенанта',
+  MANAGER: 'Руководитель',
+  RECEPTIONIST: 'Администратор ресепшена',
+  TEACHER: 'Преподаватель',
+  ACCOUNTANT: 'Бухгалтер',
+};
+
+function getRoleLabel(roleName: string): string {
+  return ROLE_LABELS_RU[roleName] || roleName;
+}
 
 const BUILT_IN_AUTH_ROLE_VALUES = new Set(AUTH_USER_ROLE_OPTIONS.map((option) => option.value));
 
@@ -705,7 +717,7 @@ export default function Settings() {
   const authUserRoleOptions = useMemo(() => {
     const customRoleOptions = roles
       .filter((role) => role.name && !BUILT_IN_AUTH_ROLE_VALUES.has(role.name))
-      .map((role) => ({ value: role.name, label: role.name }));
+      .map((role) => ({ value: role.name, label: getRoleLabel(role.name) }));
 
     return [...AUTH_USER_ROLE_OPTIONS, ...customRoleOptions];
   }, [roles]);
@@ -1009,22 +1021,17 @@ export default function Settings() {
         throw new Error('Tenant context is not set. Перезайдите в систему и попробуйте ещё раз.');
       }
 
-      if (!data.password?.trim()) {
-        throw new Error('Пароль обязателен при создании пользователя.');
-      }
-
       await createUserMutation.mutate({
         username: data.username.trim() || data.email.trim(),
         email: data.email.trim(),
         firstName: data.firstName.trim(),
         lastName: data.lastName.trim(),
-        password: data.password.trim(),
         role: data.role,
         staffId: data.staffId ?? null,
         branchIds: fallbackBranchIds,
         tenantId,
       });
-      pushToast({ message: 'Пользователь создан. Права применятся после обновления токена/повторного входа.', tone: 'success' });
+      pushToast({ message: `Пользователь создан. Данные для входа отправлены на ${data.email.trim()}.`, tone: 'success' });
     }
 
     await refetchUsers();
@@ -2234,13 +2241,13 @@ export default function Settings() {
                             <button
                               type="button"
                               onClick={() => void handleDeleteUser(user.id)}
-                              className="text-red-600 hover:text-red-700"
-                              title="Деактивировать пользователя"
+                              className="text-rose-500 hover:text-rose-600"
+                              title="Заблокировать пользователя"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Ban className="w-4 h-4" />
                             </button>
                           ) : (
-                            <span className="text-xs text-gray-400">Нельзя удалить</span>
+                            <span className="text-xs text-gray-400">Нельзя заблокировать</span>
                           )}
                         </div>
                       </td>
@@ -2271,7 +2278,7 @@ export default function Settings() {
               )}
               {!rolesError && permissionsError && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Не удалось загрузить permissions: {permissionsError}
+                  Не удалось загрузить права доступа: {permissionsError}
                 </div>
               )}
             </div>
@@ -2283,7 +2290,7 @@ export default function Settings() {
                   <th className="crm-table-th">#</th>
                   <th className="crm-table-th">Название</th>
                   <th className="crm-table-th">Описание</th>
-                  <th className="crm-table-th">Permissions</th>
+                  <th className="crm-table-th">Права доступа</th>
                   <th className="crm-table-th">Действия</th>
                 </tr>
               </thead>
@@ -2298,7 +2305,7 @@ export default function Settings() {
                   roles.map((role, index) => (
                     <tr key={role.id} className="crm-table-row">
                       <td className="px-6 py-4 text-sm text-gray-700">{index + 1}</td>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{role.name}</td>
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{getRoleLabel(role.name)}</td>
                       <td className="px-6 py-4 text-sm text-gray-700">{role.description || '—'}</td>
                       <td className="px-6 py-4 text-sm text-gray-700">
                         {role.permissions.length > 0 ? `${role.permissions.length} шт.` : '—'}

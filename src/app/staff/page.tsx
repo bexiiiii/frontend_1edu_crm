@@ -19,6 +19,21 @@ import type { StaffFilters, StaffFormValues, StaffListItem } from '@/types/emplo
 
 const PAGE_SIZE = 20;
 
+function getStaffDisplayName(employee: {
+  fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleName?: string | null;
+}) {
+  const composedName = [employee.lastName, employee.firstName, employee.middleName].filter(Boolean).join(' ').trim();
+
+  if (composedName) {
+    return composedName;
+  }
+
+  return employee.fullName?.trim() || 'Без имени';
+}
+
 function toFormValues(employee: StaffListItem): StaffFormValues {
   return {
     firstName: employee.firstName,
@@ -82,24 +97,26 @@ export default function Employees() {
 
   const employees = useMemo<StaffListItem[]>(
     () =>
-      (staffPage?.content ?? []).map((staff) => ({
-        id: staff.id,
-        fullName: staff.fullName || [staff.lastName, staff.firstName, staff.middleName || ''].filter(Boolean).join(' '),
-        firstName: staff.firstName,
-        lastName: staff.lastName,
-        middleName: staff.middleName || '',
-        email: staff.email || '',
-        phone: staff.phone || '',
-        role: staff.role,
-        status: staff.status,
-        customStatus: staff.customStatus || '',
-        position: staff.position || '',
-        salary: staff.salary,
-        salaryType: staff.salaryType,
-        salaryPercentage: staff.salaryPercentage,
-        hireDate: staff.hireDate || '',
-        notes: staff.notes || '',
-      })),
+      (staffPage?.content ?? [])
+        .map((staff) => ({
+          id: staff.id,
+          fullName: getStaffDisplayName(staff),
+          firstName: staff.firstName,
+          lastName: staff.lastName,
+          middleName: staff.middleName || '',
+          email: staff.email || '',
+          phone: staff.phone || '',
+          role: staff.role,
+          status: staff.status,
+          customStatus: staff.customStatus || '',
+          position: staff.position || '',
+          salary: staff.salary,
+          salaryType: staff.salaryType,
+          salaryPercentage: staff.salaryPercentage,
+          hireDate: staff.hireDate || '',
+          notes: staff.notes || '',
+        }))
+        .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU')),
     [staffPage]
   );
 

@@ -22,6 +22,7 @@ import {
   type UpdateCourseRequest,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { useAuthStore } from '@/store/authStore';
 import type { CourseFilters, CourseFormValues, CourseListItem } from '@/types/class';
 
 type CourseSavePayload = CreateCourseRequest & { status?: CourseStatus };
@@ -174,9 +175,12 @@ export default function Classes() {
     });
   }, [filters.search, filters.status, filters.teacherId, filters.type]);
 
+  const { roles, permissions } = useAuthStore();
+  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
+
   const { data: teachersData, loading: teachersLoading } = useApi(
-    () => staffService.getTeachers({ page: 0, size: 300 }),
-    []
+    () => (canViewStaff ? staffService.getTeachers({ page: 0, size: 300 }) : Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 300 })),
+    [canViewStaff]
   );
   const { data: roomsData, loading: roomsLoading } = useApi(
     () => roomsService.getAll({ page: 0, size: 300 }),

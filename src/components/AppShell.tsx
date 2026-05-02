@@ -60,6 +60,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Only TENANT_ADMIN and SUPER_ADMIN can fetch tenant data
+    const isAdmin = roles.includes('SUPER_ADMIN') || roles.includes('TENANT_ADMIN');
+    if (!isAdmin) {
+      setTenantData(null);
+      return;
+    }
+
     let canceled = false;
 
     const loadTenant = async () => {
@@ -80,7 +87,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       canceled = true;
     };
-  }, [isAuthenticated, tenantId, isLoginPage]);
+  }, [isAuthenticated, tenantId, isLoginPage, roles]);
 
   useEffect(() => {
     if (!shouldShowBlockingModal) {

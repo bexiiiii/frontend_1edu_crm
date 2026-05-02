@@ -1,7 +1,7 @@
 'use client';
 
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Edit2, FileText, Loader2, Plus, Search, Trash2, User } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
@@ -54,6 +54,7 @@ function toFormValues(student: StudentListItem): StudentFormValues {
     additionalInfo: student.additionalInfo,
     contract: student.contract,
     discount: student.discount,
+    discountPercent: student.discountPercent ?? '',
     comment: student.comment,
     stateOrderParticipant: student.stateOrderParticipant,
     loyalty: student.loyalty,
@@ -76,11 +77,22 @@ function getDisplayName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
+  const composed = [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim();
+  if (composed) {
+    return composed;
   }
 
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim();
+  return student.fullName?.trim() || '';
+}
+
+function getStudentSortKey(student: {
+  fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleName?: string | null;
+}) {
+  const composedName = [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim();
+  return (composedName || student.fullName || '').toLocaleLowerCase('ru-RU');
 }
 
 function normalizePhoneForWhatsApp(value: string | null | undefined): string {
@@ -120,11 +132,8 @@ function getPrimaryStudentPhone(student: Pick<StudentListItem, 'phone' | 'studen
 
 function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullName: string }) {
   const studentPhotoUrl = useResolvedFileUrl(studentPhoto);
-  const [hasImageError, setHasImageError] = useState(false);
-
-  useEffect(() => {
-    setHasImageError(false);
-  }, [studentPhotoUrl]);
+  const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+  const hasImageError = Boolean(studentPhotoUrl && failedPhotoUrl === studentPhotoUrl);
 
   if (studentPhotoUrl && !hasImageError) {
     return (
@@ -132,7 +141,7 @@ function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullN
         src={studentPhotoUrl}
         alt={fullName || 'Фото ученика'}
         className="h-10 w-10 rounded-full border border-gray-200 object-cover"
-        onError={() => setHasImageError(true)}
+        onError={() => setFailedPhotoUrl(studentPhotoUrl)}
       />
     );
   }
@@ -178,13 +187,14 @@ export default function Students() {
       const status = filters.status !== 'all' ? filters.status : undefined;
 
       if (query) {
-        return studentsService.search({ query, page: pageNum, size });
+        return studentsService.search({ query, page: pageNum, size, sort: 'lastName,asc' });
       }
 
       return studentsService.getAll({
         page: pageNum,
         size,
         status,
+        sort: 'lastName,asc',
       });
     },
     0,
@@ -226,6 +236,7 @@ export default function Students() {
           additionalInfo: student.additionalInfo || '',
           contract: student.contract || '',
           discount: student.discount || '',
+          discountPercent: student.discountPercent ?? null,
           comment: student.comment || '',
           stateOrderParticipant: Boolean(student.stateOrderParticipant),
           loyalty: student.loyalty || '',
@@ -234,7 +245,8 @@ export default function Students() {
           createdAt: student.createdAt || '',
           updatedAt: student.updatedAt || '',
         }))
-        .filter((student) => (filters.status === 'all' ? true : student.status === filters.status)),
+        .filter((student) => (filters.status === 'all' ? true : student.status === filters.status))
+        .sort((left, right) => getStudentSortKey(left).localeCompare(getStudentSortKey(right), 'ru-RU')),
     [filters.status, studentItems]
   );
 
@@ -417,8 +429,14 @@ export default function Students() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="text-sm text-gray-900">{student.loyalty || '—'}</div>
-                        <div className="text-xs text-gray-500">
-                          {student.discount ? `Скидка: ${student.discount}` : 'Без скидки'}
+                        <div className="mt-1">
+                          {student.discountPercent != null && student.discountPercent > 0 ? (
+                            <span className="inline-flex items-center rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              {student.discountPercent}%
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">Без скидки</span>
+                          )}
                         </div>
                       </td>
                       <td className="crm-table-cell">
@@ -435,21 +453,21 @@ export default function Students() {
                               href={whatsappUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-emerald-50"
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg p-2 text-gray-400 transition-colors hover:bg-emerald-50"
                               title="Открыть WhatsApp"
                               aria-label="Открыть чат в WhatsApp"
                             >
-                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4 shrink-0" />
                             </a>
                           ) : (
                             <button
                               type="button"
                               disabled
-                              className="cursor-not-allowed rounded-lg p-2 opacity-45"
+                              className="inline-flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-lg p-2 opacity-45"
                               title="Нет номера для WhatsApp"
                               aria-label="Нет номера для WhatsApp"
                             >
-                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4" />
+                              <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4 shrink-0" />
                             </button>
                           )}
                           <Link

@@ -113,6 +113,12 @@ export const studentPaymentsService = {
     const response = await api.get<ApiResponse<StudentDebtDto[]>>('/api/v1/payments/student-payments/debtors', { params });
     return response.data;
   },
+
+  /** Calculate suggested partial payment amount */
+  async calculatePartial(params: { subscriptionId: string; month: string }) {
+    const response = await api.get<ApiResponse<{ suggestedAmount: number; remainingDebt: number }>>('/api/v1/payments/student-payments/calculate-partial', { params });
+    return response.data;
+  },
 };
 
 export const salaryService = {
@@ -144,6 +150,12 @@ export const salaryService = {
   /** Update salary payment */
   async updatePayment(id: string, data: UpdateSalaryPaymentRequest) {
     const response = await api.put<ApiResponse<SalaryPaymentDto>>(`/api/v1/finance/salary/payments/${id}`, data);
+    return response.data;
+  },
+
+  /** Calculate suggested partial salary payment amount */
+  async calculatePartial(params: { staffId: string; month: string }) {
+    const response = await api.get<ApiResponse<{ suggestedAmount: number; outstandingAmount: number }>>('/api/v1/finance/salary/calculate-partial', { params });
     return response.data;
   },
 };

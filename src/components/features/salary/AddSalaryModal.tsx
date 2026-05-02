@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { getErrorMessage } from '@/lib/error-message';
+import { salaryService } from '@/lib/api/finance';
 import type { CreateSalaryPaymentRequest } from '@/lib/api';
 
 interface SalaryStaffOption {
@@ -52,10 +54,33 @@ export const AddSalaryModal = ({
   const [notes, setNotes] = useState(initialValues?.notes || '');
   const [error, setError] = useState<string | null>(null);
 
+  const [usePartialCalc, setUsePartialCalc] = useState(false);
+  const [partialLoading, setPartialLoading] = useState(false);
+  const [partialResult, setPartialResult] = useState<{ suggestedAmount: number; outstandingAmount: number } | null>(null);
+
   const selectedStaff = useMemo(
     () => staffOptions.find((staff) => staff.id === staffId) ?? null,
     [staffId, staffOptions]
   );
+
+  const handlePartialCalcToggle = async (checked: boolean) => {
+    setUsePartialCalc(checked);
+    setPartialResult(null);
+    if (!checked) return;
+    if (!staffId || !salaryMonth) return;
+
+    setPartialLoading(true);
+    try {
+      const res = await salaryService.calculatePartial({ staffId, month: salaryMonth });
+      const data = res.data;
+      setPartialResult(data);
+      setAmount(String(data.suggestedAmount));
+    } catch {
+      // silently ignore — user can still type amount manually
+    } finally {
+      setPartialLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setError(null);
@@ -119,7 +144,7 @@ export const AddSalaryModal = ({
             <p className="mt-1 text-sm font-semibold text-[#1f2530]">{selectedStaff?.name || '—'}</p>
           </div>
         ) : (
-          <Select label="Сотрудник" value={staffId} onChange={(event) => setStaffId(event.target.value)}>
+          <Select label="Сотрудник" value={staffId} onChange={(event) => { setStaffId(event.target.value); setPartialResult(null); setUsePartialCalc(false); }}>
             <option value="">Выберите сотрудника</option>
             {staffOptions.map((staff) => (
               <option key={staff.id} value={staff.id}>
@@ -144,7 +169,7 @@ export const AddSalaryModal = ({
             label="Зарплатный месяц"
             type="month"
             value={salaryMonth}
-            onChange={(event) => setSalaryMonth(event.target.value)}
+            onChange={(event) => { setSalaryMonth(event.target.value); setPartialResult(null); setUsePartialCalc(false); }}
           />
           <Input
             label="Дата выплаты"
@@ -155,18 +180,44 @@ export const AddSalaryModal = ({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
-            label="Сумма"
-            type="number"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            placeholder="Например, 180000"
-          />
+          <div>
+            <Input
+              label="Сумма"
+              type="number"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              placeholder="Например, 180000"
+            />
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-[#5d6676]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[#c8d2dc] accent-[#2f6feb]"
+                checked={usePartialCalc}
+                onChange={(event) => void handlePartialCalcToggle(event.target.checked)}
+                disabled={!staffId || !salaryMonth || partialLoading}
+              />
+              {partialLoading ? (
+                <span className="flex items-center gap-1.5 text-[#2f6feb]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Рассчитываем...
+                </span>
+              ) : (
+                'Рассчитать остаток'
+              )}
+            </label>
+          </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-[#5d6676]">Валюта</label>
             <div className="crm-input flex items-center text-[#5d6676]">KZT</div>
           </div>
         </div>
+
+        {partialResult && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            <div>Рекомендуемая сумма: <span className="font-semibold">{partialResult.suggestedAmount.toLocaleString('ru-RU')} ₸</span></div>
+            <div className="mt-0.5 text-blue-600">Остаток к выплате: {partialResult.outstandingAmount.toLocaleString('ru-RU')} ₸</div>
+          </div>
+        )}
 
         <div>
           <label className="mb-2 block text-sm font-medium text-[#5d6676]">Заметка</label>

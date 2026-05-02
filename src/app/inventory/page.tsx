@@ -1,31 +1,22 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import {
-  ArrowLeft,
-  Boxes,
-  Edit2,
-  Loader2,
-  Plus,
-  RotateCcw,
-  Search,
-  Trash2,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-} from 'lucide-react';
+import { Download, ArrowRightLeft, Loader2, RotateCcw, Search, AlertTriangle, XCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
 import { inventoryService } from '@/lib/api';
-import { useApi, useMutation } from '@/hooks/useApi';
+import { useApi } from '@/hooks/useApi';
+import { downloadBlob } from '@/lib/download';
 import type {
   CreateInventoryItemRequest,
   InventoryItemDto,
+  InventoryStatsDto,
   UpdateInventoryItemRequest,
 } from '@/lib/api';
 
 type InventoryItemForm = {
+  categoryId: string;
+  unitId: string;
   name: string;
   sku: string;
   barcode: string;
@@ -46,6 +37,8 @@ type InventoryItemForm = {
 };
 
 const emptyForm: InventoryItemForm = {
+  categoryId: '',
+  unitId: '',
   name: '',
   sku: '',
   barcode: '',
@@ -75,7 +68,7 @@ function getStatusBadge(status: string) {
     case 'IN_STOCK':
       return {
         label: 'В наличии',
-        icon: CheckCircle,
+        icon: null,
         color: 'border-emerald-200 bg-emerald-50 text-emerald-700',
       };
     case 'LOW_STOCK':
@@ -103,9 +96,7 @@ export default function InventoryPage() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<InventoryItemDto | null>(null);
-  const [form, setForm] = useState<InventoryItemForm>(emptyForm);
+  const [isStartingRevision, setIsStartingRevision] = useState(false);
 
   const {
     data: itemsPage,
@@ -121,106 +112,42 @@ export default function InventoryPage() {
     [search, statusFilter]
   );
 
-  const createMutation = useMutation((data: CreateInventoryItemRequest) =>
-    inventoryService.create(data)
-  );
-  const updateMutation = useMutation(
-    ({ id, data }: { id: string; data: UpdateInventoryItemRequest }) =>
-      inventoryService.update(id, data)
-  );
-  const deleteMutation = useMutation((id: string) => inventoryService.delete(id));
+  // revision starter flag handled locally
+
+  const { data: categories } = useApi(() => inventoryService.getCategories(), []);
+  const { data: units } = useApi(() => inventoryService.getUnits(), []);
+  const { data: inventoryStats } = useApi<InventoryStatsDto>(() => inventoryService.getStats(), []);
 
   const items = useMemo(() => itemsPage?.content ?? [], [itemsPage]);
 
   const stats = useMemo(() => {
+    if (inventoryStats) {
+      const total = inventoryStats.totalItems || 0;
+      const lowStock = inventoryStats.lowStockCount || 0;
+      const outOfStock = inventoryStats.outOfStockCount || 0;
+      const inStock = Math.max(total - lowStock - outOfStock, 0);
+      const totalValue = inventoryStats.totalInventoryValue || 0;
+      return { total, inStock, lowStock, outOfStock, totalValue };
+    }
+
     const total = items.length;
     const inStock = items.filter((i) => i.status === 'IN_STOCK').length;
     const lowStock = items.filter((i) => i.status === 'LOW_STOCK').length;
     const outOfStock = items.filter((i) => i.status === 'OUT_OF_STOCK').length;
     const totalValue = items.reduce((sum, i) => sum + (i.totalValue || 0), 0);
     return { total, inStock, lowStock, outOfStock, totalValue };
-  }, [items]);
+  }, [inventoryStats, items]);
 
-  const openCreateModal = () => {
-    setEditingItem(null);
-    setForm(emptyForm);
-    setIsModalOpen(true);
-  };
-
-  const openEditModal = (item: InventoryItemDto) => {
-    setEditingItem(item);
-    setForm({
-      name: item.name || '',
-      sku: item.sku || '',
-      barcode: item.barcode || '',
-      description: item.description || '',
-      brand: item.brand || '',
-      model: item.model || '',
-      quantity: String(item.quantity || 0),
-      minQuantity: item.minQuantity != null ? String(item.minQuantity) : '',
-      maxQuantity: item.maxQuantity != null ? String(item.maxQuantity) : '',
-      pricePerUnit: item.pricePerUnit != null ? String(item.pricePerUnit) : '',
-      sellingPrice: item.sellingPrice != null ? String(item.sellingPrice) : '',
-      currency: item.currency || 'KZT',
-      location: item.location || '',
-      supplier: item.supplier || '',
-      supplierContact: item.supplierContact || '',
-      isTracked: item.isTracked ?? true,
-      notes: item.notes || '',
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.name) return;
-
-    const quantity = Number(form.quantity);
-    if (quantity < 0) return;
-
-    const data: CreateInventoryItemRequest | UpdateInventoryItemRequest = {
-      name: form.name.trim(),
-      sku: form.sku.trim() || undefined,
-      barcode: form.barcode.trim() || undefined,
-      description: form.description.trim() || undefined,
-      brand: form.brand.trim() || undefined,
-      model: form.model.trim() || undefined,
-      quantity,
-      minQuantity: form.minQuantity ? Number(form.minQuantity) : undefined,
-      maxQuantity: form.maxQuantity ? Number(form.maxQuantity) : undefined,
-      pricePerUnit: form.pricePerUnit ? Number(form.pricePerUnit) : undefined,
-      sellingPrice: form.sellingPrice ? Number(form.sellingPrice) : undefined,
-      currency: form.currency || 'KZT',
-      location: form.location.trim() || undefined,
-      supplier: form.supplier.trim() || undefined,
-      supplierContact: form.supplierContact.trim() || undefined,
-      isTracked: form.isTracked,
-      notes: form.notes.trim() || undefined,
-    };
-
-    if (editingItem) {
-      await updateMutation.mutate({ id: editingItem.id, data: data as UpdateInventoryItemRequest });
-    } else {
-      // Для create нужен unitId - временно используем заглушку
-      // В реальном сценарии нужно выбрать единицу измерения из справочника
-      await createMutation.mutate({
-        ...data,
-        unitId: '00000000-0000-0000-0000-000000000000', // placeholder
-      } as CreateInventoryItemRequest);
+  const handleStartRevision = async () => {
+    try {
+      setIsStartingRevision(true);
+      router.push('/inventory/revision');
+    } catch (err) {
+      console.error('start revision error', err);
+      alert('Не удалось начать ревизию');
+    } finally {
+      setIsStartingRevision(false);
     }
-
-    setIsModalOpen(false);
-    await refetch();
-  };
-
-  const handleDelete = async (item: InventoryItemDto) => {
-    if (item.quantity > 0) {
-      alert('Нельзя удалить позицию с остатком больше 0. Сначала спишите остатки.');
-      return;
-    }
-    if (!confirm(`Удалить позицию "${item.name}"?`)) return;
-
-    await deleteMutation.mutate(item.id);
-    await refetch();
   };
 
   const resetFilters = () => {
@@ -228,24 +155,33 @@ export default function InventoryPage() {
     setStatusFilter('all');
   };
 
+  const handleExportInventoryReport = async () => {
+    const { blob, filename } = await inventoryService.exportReport();
+    downloadBlob(blob, filename);
+  };
+
   const hasDirtyFilters = search.trim().length > 0 || statusFilter !== 'all';
+
+  const openTransactionsPage = (itemId: string) => {
+    router.push(`/inventory/transactions?itemId=${itemId}`);
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/')}>
-          На главную
-        </Button>
-        <Button icon={Plus} onClick={openCreateModal}>
-          Добавить позицию
-        </Button>
+      <div className="flex items-center justify-end">
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" icon={Download} onClick={() => void handleExportInventoryReport()}>
+            Экспорт отчета
+          </Button>
+          <Button onClick={() => void handleStartRevision()} disabled={isStartingRevision}>
+            {isStartingRevision ? 'Запускаем...' : 'Провести инвентаризацию'}
+          </Button>
+        </div>
       </div>
 
       <div className="crm-surface p-5">
         <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-[#1f2530]">Инвентаризация</h1>
-          </div>
+         
 
           {hasDirtyFilters && (
             <Button size="sm" variant="secondary" icon={RotateCcw} onClick={resetFilters}>
@@ -425,19 +361,11 @@ export default function InventoryPage() {
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => openEditModal(item)}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff]"
-                              title="Редактировать"
+                              onClick={() => openTransactionsPage(item.id)}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-500 text-white transition-colors hover:bg-emerald-600"
+                              title="Движение товара"
                             >
-                              <Edit2 className="h-4 w-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDelete(item)}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#c34c4c] transition-colors hover:bg-[#fff1f1]"
-                              title="Удалить"
-                            >
-                              <Trash2 className="h-4 w-4" />
+                              <ArrowRightLeft className="h-4 w-4" />
                             </button>
                           </div>
                         </td>
@@ -457,242 +385,7 @@ export default function InventoryPage() {
         )}
       </div>
 
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={editingItem ? 'Редактировать позицию' : 'Добавить позицию'}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
-              Отмена
-            </Button>
-            <Button
-              onClick={() => void handleSave()}
-              disabled={
-                (createMutation.loading || updateMutation.loading) ||
-                !form.name ||
-                Number(form.quantity) < 0
-              }
-            >
-              {createMutation.loading || updateMutation.loading ? 'Сохраняем...' : 'Сохранить'}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="mb-2 block text-sm font-medium text-[#5d6676]">
-              Название <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              className="crm-input"
-              placeholder="Введите название позиции"
-            />
-          </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Артикул (SKU)</label>
-              <input
-                type="text"
-                value={form.sku}
-                onChange={(e) => setForm((prev) => ({ ...prev, sku: e.target.value }))}
-                className="crm-input"
-                placeholder="Уникальный артикул"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Штрихкод</label>
-              <input
-                type="text"
-                value={form.barcode}
-                onChange={(e) => setForm((prev) => ({ ...prev, barcode: e.target.value }))}
-                className="crm-input"
-                placeholder="Штрихкод товара"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Бренд</label>
-              <input
-                type="text"
-                value={form.brand}
-                onChange={(e) => setForm((prev) => ({ ...prev, brand: e.target.value }))}
-                className="crm-input"
-                placeholder="Производитель"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Модель</label>
-              <input
-                type="text"
-                value={form.model}
-                onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
-                className="crm-input"
-                placeholder="Модель"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">
-                Количество <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.quantity}
-                onChange={(e) => setForm((prev) => ({ ...prev, quantity: e.target.value }))}
-                className="crm-input"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Мин. остаток</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.minQuantity}
-                onChange={(e) => setForm((prev) => ({ ...prev, minQuantity: e.target.value }))}
-                className="crm-input"
-                placeholder="Порог пополнения"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Макс. остаток</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.maxQuantity}
-                onChange={(e) => setForm((prev) => ({ ...prev, maxQuantity: e.target.value }))}
-                className="crm-input"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Цена за единицу</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.pricePerUnit}
-                onChange={(e) => setForm((prev) => ({ ...prev, pricePerUnit: e.target.value }))}
-                className="crm-input"
-                placeholder="Закупочная цена"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Цена продажи</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.sellingPrice}
-                onChange={(e) => setForm((prev) => ({ ...prev, sellingPrice: e.target.value }))}
-                className="crm-input"
-                placeholder="Розничная цена"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Валюта</label>
-              <select
-                value={form.currency}
-                onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value }))}
-                className="crm-select"
-              >
-                <option value="KZT">KZT (Тенге)</option>
-                <option value="UZS">UZS (Сум)</option>
-                <option value="USD">USD (Доллар)</option>
-                <option value="EUR">EUR (Евро)</option>
-                <option value="RUB">RUB (Рубль)</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Описание</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-              rows={2}
-              className="crm-textarea resize-none"
-              placeholder="Описание позиции"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Местоположение</label>
-              <input
-                type="text"
-                value={form.location}
-                onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))}
-                className="crm-input"
-                placeholder="Склад / Полка / Ячейка"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Отслеживание</label>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="isTracked"
-                  checked={form.isTracked}
-                  onChange={(e) => setForm((prev) => ({ ...prev, isTracked: e.target.checked }))}
-                  className="h-4 w-4 rounded border-gray-300 text-[#467aff] focus:ring-[#467aff]"
-                />
-                <label htmlFor="isTracked" className="text-sm text-[#5d6676]">
-                  Отслеживать остатки
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Поставщик</label>
-              <input
-                type="text"
-                value={form.supplier}
-                onChange={(e) => setForm((prev) => ({ ...prev, supplier: e.target.value }))}
-                className="crm-input"
-                placeholder="Название поставщика"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Контакт поставщика</label>
-              <input
-                type="text"
-                value={form.supplierContact}
-                onChange={(e) => setForm((prev) => ({ ...prev, supplierContact: e.target.value }))}
-                className="crm-input"
-                placeholder="Телефон / Email"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Заметки</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-              rows={2}
-              className="crm-textarea resize-none"
-              placeholder="Дополнительные заметки"
-            />
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }
