@@ -362,6 +362,33 @@ export interface CourseDto {
   createdByName?: string | null;
   updatedBy?: string | null;
   updatedByName?: string | null;
+  /** Only in archive / stop / resume / un-archive responses: what was closed or restored. */
+  lifecycle?: CourseLifecycleResult | null;
+}
+
+export interface CourseLifecycleResult {
+  /** ARCHIVE / STOP — course closed; RESTORE — closed rows put back. */
+  operation: 'ARCHIVE' | 'STOP' | 'RESTORE';
+  effectiveDate?: string | null;
+  students: number;
+  groupEnrollments: number;
+  subscriptions: number;
+  /** RESTORE only: not restored because the student already has a new active subscription. */
+  skippedSubscriptions?: number;
+  schedules: number;
+  lessons: number;
+  restoredActions?: number;
+}
+
+export interface StopCourseRequest {
+  /** YYYY-MM-DD; lessons after it are cancelled. Defaults to today. */
+  fromDate?: string;
+  reason?: string;
+}
+
+export interface ResumeCourseRequest {
+  /** YYYY-MM-DD; cancelled lessons from this date on are re-planned. Defaults to today. */
+  fromDate?: string;
 }
 
 export interface CreateCourseRequest {

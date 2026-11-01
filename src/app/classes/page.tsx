@@ -2,11 +2,12 @@
 import type { DiscountPeriod } from '@/lib/api/types';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Edit2, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { Edit2, FileText, Loader2, PauseCircle, PlayCircle, Plus, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
+import { notifyCourseLifecycle, useCourseLifecycle } from '@/components/features/classes/CourseLifecycle';
 import {
   COURSE_FORMATS,
   COURSE_STATUSES,
@@ -209,11 +210,9 @@ export default function Classes() {
   const updateMutation = useMutation(({ id, data }: { id: string; data: UpdateCourseRequest }) =>
     coursesService.update(id, data)
   );
-  const deleteMutation = useMutation((id: string) => coursesService.delete(id));
 
   const isLoading = coursesLoading || teachersLoading || roomsLoading || studentsLoading || levelsLoading;
   const isSaving = createMutation.loading || updateMutation.loading;
-  const isActionMutating = deleteMutation.loading;
 
   const teacherMap = useMemo(
     () => {
@@ -391,6 +390,8 @@ export default function Classes() {
         id: modalState.courseId,
         data,
       });
+      // ARCHIVED/INACTIVE -> ACTIVE restores students and subscriptions on the backend.
+      notifyCourseLifecycle(savedCourse);
     } else {
       savedCourse = await createMutation.mutate({
         type: data.type,
@@ -443,15 +444,17 @@ export default function Classes() {
     await refetch();
   };
 
-  const handleDeleteCourse = async (course?: CourseListItem | null) => {
-    const target = course ?? selectedCourse;
-    if (!target || !confirm('Вы уверены, что хотите удалить курс?')) {
-      return;
-    }
-
-    await deleteMutation.mutate(target.id);
+  const courseLifecycle = useCourseLifecycle(async () => {
     setSelectedCourse(null);
     await refetch();
+  });
+
+  const handleDeleteCourse = async (course?: CourseListItem | null) => {
+    const target = course ?? selectedCourse;
+    if (!target) {
+      return;
+    }
+    await courseLifecycle.requestDelete({ id: target.id, name: target.name });
   };
 
   return (
@@ -670,8 +673,23 @@ export default function Classes() {
                             >
                               <Edit2 className="h-4 w-4" />
                             </button> : null}
+                            {!isTeacher && course.status === 'ACTIVE' ? <button
+                              onClick={() => courseLifecycle.requestStop({ id: course.id, name: course.name })}
+                              className="rounded-lg p-2 text-[#b7791f] transition-colors hover:bg-[#fff8eb]"
+                              title="Остановить курс"
+                            >
+                              <PauseCircle className="h-4 w-4" />
+                            </button> : null}
+                            {!isTeacher && course.status !== 'ACTIVE' ? <button
+                              onClick={() => courseLifecycle.requestResume({ id: course.id, name: course.name })}
+                              className="rounded-lg p-2 text-[#12998f] transition-colors hover:bg-[#eaf9f7]"
+                              title="Возобновить"
+                            >
+                              <PlayCircle className="h-4 w-4" />
+                            </button> : null}
                             {!isTeacher ? <button
                               onClick={() => handleDeleteCourse(course)}
+                              disabled={courseLifecycle.busy}
                               className="rounded-lg p-2 text-[#c34c4c] transition-colors hover:bg-[#fff1f1]"
                               title="Удалить"
                             >
@@ -709,6 +727,7 @@ export default function Classes() {
         title={modalState.courseId ? 'Редактировать курс' : 'Добавить курс'}
         includeStatus={Boolean(modalState.courseId)}
       /> : null}
+      {!isTeacher ? courseLifecycle.dialogs : null}
     </div>
   );
 }

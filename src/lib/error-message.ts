@@ -8,6 +8,13 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   TEACHER_STAFF_ID_INVALID: 'Некорректный staffId преподавателя.',
 };
 
+/** True when the request failed with the given backend `errorCode`. */
+export function isApiErrorCode(error: unknown, code: string): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const data = error.response?.data;
+  return Boolean(data && typeof data === 'object' && 'errorCode' in data && data.errorCode === code);
+}
+
 export function getErrorMessage(
   error: unknown,
   fallback = 'Произошла ошибка. Попробуйте ещё раз.'

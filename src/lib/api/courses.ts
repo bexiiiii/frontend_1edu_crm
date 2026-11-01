@@ -8,8 +8,14 @@ import type {
   CourseStatus,
   CourseType,
   CreateCourseRequest,
+  ResumeCourseRequest,
+  StopCourseRequest,
   UpdateCourseRequest,
 } from './types';
+import { isApiErrorCode } from '../error-message';
+
+/** Delete of a course with students/lessons is refused with this code (the caller offers stop / archive). */
+export const COURSE_HAS_DATA = 'COURSE_HAS_DATA';
 
 
 // ─── Courses / Classes Service ──────────────────────────────────
@@ -39,9 +45,28 @@ export const coursesService = {
     return response.data;
   },
 
-  /** Delete a course */
-  async delete(id: string) {
-    const response = await api.delete<ApiResponse<void>>(`/api/v1/courses/${id}`);
+  /**
+   * Delete a course. A course with students/lessons fails with {@link COURSE_HAS_DATA}
+   * (no toast — the caller shows a choice) unless `archive` is set: then it is archived
+   * (restorable) and the archived course is returned.
+   */
+  async delete(id: string, options?: { archive?: boolean }) {
+    const response = await api.delete<ApiResponse<CourseDto | null>>(`/api/v1/courses/${id}`, {
+      params: options?.archive ? { archive: true } : undefined,
+      skipErrorToast: (error) => isApiErrorCode(error, COURSE_HAS_DATA),
+    });
+    return response.data;
+  },
+
+  /** «Остановить курс» from a date: lessons after it are cancelled; restorable via resume. */
+  async stop(id: string, data: StopCourseRequest) {
+    const response = await api.post<ApiResponse<CourseDto>>(`/api/v1/courses/${id}/stop`, data);
+    return response.data;
+  },
+
+  /** «Возобновить» a stopped or archived course from a date. */
+  async resume(id: string, data: ResumeCourseRequest) {
+    const response = await api.post<ApiResponse<CourseDto>>(`/api/v1/courses/${id}/resume`, data);
     return response.data;
   },
 

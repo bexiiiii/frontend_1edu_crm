@@ -2,10 +2,11 @@
 import type { DiscountPeriod } from '@/lib/api/types';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, Calendar, Edit2, FileText, Loader2, PlusCircle, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, Calendar, Edit2, FileText, Loader2, PauseCircle, PlayCircle, PlusCircle, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
+import { notifyCourseLifecycle, useCourseLifecycle } from '@/components/features/classes/CourseLifecycle';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Tabs } from '@/components/ui/vercel-tabs';
@@ -223,7 +224,6 @@ export default function ClassDetailsPage() {
   const updateCourseMutation = useMutation(({ id, data }: { id: string; data: UpdateCourseRequest }) =>
     coursesService.update(id, data)
   );
-  const deleteCourseMutation = useMutation((id: string) => coursesService.delete(id));
   const transferCourseMutation = useMutation(
     ({ id, targetBranchId: branchId, targetLevelId: levelId, targetRoomId: roomId }: {
       id: string;
@@ -254,6 +254,13 @@ export default function ClassDetailsPage() {
   );
 
   const course = data?.course ?? null;
+  const courseLifecycle = useCourseLifecycle(async (_updated, deleted) => {
+    if (deleted) {
+      router.push('/classes');
+      return;
+    }
+    await refetch();
+  });
   const teacher = data?.teacher ?? null;
   const room = data?.room ?? null;
   const students = useMemo(() => data?.students ?? [], [data?.students]);
@@ -417,13 +424,7 @@ export default function ClassDetailsPage() {
     if (!course) {
       return;
     }
-
-    if (!confirm('Вы уверены, что хотите удалить курс?')) {
-      return;
-    }
-
-    await deleteCourseMutation.mutate(course.id);
-    router.push('/classes');
+    await courseLifecycle.requestDelete({ id: course.id, name: course.name });
   };
 
   const openTransferModal = () => {
@@ -455,10 +456,12 @@ export default function ClassDetailsPage() {
       return;
     }
 
-    await updateCourseMutation.mutate({
+    const updatedCourse = await updateCourseMutation.mutate({
       id: course.id,
       data: payload,
     });
+    // ARCHIVED/INACTIVE -> ACTIVE restores students and subscriptions on the backend.
+    notifyCourseLifecycle(updatedCourse);
 
     if (studentDiscounts && Object.keys(studentDiscounts).length > 0) {
       await Promise.all(
@@ -527,11 +530,31 @@ export default function ClassDetailsPage() {
                 <Button variant="outline" icon={ArrowRightLeft} onClick={openTransferModal}>
                   Перевести в филиал
                 </Button>
+                {course?.status === 'ACTIVE' ? (
+                  <Button
+                    variant="outline"
+                    icon={PauseCircle}
+                    onClick={() => course && courseLifecycle.requestStop({ id: course.id, name: course.name })}
+                    disabled={courseLifecycle.busy}
+                  >
+                    Остановить курс
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    icon={PlayCircle}
+                    onClick={() => course && courseLifecycle.requestResume({ id: course.id, name: course.name })}
+                    disabled={courseLifecycle.busy}
+                    className="border-[#bfe8e3] bg-[#eaf9f7] text-[#12998f] hover:bg-[#d8f3ef]"
+                  >
+                    Возобновить
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   icon={Trash2}
                   onClick={() => void handleDeleteCourse()}
-                  disabled={deleteCourseMutation.loading}
+                  disabled={courseLifecycle.busy}
                   className="border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
                 >
                   Удалить
@@ -789,6 +812,7 @@ export default function ClassDetailsPage() {
         </div>
       )}
 
+      {!isTeacher ? courseLifecycle.dialogs : null}
       {!isTeacher ? <AddClassModal
         key={`${course?.id ?? 'course'}-${editModalOpen ? 'open' : 'closed'}`}
         isOpen={editModalOpen}
