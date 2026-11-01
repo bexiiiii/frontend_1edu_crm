@@ -212,23 +212,23 @@ export function AttendanceMonthlyTable({
               rows.map((row) => (
                 <tr key={row.studentId} className="crm-table-row">
                   <td className="crm-table-cell sticky left-0 z-10 bg-[#fbfcfd] border border-[#e4eaf0]">
-                    <div>
+                    <div className="flex min-w-[180px] flex-col items-start gap-1">
                       <Link
                         href={`/students/${row.studentId}`}
-                        className="font-semibold text-[#467aff] hover:underline"
+                        className="font-semibold leading-5 text-[#467aff] hover:underline"
                       >
                         {row.fullName}
                       </Link>
                       <span
-                        className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${STUDENT_STATUS_COLORS[row.studentStatus]}`}
+                        className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${STUDENT_STATUS_COLORS[row.studentStatus]}`}
                       >
                         {STUDENT_STATUS_LABELS[row.studentStatus]}
                       </span>
                       {onRedListAction ? (
                         <button
                           type="button"
-                          className={`mt-1 block text-[11px] font-semibold hover:underline ${
-                            row.openRedList ? 'text-[#467aff]' : 'text-red-600'
+                          className={`text-[11px] font-medium hover:underline ${
+                            row.openRedList ? 'text-[#467aff]' : 'text-[#8a93a3] hover:text-red-600'
                           }`}
                           onClick={() => onRedListAction(row)}
                           title={row.openRedList ? `В редлисте с ${formatRedListDate(row.openRedList.fromDate)}` : undefined}
