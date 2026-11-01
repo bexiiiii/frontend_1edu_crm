@@ -631,6 +631,8 @@ export default function StudentProfilePage() {
     if (!data) {
       return [] as Array<{
         key: string;
+      courseId?: string | null;
+        courseId?: string | null;
         groupName: string;
         courseName: string;
         daysText: string;
@@ -668,6 +670,7 @@ export default function StudentProfilePage() {
 
       rows.push({
         key: schedule.id,
+        courseId: subscription.courseId || schedule.courseId || null,
         groupName: schedule.name,
         courseName: subscription.courseId
           ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
@@ -696,6 +699,7 @@ export default function StudentProfilePage() {
 
           rows.push({
             key: `${enrollment.courseId}-${schedule.id}`,
+            courseId: enrollment.courseId,
             groupName: schedule.name,
             courseName: enrollment.courseName || data.coursesById[enrollment.courseId]?.name || 'Неизвестный курс',
             daysText: formatScheduleDays(schedule.daysOfWeek),
@@ -1795,7 +1799,7 @@ export default function StudentProfilePage() {
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
                         <Link
-                          href={`/classes/${row.key}`}
+                          href={row.courseId ? `/classes/${row.courseId}` : '/classes'}
                           className="font-medium text-[#273142] transition-colors hover:text-[#3568eb] hover:underline"
                         >
                           {row.groupName}
