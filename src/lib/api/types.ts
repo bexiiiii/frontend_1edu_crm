@@ -1604,7 +1604,10 @@ export interface RefundStudentBalanceRequest {
 
 export interface CreateStudentPaymentRequest {
   studentId: string;
-  subscriptionId: string;
+  /** Omitted when the money goes to the student's balance without a course. */
+  subscriptionId?: string;
+  /** Same value on a retried submission, so the server records the payment once. */
+  clientReference?: string;
   amount: number;
   paidAt: string;
   paymentMonth: string;

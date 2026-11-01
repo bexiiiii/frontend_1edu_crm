@@ -114,6 +114,17 @@ const SUBSCRIPTION_STATUS_COLORS: Record<SubscriptionDto['status'], string> = {
   FROZEN: 'border-sky-200 bg-sky-100 text-sky-700',
 };
 
+// Payment form value for money that goes to the balance without a course.
+const BALANCE_ONLY = '__balance__';
+
+const newClientReference = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+// Note the payment service puts on allocations it makes from the student's free balance.
+const AUTO_BALANCE_NOTE = 'Автоматически с баланса';
+
 const PAYMENT_METHOD_LABELS: Record<StudentPaymentDto['method'], string> = {
   CASH: 'Наличные',
   CARD: 'Карта',
@@ -270,6 +281,7 @@ export default function StudentProfilePage() {
   });
   const [paymentForm, setPaymentForm] = useState<{
     subscriptionId: string;
+    clientReference: string;
     amount: string;
     paidAt: string;
     paymentMonth: string;
@@ -277,6 +289,7 @@ export default function StudentProfilePage() {
     notes: string;
   }>({
     subscriptionId: '',
+    clientReference: '',
     amount: '',
     paidAt: new Date().toISOString().slice(0, 10),
     paymentMonth: new Date().toISOString().slice(0, 7),
@@ -884,7 +897,8 @@ export default function StudentProfilePage() {
 
     setPaymentForm((previous) => ({
       ...previous,
-      subscriptionId: firstSubscription?.id || '',
+      subscriptionId: firstSubscription?.id || BALANCE_ONLY,
+      clientReference: newClientReference(),
       amount: String(defaultAmount),
       paidAt: new Date().toISOString().slice(0, 10),
       paymentMonth: new Date().toISOString().slice(0, 7),
@@ -939,7 +953,8 @@ export default function StudentProfilePage() {
 
     await createPaymentMutation.mutate({
       studentId,
-      subscriptionId: paymentForm.subscriptionId,
+      subscriptionId: paymentForm.subscriptionId === BALANCE_ONLY ? undefined : paymentForm.subscriptionId,
+      clientReference: paymentForm.clientReference || undefined,
       amount: parsedAmount,
       paidAt: paymentForm.paidAt,
       paymentMonth: paymentForm.paymentMonth,
@@ -965,7 +980,7 @@ export default function StudentProfilePage() {
   const handleRefundBalance = async () => {
     if (!studentId) return;
     const amount = Number(refundForm.amount);
-    const available = Math.max(data?.paymentHistory?.studentBalance ?? 0, data?.paymentHistory?.totalPaid ?? 0);
+    const available = Math.max(data?.paymentHistory?.studentBalance ?? 0, 0);
     if (!Number.isFinite(amount) || amount <= 0) {
       pushToast({ message: 'Введите корректную сумму возврата', tone: 'error' });
       return;
@@ -1921,19 +1936,17 @@ export default function StudentProfilePage() {
                             </span>
                           ) : (
                             <>
-                              <div className="text-sm font-medium text-[#273142]">
-                                {row.groupId ? (
+                              {row.groupId ? (
+                                <div className="text-sm font-medium text-[#273142]">
                                   <Link
                                     href={`/classes/${row.groupId}`}
                                     className="transition-colors hover:text-[#3568eb] hover:underline"
                                   >
                                     {row.groupName}
                                   </Link>
-                                ) : (
-                                  row.groupName
-                                )}
-                              </div>
-                              <div className="text-xs text-[#8a93a3]">
+                                </div>
+                              ) : null}
+                              <div className={row.groupId ? 'text-xs text-[#8a93a3]' : 'text-sm font-medium text-[#273142]'}>
                                 <Link
                                   href="/classes"
                                   className="transition-colors hover:text-[#3568eb] hover:underline"
@@ -1944,7 +1957,20 @@ export default function StudentProfilePage() {
                             </>
                           )}
                         </td>
-                        <td className="crm-table-cell">{PAYMENT_METHOD_LABELS[row.method] || row.method}</td>
+                        <td className="crm-table-cell">
+                          {row.paymentScope === 'BALANCE_ALLOCATION' ? (
+                            <span className="inline-flex flex-wrap items-center gap-1">
+                              <span>С баланса</span>
+                              {row.notes === AUTO_BALANCE_NOTE ? (
+                                <span className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700">
+                                  авто
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : (
+                            PAYMENT_METHOD_LABELS[row.method] || row.method
+                          )}
+                        </td>
                         <td className={`crm-table-cell font-medium ${
                           row.paymentScope === 'BALANCE_REFUND'
                             ? 'text-rose-700 font-semibold'
@@ -1972,6 +1998,13 @@ export default function StudentProfilePage() {
                             >
                               Удалено{row.deletedBy ? ` (${row.deletedBy})` : ''}
                               {row.deletedAt ? ` · ${formatDateTime(row.deletedAt)}` : ''}
+                            </span>
+                          ) : row.paymentScope === 'BALANCE_ALLOCATION' && row.notes === AUTO_BALANCE_NOTE ? (
+                            <span
+                              className="text-xs text-[#8a93a3]"
+                              title="CRM сама зачислила свободный баланс ученика на самый старый долг"
+                            >
+                              Зачислено автоматически
                             </span>
                           ) : (
                             <button
@@ -2237,7 +2270,8 @@ export default function StudentProfilePage() {
       </Modal>
 
       {(() => {
-        const maxRefundable = Math.max(data.paymentHistory?.studentBalance ?? 0, data.paymentHistory?.totalPaid ?? 0);
+        // Only the advance left after all debts can be refunded (matches the server limit).
+        const maxRefundable = Math.max(data.paymentHistory?.studentBalance ?? 0, 0);
         return (
           <Modal
             isOpen={isRefundModalOpen}
@@ -2253,7 +2287,7 @@ export default function StudentProfilePage() {
                   disabled={
                     refundBalanceMutation.loading ||
                     Number(refundForm.amount) <= 0 ||
-                    (maxRefundable > 0 && Number(refundForm.amount) > maxRefundable)
+                    Number(refundForm.amount) > maxRefundable
                   }
                   className="bg-rose-600 hover:bg-rose-700"
                 >
@@ -2284,7 +2318,7 @@ export default function StudentProfilePage() {
                   <input
                     type="number"
                     min="0.01"
-                    max={maxRefundable > 0 ? maxRefundable : undefined}
+                    max={maxRefundable}
                     step="0.01"
                     value={refundForm.amount}
                     onChange={(event) => setRefundForm((prev) => ({ ...prev, amount: event.target.value }))}
@@ -2411,15 +2445,16 @@ export default function StudentProfilePage() {
                 const monthly = subSummary?.monthlyExpected || (subscription.amount >= 10000 ? Math.round(subscription.amount / 12) : subscription.amount);
                 const courseName = subscription.courseId ? data.coursesById[subscription.courseId]?.name || 'Курс' : 'Курс';
                 const groupLabel = subscription.groupId
-                  ? data.schedulesById[subscription.groupId]?.name || subscription.groupId
-                  : 'Без группы';
+                  ? data.schedulesById[subscription.groupId]?.name || null
+                  : null;
 
                 return (
                   <option key={subscription.id} value={subscription.id}>
-                    {courseName} ({groupLabel}) • {formatMoney(monthly)} / мес
+                    {courseName}{groupLabel ? ` (${groupLabel})` : ''} • {formatMoney(monthly)} / мес
                   </option>
                 );
               })}
+              <option value={BALANCE_ONLY}>На баланс (без курса) — CRM сама зачислит на долги</option>
             </select>
           </div>
 
