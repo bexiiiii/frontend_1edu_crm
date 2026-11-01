@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Info } from 'lucide-react';
-import { studentsService, type StudentDto } from '@/lib/api';
+import { studentsService, type SimilarStudentDto } from '@/lib/api';
 
 const MIN_PHONE_DIGITS = 10;
 const DEBOUNCE_MS = 500;
@@ -12,16 +12,8 @@ function phoneKey(value: string | null | undefined): string {
   return digits.length >= MIN_PHONE_DIGITS ? digits.slice(-MIN_PHONE_DIGITS) : '';
 }
 
-function studentPhoneKeys(student: StudentDto): string[] {
-  return [student.phone, student.studentPhone, student.parentPhone, ...(student.additionalPhones ?? [])]
-    .map(phoneKey)
-    .filter(Boolean);
-}
-
-function displayName(student: StudentDto): string {
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim()
-    || student.fullName?.trim()
-    || 'Без имени';
+function displayName(student: SimilarStudentDto): string {
+  return student.fullName?.trim() || 'Без имени';
 }
 
 interface SimilarStudentPhoneHintProps {
@@ -36,7 +28,7 @@ interface SimilarStudentPhoneHintProps {
  */
 export const SimilarStudentPhoneHint = ({ phone, excludeStudentId }: SimilarStudentPhoneHintProps) => {
   // Results are tagged with the phone key they belong to, so stale ones are simply not shown.
-  const [result, setResult] = useState<{ key: string; students: StudentDto[] }>({ key: '', students: [] });
+  const [result, setResult] = useState<{ key: string; students: SimilarStudentDto[] }>({ key: '', students: [] });
   const key = phoneKey(phone);
 
   useEffect(() => {
@@ -44,25 +36,15 @@ export const SimilarStudentPhoneHint = ({ phone, excludeStudentId }: SimilarStud
 
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const queries = Array.from(new Set([phone.trim(), key]));
-      const found = new Map<string, StudentDto>();
-
-      for (const query of queries) {
-        try {
-          const response = await studentsService.search({ query, page: 0, size: 10 });
-          (response.data?.content ?? []).forEach((student) => {
-            if (student.id !== excludeStudentId && studentPhoneKeys(student).includes(key)) {
-              found.set(student.id, student);
-            }
-          });
-        } catch {
-          // The hint is optional: a failed lookup must never block the form.
-        }
-        if (cancelled) return;
-        if (found.size > 0) break;
+      let students: SimilarStudentDto[] = [];
+      try {
+        // Backend compares phones regardless of format; the request never shows a global error toast.
+        const response = await studentsService.findSimilar(phone.trim(), excludeStudentId);
+        students = (response.data ?? []).filter((student) => student.id !== excludeStudentId);
+      } catch {
+        // The hint is optional: a failed lookup must never block the form.
       }
-
-      if (!cancelled) setResult({ key, students: Array.from(found.values()).slice(0, 3) });
+      if (!cancelled) setResult({ key, students: students.slice(0, 3) });
     }, DEBOUNCE_MS);
 
     return () => {

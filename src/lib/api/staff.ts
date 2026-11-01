@@ -8,6 +8,8 @@ import type {
   UpdateStaffRequest,
   StaffRole,
   StaffStatus,
+  StaffAssignmentsDto,
+  ReplaceTeacherResultDto,
 } from './types';
 
 // ─── Staff Service ──────────────────────────────────────────────
@@ -81,6 +83,18 @@ export const staffService = {
   /** Search staff members */
   async search(params: PaginationParams & { query: string }) {
     const response = await api.get<ApiResponse<PageResponse<StaffDto>>>('/api/v1/staff/search', { params });
+    return response.data;
+  },
+
+  /** Active courses, schedules and future planned lessons of a teacher */
+  async getAssignments(id: string) {
+    const response = await api.get<ApiResponse<StaffAssignmentsDto>>(`/api/v1/staff/${id}/assignments`);
+    return response.data;
+  },
+
+  /** Hand active courses/schedules and future planned lessons over to another teacher (TENANT_ADMIN only) */
+  async replaceTeacher(id: string, newTeacherId: string) {
+    const response = await api.post<ApiResponse<ReplaceTeacherResultDto>>(`/api/v1/staff/${id}/replace`, { newTeacherId });
     return response.data;
   },
 

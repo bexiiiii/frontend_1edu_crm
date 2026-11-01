@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios';
 import api from '../api';
 import type { ApiResponse, PageResponse, PaginationParams, AttendanceDto, AttendanceStatus } from './types';
 
@@ -5,9 +6,13 @@ import type { ApiResponse, PageResponse, PaginationParams, AttendanceDto, Attend
 
 export const attendanceService = {
   /** Mark single attendance for a lesson */
-  async mark(lessonId: string, data: { studentId: string; status: AttendanceStatus; notes?: string }) {
+  async mark(
+    lessonId: string,
+    data: { studentId: string; status: AttendanceStatus; notes?: string; unlockReason?: string },
+    config?: AxiosRequestConfig
+  ) {
     const response = await api.post<ApiResponse<AttendanceDto>>(
-      `/api/v1/lessons/${lessonId}/attendance`, data
+      `/api/v1/lessons/${lessonId}/attendance`, data, config
     );
     return response.data;
   },
@@ -15,18 +20,24 @@ export const attendanceService = {
   /** Bulk mark attendance for a lesson */
   async bulkMark(
     lessonId: string,
-    attendances: { studentId: string; status: AttendanceStatus; notes?: string }[]
+    attendances: { studentId: string; status: AttendanceStatus; notes?: string }[],
+    unlockReason?: string,
+    config?: AxiosRequestConfig
   ) {
     const response = await api.post<ApiResponse<AttendanceDto[]>>(
-      `/api/v1/lessons/${lessonId}/attendance/bulk`, { attendances }
+      `/api/v1/lessons/${lessonId}/attendance/bulk`,
+      unlockReason ? { attendances, unlockReason } : { attendances },
+      config
     );
     return response.data;
   },
 
   /** Mark all students as ATTENDED for a lesson */
-  async markAll(lessonId: string, studentIds: string[]) {
+  async markAll(lessonId: string, studentIds: string[], unlockReason?: string, config?: AxiosRequestConfig) {
     const response = await api.post<ApiResponse<AttendanceDto[]>>(
-      `/api/v1/lessons/${lessonId}/attendance/mark-all`, studentIds
+      `/api/v1/lessons/${lessonId}/attendance/mark-all`,
+      studentIds,
+      unlockReason ? { ...config, params: { ...config?.params, unlockReason } } : config
     );
     return response.data;
   },

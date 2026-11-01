@@ -10,6 +10,8 @@ import type {
   UpdateStudentRequest,
   ReturnStudentToGroupRequest,
   AddStudentToBranchRequest,
+  StudentBranchDto,
+  SimilarStudentDto,
 } from './types';
 
 // ─── Students Service ───────────────────────────────────────────
@@ -98,10 +100,22 @@ export const studentsService = {
     return response.data;
   },
 
-  /** Attach the same student card to one more branch (student may study in several branches) */
+  /** Attach the same student card to one more branch; returns the student's branch list */
   async addToBranch(studentId: string, branchId: string) {
     const body: AddStudentToBranchRequest = { branchId };
-    const response = await api.post<ApiResponse<StudentDto>>(`/api/v1/students/${studentId}/branches`, body);
+    const response = await api.post<ApiResponse<StudentBranchDto[]>>(`/api/v1/students/${studentId}/branches`, body);
+    return response.data;
+  },
+
+  /**
+   * Students with the same phone — a duplicate hint shown next to the phone field.
+   * Never blocks creation, so errors are silent (no global toast).
+   */
+  async findSimilar(phone: string, excludeId?: string) {
+    const response = await api.get<ApiResponse<SimilarStudentDto[]>>('/api/v1/students/similar', {
+      params: excludeId ? { phone, excludeId } : { phone },
+      skipErrorToast: true,
+    });
     return response.data;
   },
 };

@@ -5,6 +5,7 @@ import { Edit2, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AddEmployeeModal } from '@/components/features/employees/AddEmployeeModal';
+import { ReplaceTeacherModal } from '@/components/features/employees/ReplaceTeacherModal';
 import {
   STAFF_ROLE_LABELS,
   STAFF_ROLE_OPTIONS,
@@ -13,7 +14,7 @@ import {
   STAFF_STATUS_LABELS,
   STAFF_STATUS_OPTIONS,
 } from '@/constants/employee';
-import { staffService, type CreateStaffRequest, type UpdateStaffRequest } from '@/lib/api';
+import { staffService, type CreateStaffRequest, type StaffDto, type UpdateStaffRequest } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
 import type { StaffFilters, StaffFormValues, StaffListItem } from '@/types/employee';
@@ -65,6 +66,7 @@ export default function Employees() {
     role: 'all',
     status: 'all',
   });
+  const [dismissedStaff, setDismissedStaff] = useState<StaffDto | null>(null);
   const [modalState, setModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -188,10 +190,14 @@ export default function Employees() {
 
   const handleSaveEmployee = async (data: CreateStaffRequest | UpdateStaffRequest) => {
     if (modalState.employeeId) {
-      await updateMutation.mutate({
+      const updated = await updateMutation.mutate({
         id: modalState.employeeId,
         data: data as UpdateStaffRequest,
       });
+      // Just dismissed with an active teaching load: offer a replacement right away.
+      if (updated?.activeAssignments?.hasAssignments) {
+        setDismissedStaff(updated);
+      }
     } else {
       await createMutation.mutate(data as CreateStaffRequest);
     }
@@ -429,6 +435,14 @@ export default function Employees() {
         title={modalState.employeeId ? 'Редактировать сотрудника' : 'Добавить сотрудника'}
         includeStatus={Boolean(modalState.employeeId)}
         showSalary={!isManager}
+      />
+
+      <ReplaceTeacherModal
+        staffId={dismissedStaff?.id ?? null}
+        staffName={dismissedStaff?.fullName}
+        assignments={dismissedStaff?.activeAssignments ?? null}
+        onClose={() => setDismissedStaff(null)}
+        onReplaced={refetch}
       />
     </div>
   );

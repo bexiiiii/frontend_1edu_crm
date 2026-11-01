@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { AddEmployeeModal } from '@/components/features/employees/AddEmployeeModal';
+import { ReplaceTeacherModal } from '@/components/features/employees/ReplaceTeacherModal';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
@@ -44,6 +45,7 @@ import {
   type StaffSalaryHistoryDto,
   type StudentDto,
   type UpdateStaffRequest,
+  type StaffAssignmentsDto,
 } from '@/lib/api';
 import {
   formatScheduleDays,
@@ -182,6 +184,7 @@ export default function StaffProfilePage() {
   const [selectedSalaryMonth, setSelectedSalaryMonth] = useState(getCurrentMonth());
   const [selectedSalaryBranchId, setSelectedSalaryBranchId] = useState('all');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [dismissalAssignments, setDismissalAssignments] = useState<StaffAssignmentsDto | null>(null);
   const [paymentModalState, setPaymentModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -482,12 +485,16 @@ export default function StaffProfilePage() {
       return;
     }
 
-    await updateStaffMutation.mutate({
+    const updated = await updateStaffMutation.mutate({
       id: staff.id,
       payload,
     });
 
     setIsEditModalOpen(false);
+    // Just dismissed with an active teaching load: offer a replacement right away.
+    if (updated?.activeAssignments?.hasAssignments) {
+      setDismissalAssignments(updated.activeAssignments);
+    }
     await refetch();
   };
 
@@ -1180,6 +1187,14 @@ export default function StaffProfilePage() {
         title="Редактировать сотрудника"
         includeStatus
         showSalary={!isManager}
+      />
+
+      <ReplaceTeacherModal
+        staffId={dismissalAssignments ? staff.id : null}
+        staffName={staff.fullName}
+        assignments={dismissalAssignments}
+        onClose={() => setDismissalAssignments(null)}
+        onReplaced={refetch}
       />
 
       <AddSalaryModal

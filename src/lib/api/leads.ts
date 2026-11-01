@@ -44,6 +44,12 @@ export const leadsService = {
     return response.data;
   },
 
+  /** Convert lead to student: the lead moves to WON with a link to the created student (needs LEADS_EDIT) */
+  async convert(id: string, studentId: string) {
+    const response = await api.post<ApiResponse<LeadDto>>(`/api/v1/leads/${id}/convert`, { studentId });
+    return response.data;
+  },
+
   /** Delete a lead */
   async delete(id: string) {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/leads/${id}`);

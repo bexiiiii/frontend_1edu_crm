@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import type { AxiosRequestConfig } from 'axios';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AddAttendanceModal } from '@/components/features/attendance/AddAttendanceModal';
@@ -18,6 +19,7 @@ import {
 } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatFullName } from '@/lib/utils';
+import { useAttendanceUnlock } from '@/components/features/attendance/useAttendanceUnlock';
 import {
   ATTENDANCE_STATUS_COLORS,
   ATTENDANCE_STATUS_LABELS,
@@ -268,11 +270,14 @@ export default function AttendancePage() {
     ({
       lessonId,
       payload,
+      requestConfig,
     }: {
       lessonId: string;
-      payload: { studentId: string; status: AttendanceStatus; notes?: string };
-    }) => attendanceService.mark(lessonId, payload)
+      payload: { studentId: string; status: AttendanceStatus; notes?: string; unlockReason?: string };
+      requestConfig?: AxiosRequestConfig;
+    }) => attendanceService.mark(lessonId, payload, requestConfig)
   );
+  const attendanceUnlock = useAttendanceUnlock();
 
   const attendanceLessonOptions = useMemo(() => {
     const groupStudentsById = data?.groupStudentsById ?? {};
@@ -333,14 +338,18 @@ export default function AttendancePage() {
     status: AttendanceStatus;
     notes?: string;
   }) => {
-    await createAttendanceMutation.mutate({
-      lessonId: data.lessonId,
-      payload: {
-        studentId: data.studentId,
-        status: data.status,
-        notes: data.notes,
-      },
-    });
+    await attendanceUnlock.run((unlockReason, requestConfig) =>
+      createAttendanceMutation.mutate({
+        requestConfig,
+        lessonId: data.lessonId,
+        payload: {
+          studentId: data.studentId,
+          status: data.status,
+          notes: data.notes,
+          unlockReason,
+        },
+      })
+    );
     closeAttendanceModal();
     await refetch();
   };
@@ -533,6 +542,8 @@ export default function AttendancePage() {
         lessons={attendanceLessonOptions}
         isSubmitting={createAttendanceMutation.loading}
       />
+
+      {attendanceUnlock.modal}
     </div>
   );
 }

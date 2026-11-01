@@ -318,7 +318,8 @@ function LeadCardItem({
   onOpen: (lead: LeadBoardCard) => void;
   onDelete: (lead: LeadBoardCard) => void;
   onChangeStage: (lead: LeadBoardCard, stage: LeadStage) => void;
-  onConvert: (lead: LeadBoardCard) => void;
+  /** Absent when the user may not convert leads (needs LEADS_EDIT). */
+  onConvert?: (lead: LeadBoardCard) => void;
   stageOptions: Array<Pick<LeadColumn, 'stage' | 'title'>>;
   isMovingStage: boolean;
   isDeleting: boolean;
@@ -431,7 +432,7 @@ function LeadCardItem({
         </button>
       </div>
 
-      {isRegistrationLead(lead) ? (
+      {onConvert && isRegistrationLead(lead) && !lead.studentId ? (
         <button
           type="button"
           onClick={() => onConvert(lead)}
@@ -471,7 +472,7 @@ function LeadColumnCard({
   onOpenLead: (lead: LeadBoardCard) => void;
   onDeleteLead: (lead: LeadBoardCard) => void;
   onChangeStage: (lead: LeadBoardCard, stage: LeadStage) => void;
-  onConvertLead: (lead: LeadBoardCard) => void;
+  onConvertLead?: (lead: LeadBoardCard) => void;
   onDropLead: (leadId: string, stage: LeadStage) => void;
   activeStageId: string | null;
   activeDeleteId: string | null;
@@ -716,7 +717,7 @@ function LeadFormModal({
   };
 
   const handleConvert = async () => {
-    if (!onConvert || !confirm('Создать ученика из этой регистрационной заявки? Все данные формы будут перенесены, а лид исчезнет с Kanban.')) {
+    if (!onConvert || !confirm('Создать ученика из этой регистрационной заявки? Все данные формы будут перенесены, а лид перейдёт в «Успешный» со ссылкой на ученика.')) {
       return;
     }
     setError(null);
@@ -941,6 +942,8 @@ export default function KanbanPage() {
   const { roles, permissions, tenantId, user, userEmail } = useAuthStore();
   const columnStorageKey = `1edu:kanban-columns:${tenantId || 'current-tenant'}`;
 
+  // POST /leads/{id}/convert requires TENANT_ADMIN or LEADS_EDIT.
+  const canConvertLeads = roles.includes('TENANT_ADMIN') || permissions.includes('LEADS_EDIT');
   const canViewStaff = roles.includes('TENANT_ADMIN') || roles.includes('SUPER_ADMIN') || roles.includes('MANAGER') || permissions.includes('STAFF_VIEW');
 
   const { data: staffPage } = useApi(
@@ -1030,6 +1033,9 @@ export default function KanbanPage() {
   );
   const deleteMutation = useMutation((id: string) => leadsService.delete(id));
   const createStudentMutation = useMutation((data: CreateStudentRequest) => studentsService.create(data));
+  const convertLeadMutation = useMutation(({ id, studentId }: { id: string; studentId: string }) =>
+    leadsService.convert(id, studentId)
+  );
 
   const leads = useMemo<LeadBoardCard[]>(
     () =>
@@ -1208,11 +1214,12 @@ export default function KanbanPage() {
     setPageError(null);
     setActiveConvertId(lead.id);
     try {
-      await createStudentMutation.mutate(toStudentPayload(lead));
+      const student = await createStudentMutation.mutate(toStudentPayload(lead));
       try {
-        await deleteMutation.mutate(lead.id);
-      } catch (deleteError) {
-        throw new Error(`Ученик создан, но лид пока не удалён. Удалите лид вручную, чтобы не создать дубль. ${getErrorMessage(deleteError, '')}`.trim());
+        // The lead is not deleted: it moves to WON with a link to the student (keeps the funnel honest).
+        await convertLeadMutation.mutate({ id: lead.id, studentId: student.id });
+      } catch (convertLeadError) {
+        throw new Error(`Ученик создан, но лид пока не переведён в «Успешный». Переведите лид вручную, чтобы не создать дубль. ${getErrorMessage(convertLeadError, '')}`.trim());
       }
       if (modalState.leadId === lead.id) closeModal();
       await refetch();
@@ -1376,7 +1383,7 @@ export default function KanbanPage() {
                 onOpenLead={openEditModal}
                 onDeleteLead={(lead) => void handleDeleteLead(lead)}
                 onChangeStage={(lead, stage) => void handleMoveLeadStage(lead, stage)}
-                onConvertLead={(lead) => void handleConvertRegistrationLead(lead)}
+                onConvertLead={canConvertLeads ? (lead) => void handleConvertRegistrationLead(lead) : undefined}
                 onDropLead={handleDropLead}
                 activeStageId={activeStageId}
                 activeDeleteId={activeDeleteId}
@@ -1398,7 +1405,11 @@ export default function KanbanPage() {
         onClose={closeModal}
         onSave={handleSaveLead}
         onDelete={modalState.leadId ? () => handleDeleteLead(undefined, true) : undefined}
-        onConvert={modalState.formLead && isRegistrationLead(modalState.formLead) ? () => handleConvertRegistrationLead(modalState.formLead!) : undefined}
+        onConvert={
+          canConvertLeads && modalState.formLead && isRegistrationLead(modalState.formLead) && !modalState.formLead.studentId
+            ? () => handleConvertRegistrationLead(modalState.formLead!)
+            : undefined
+        }
         initialValues={modalState.initialValues}
         formLead={modalState.formLead}
         assignees={staffOptions}

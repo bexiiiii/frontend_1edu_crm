@@ -1025,8 +1025,8 @@ export default function StudentProfilePage() {
     if (!studentId || !addBranchId) return;
     try {
       await addToBranchMutation.mutate({ id: studentId, branchId: addBranchId });
-    } catch (err) {
-      pushToast({ message: getErrorMessage(err, 'Не удалось добавить ученика в филиал'), tone: 'error' });
+    } catch {
+      // The API error is already shown by the global toast; keep the modal open.
       return;
     }
     const branchName = (branchesResponse ?? []).find((branch) => branch.id === addBranchId)?.name;

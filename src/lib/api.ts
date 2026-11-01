@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosError } from 'axios';
 import { getErrorMessage } from './error-message';
 import { pushToast } from './toast';
 
@@ -8,6 +8,16 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 const KEYCLOAK_URL = process.env.NEXT_PUBLIC_KEYCLOAK_URL || '/auth';
 const KEYCLOAK_REALM = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || 'ondeedu';
 const KEYCLOAK_CLIENT_ID = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || '1edu-web-app';
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Suppress the global error toast for this request: `true` always, or a predicate for
+     * errors the caller shows itself (e.g. an inline hint or a modal) to avoid duplicate toasts.
+     */
+    skipErrorToast?: boolean | ((error: AxiosError) => boolean);
+  }
+}
 
 // Main API client (goes through gateway)
 const api = axios.create({
@@ -160,7 +170,9 @@ api.interceptors.response.use(
       }
     }
 
-    if (error?.code !== 'ERR_CANCELED') {
+    const skipErrorToast = originalRequest?.skipErrorToast;
+    const toastSuppressed = typeof skipErrorToast === 'function' ? skipErrorToast(error) : skipErrorToast === true;
+    if (error?.code !== 'ERR_CANCELED' && !toastSuppressed) {
       pushToast({
         message: getErrorMessage(error, 'Не удалось выполнить запрос.'),
         tone: 'error',

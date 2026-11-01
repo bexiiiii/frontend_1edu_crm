@@ -221,6 +221,24 @@ export interface AddStudentToBranchRequest {
   branchId: string;
 }
 
+/** Item of GET/POST /api/v1/students/{studentId}/branches */
+export interface StudentBranchDto {
+  branchId: string;
+  branchName: string | null;
+  /** true for the home branch stored on the student card */
+  home: boolean;
+  createdAt: string | null;
+  createdBy: string | null;
+}
+
+/** Item of GET /api/v1/students/similar — students with the same phone (hint only, never blocks) */
+export interface SimilarStudentDto {
+  id: string;
+  fullName: string | null;
+  phone: string | null;
+  branchId: string | null;
+}
+
 export interface StudentStatsDto {
   totalStudents: number;
   activeStudents: number;
@@ -232,6 +250,33 @@ export interface StudentStatsDto {
 // ─── Staff ──────────────────────────────────────────────────────
 
 export type StaffRole = 'TEACHER' | 'MANAGER' | 'RECEPTIONIST' | 'ACCOUNTANT' | 'ADMIN';
+/** GET /api/v1/staff/{id}/assignments — active teaching load (offered for replacement on dismissal) */
+export interface StaffAssignmentsDto {
+  staffId: string;
+  activeCourses: Array<{ id: string; name: string | null }>;
+  activeSchedules: Array<{ id: string; name: string | null; courseId: string | null }>;
+  /** Total future planned lessons; `futureLessons` may be truncated */
+  futureLessonsCount: number;
+  futureLessons: Array<{
+    id: string;
+    groupId: string | null;
+    groupName: string | null;
+    lessonDate: string;
+    startTime: string | null;
+    endTime: string | null;
+  }>;
+  hasAssignments: boolean;
+}
+
+/** Result of POST /api/v1/staff/{id}/replace */
+export interface ReplaceTeacherResultDto {
+  oldTeacherId: string;
+  newTeacherId: string;
+  coursesUpdated: number;
+  schedulesUpdated: number;
+  lessonsUpdated: number;
+}
+
 export type StaffStatus = 'ACTIVE' | 'ON_LEAVE' | 'DISMISSED';
 export type SalaryType = 'FIXED' | 'PER_STUDENT_PERCENTAGE';
 
@@ -256,6 +301,8 @@ export interface StaffDto {
   notes: string | null;
   branchIds?: string[];
   scheduleColor?: string | null;
+  /** Filled by PUT /staff/{id} when the staff member has just been dismissed */
+  activeAssignments?: StaffAssignmentsDto | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -508,6 +555,8 @@ export interface LeadDto {
   formData: string | null;
   notes: string | null;
   assignedTo: string | null;
+  /** Student created from this lead (lead stays in WON after conversion) */
+  studentId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

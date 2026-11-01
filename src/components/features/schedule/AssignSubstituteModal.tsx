@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
+import { getErrorMessage } from '@/lib/error-message';
 
 interface AssignSubstituteModalProps {
   isOpen: boolean;
@@ -33,6 +34,7 @@ export const AssignSubstituteModal = ({
   const [mode, setMode] = useState<'day' | 'range'>('day');
   const [fromDate, setFromDate] = useState(lessonDate || '');
   const [toDate, setToDate] = useState(lessonDate || '');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -40,15 +42,23 @@ export const AssignSubstituteModal = ({
       setMode('day');
       setFromDate(lessonDate || '');
       setToDate(lessonDate || '');
+      setError(null);
     }
   }, [isOpen, currentSubstituteId, lessonDate]);
 
   const handleSave = async () => {
-    if (mode === 'range' && onSaveRange) {
-      if (!fromDate || !toDate) return;
-      await onSaveRange({ substituteTeacherId: selectedId || null, fromDate, toDate });
-    } else {
-      await onSave(selectedId || null);
+    setError(null);
+    try {
+      if (mode === 'range' && onSaveRange) {
+        if (!fromDate || !toDate) return;
+        await onSaveRange({ substituteTeacherId: selectedId || null, fromDate, toDate });
+      } else {
+        await onSave(selectedId || null);
+      }
+    } catch (saveError) {
+      // Keep the modal open so the user can fix the choice and retry.
+      setError(getErrorMessage(saveError, 'Не удалось назначить замену.'));
+      return;
     }
     onClose();
   };
@@ -73,6 +83,9 @@ export const AssignSubstituteModal = ({
       }
     >
       <div className="space-y-4">
+        {error ? (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        ) : null}
         <p className="text-sm text-[#5b6472]">
           {teacherName ? `Основной преподаватель: ${teacherName}. ` : ''}
           Зарплата за занятия в выбранный период будет начислена заменяющему, а не основному преподавателю.

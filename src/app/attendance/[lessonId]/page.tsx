@@ -6,8 +6,10 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, Save, UserPlus, Users } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import type { AxiosRequestConfig } from 'axios';
 import { AttendanceMonthlyTable } from '@/components/features/attendance/AttendanceMonthlyTable';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
+import { useAttendanceUnlock } from '@/components/features/attendance/useAttendanceUnlock';
 import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -430,13 +432,22 @@ export default function AttendanceLessonPage() {
     }) => lessonsService.update(id, payload)
   );
   const saveAttendanceMutation = useMutation(
-    ({ id, attendances }: { id: string; attendances: Array<{ studentId: string; status: AttendanceStatus }> }) =>
-      attendanceService.bulkMark(id, attendances)
+    ({ id, attendances, unlockReason, requestConfig }: {
+      id: string;
+      attendances: Array<{ studentId: string; status: AttendanceStatus }>;
+      unlockReason?: string;
+      requestConfig?: AxiosRequestConfig;
+    }) => attendanceService.bulkMark(id, attendances, unlockReason, requestConfig)
   );
   const markAllMutation = useMutation(
-    ({ id, studentIds }: { id: string; studentIds: string[] }) =>
-      attendanceService.markAll(id, studentIds)
+    ({ id, studentIds, unlockReason, requestConfig }: {
+      id: string;
+      studentIds: string[];
+      unlockReason?: string;
+      requestConfig?: AxiosRequestConfig;
+    }) => attendanceService.markAll(id, studentIds, unlockReason, requestConfig)
   );
+  const attendanceUnlock = useAttendanceUnlock();
   const addToGroupMutation = useMutation(
     ({ studentId, groupId }: { studentId: string; groupId: string }) =>
       studentsService.addToGroup(studentId, groupId)
@@ -827,13 +838,13 @@ export default function AttendanceLessonPage() {
     setPageError(null);
 
     try {
-      await saveAttendanceMutation.mutate({
-        id: lessonId,
-        attendances: attendanceRows.map((student) => ({
-          studentId: student.id,
-          status: student.status,
-        })),
-      });
+      const attendances = attendanceRows.map((student) => ({
+        studentId: student.id,
+        status: student.status,
+      }));
+      await attendanceUnlock.run((unlockReason, requestConfig) =>
+        saveAttendanceMutation.mutate({ id: lessonId, attendances, unlockReason, requestConfig })
+      );
       await refetch();
     } catch (saveError) {
       setPageError(getErrorMessage(saveError, 'Не удалось сохранить посещаемость.'));
@@ -848,10 +859,10 @@ export default function AttendanceLessonPage() {
     setPageError(null);
 
     try {
-      await markAllMutation.mutate({
-        id: lessonId,
-        studentIds: attendanceRows.map((student) => student.id),
-      });
+      const studentIds = attendanceRows.map((student) => student.id);
+      await attendanceUnlock.run((unlockReason, requestConfig) =>
+        markAllMutation.mutate({ id: lessonId, studentIds, unlockReason, requestConfig })
+      );
       await refetch();
     } catch (markError) {
       setPageError(getErrorMessage(markError, 'Не удалось отметить всех как посетивших.'));
@@ -939,10 +950,14 @@ export default function AttendanceLessonPage() {
     }
 
     try {
-      await saveAttendanceMutation.mutate({
-        id: targetLessonId,
-        attendances: [{ studentId, status }],
-      });
+      await attendanceUnlock.run((unlockReason, requestConfig) =>
+        saveAttendanceMutation.mutate({
+          id: targetLessonId,
+          attendances: [{ studentId, status }],
+          unlockReason,
+          requestConfig,
+        })
+      );
     } catch (saveError) {
       // Revert optimistic update on error
       setMonthlyAttendanceOverrides((prev) => {
@@ -1390,6 +1405,8 @@ export default function AttendanceLessonPage() {
         onSave={handleAssignSubstitute}
         onSaveRange={data.lesson.groupId && data.lesson.teacherId ? handleAssignSubstituteRange : undefined}
       />
+
+      {attendanceUnlock.modal}
     </div>
   );
 }
