@@ -882,35 +882,8 @@ export default function StudentProfilePage() {
       });
     }
 
-    if (data.paymentHistory.deletedPayments) {
-      data.paymentHistory.deletedPayments.forEach((payment) => {
-        if (seenIds.has(payment.id)) return;
-        seenIds.add(payment.id);
-        const matchedSubscription = payment.subscriptionId
-          ? data.subscriptions.find((subscription) => subscription.id === payment.subscriptionId)
-          : undefined;
-        const courseId = matchedSubscription?.courseId || null;
-        const groupId = matchedSubscription?.groupId || null;
-        rows.push({
-          id: payment.id,
-          paidAt: payment.paidAt,
-          paymentMonth: payment.paymentMonth,
-          amount: payment.amount,
-          method: payment.method,
-          notes: payment.notes,
-          subscriptionId: payment.subscriptionId || '',
-          courseId,
-          courseName: courseId ? data.coursesById[courseId]?.name || 'Неизвестный курс' : 'Оплата / Баланс',
-          groupId,
-          groupName: groupId ? data.schedulesById[groupId]?.name || 'Удаленная группа' : '—',
-          cashierName: payment.cashierName || null,
-          paymentScope: payment.paymentScope,
-          deleted: true,
-          deletedBy: payment.deletedBy,
-          deletedAt: payment.deletedAt,
-        });
-      });
-    }
+    // Deleted payments stay in the database for the audit trail but are not
+    // shown in the history.
 
     return rows.sort((left, right) => compareIsoDateDesc(left.paidAt, right.paidAt));
   }, [data]);

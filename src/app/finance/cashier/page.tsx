@@ -600,7 +600,7 @@ export default function CashierPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f4] text-[#3f4b5a]">
-                  {filteredOperations.map((op) => {
+                  {filteredOperations.filter((op) => !op.deleted).map((op) => {
                     const isIncome = op.type === 'PAYMENT' || op.type === 'DEPOSIT';
                     const cashierName = getUserDisplayName(op.cashierUserId, op.cashierName);
 
@@ -1271,7 +1271,7 @@ export default function CashierPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f4]">
-                  {shiftOpsList.map((op) => {
+                  {shiftOpsList.filter((op) => !op.deleted).map((op) => {
                     const isIncome = op.type === 'PAYMENT' || op.type === 'DEPOSIT';
                     return (
                       <tr key={op.id} className={op.deleted ? 'bg-slate-50 text-slate-400 line-through opacity-70' : ''}>
