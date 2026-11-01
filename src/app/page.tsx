@@ -54,8 +54,9 @@ export default function Dashboard() {
 
   const salesChartData = useMemo(
     () =>
-      (financeReport?.months ?? []).map((item) => ({
-        month: item.month,
+      // The API returns the series as `monthly` (with a readable `label`).
+      ((financeReport as any)?.monthly ?? financeReport?.months ?? []).map((item: any) => ({
+        month: item.label ?? item.month,
         revenue: item.revenue,
         expenses: item.expenses,
       })),
@@ -148,7 +149,7 @@ export default function Dashboard() {
               <Link href="/finance" className="block transition-transform hover:scale-[1.01]">
                 <MetricCard
                   title="Выручка"
-                  value={loading ? '...' : `${(dashboard?.totalRevenue ?? 0).toLocaleString('ru-RU')} ₸`}
+                  value={loading ? '...' : `${Math.round((dashboard as any)?.revenue ?? dashboard?.totalRevenue ?? 0).toLocaleString('ru-RU')} ₸`}
                   change={`${dashboard?.revenueDeltaPct ?? 0}%`}
                   isPositive={(dashboard?.revenueDeltaPct ?? 0) >= 0}
                   icon={ReceiptText}
@@ -159,8 +160,8 @@ export default function Dashboard() {
               <Link href="/analytics/subscriptions" className="block transition-transform hover:scale-[1.01]">
                 <MetricCard
                   title="Средний чек"
-                  value={loading ? '...' : `${(dashboard?.averageCheck ?? 0).toLocaleString('ru-RU')} ₸`}
-                  change={`${dashboard?.subscriptionsDeltaPct ?? 0}%`}
+                  value={loading ? '...' : `${Math.round(dashboard?.averageCheck ?? 0).toLocaleString('ru-RU')} ₸`}
+                  change=""
                   isPositive={(dashboard?.subscriptionsDeltaPct ?? 0) >= 0}
                   icon={ShoppingCart}
                   iconBgColor="bg-blue-50"
@@ -184,7 +185,7 @@ export default function Dashboard() {
             <MetricCard
               title="Активные ученики (группы)"
               value={loading ? '...' : String(dashboard?.activeGroupStudents ?? 0)}
-              change={`${dashboard?.leadsDeltaPct ?? 0}%`}
+              change=""
               isPositive={(dashboard?.leadsDeltaPct ?? 0) >= 0}
               icon={Package}
               iconBgColor="bg-pink-50"

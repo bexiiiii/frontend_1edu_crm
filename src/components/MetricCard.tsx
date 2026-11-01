@@ -38,14 +38,16 @@ export default function MetricCard({
         <p className="text-2xl font-bold text-[#1f2530]">{value}</p>
         <div className={`flex items-center ${subtitle ? 'justify-between' : 'justify-end'}`}>
           {subtitle ? <p className="text-xs text-gray-500">{subtitle}</p> : null}
-          <div className={`flex items-center gap-1 ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
-            {isPositive ? (
-              <TrendingUp className="w-3 h-3" />
-            ) : (
-              <TrendingDown className="w-3 h-3" />
-            )}
-            <span className="text-xs font-semibold">{change}</span>
-          </div>
+          {change ? (
+            <div className={`flex items-center gap-1 ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
+              {isPositive ? (
+                <TrendingUp className="w-3 h-3" />
+              ) : (
+                <TrendingDown className="w-3 h-3" />
+              )}
+              <span className="text-xs font-semibold">{change}</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
