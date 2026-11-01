@@ -269,6 +269,8 @@ export default function StudentProfilePage() {
 
   const [activeTab, setActiveTab] = useState<StudentProfileTab>('profile');
   const [expandedSubscriptions, setExpandedSubscriptions] = useState<Set<string>>(new Set());
+  const [attendanceFrom, setAttendanceFrom] = useState('');
+  const [attendanceTo, setAttendanceTo] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTransferBranchModalOpen, setIsTransferBranchModalOpen] = useState(false);
   const [targetBranchId, setTargetBranchId] = useState('');
@@ -956,9 +958,19 @@ export default function StudentProfilePage() {
       });
   }, [data]);
 
+  const filteredAttendanceRows = useMemo(
+    () => attendanceRows.filter((row) => {
+      const day = row.lessonDate ? row.lessonDate.slice(0, 10) : '';
+      if (attendanceFrom && (!day || day < attendanceFrom)) return false;
+      if (attendanceTo && (!day || day > attendanceTo)) return false;
+      return true;
+    }),
+    [attendanceRows, attendanceFrom, attendanceTo]
+  );
+
   const attendanceChargeTotal = useMemo(
-    () => attendanceRows.reduce((sum, row) => sum + (row.charge?.billable ? row.charge.chargedAmount : 0), 0),
-    [attendanceRows]
+    () => filteredAttendanceRows.reduce((sum, row) => sum + (row.charge?.billable ? row.charge.chargedAmount : 0), 0),
+    [filteredAttendanceRows]
   );
 
   const selectedSubscription = useMemo(
@@ -1821,8 +1833,33 @@ export default function StudentProfilePage() {
           <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
             <p className="text-sm font-medium text-gray-700">
               <CalendarCheck2 className="mr-2 inline h-4 w-4" />
-              Записей посещаемости: <span className="font-semibold text-gray-900">{attendanceRows.length}</span>
+              Записей посещаемости: <span className="font-semibold text-gray-900">{filteredAttendanceRows.length}</span>
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+              <span>с</span>
+              <input
+                type="date"
+                value={attendanceFrom}
+                onChange={(e) => setAttendanceFrom(e.target.value)}
+                className="rounded-lg border border-[#e6ebf0] px-2 py-1 text-sm"
+              />
+              <span>по</span>
+              <input
+                type="date"
+                value={attendanceTo}
+                onChange={(e) => setAttendanceTo(e.target.value)}
+                className="rounded-lg border border-[#e6ebf0] px-2 py-1 text-sm"
+              />
+              {(attendanceFrom || attendanceTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setAttendanceFrom(''); setAttendanceTo(''); }}
+                  className="rounded-lg px-2 py-1 text-xs text-[#467aff] hover:bg-blue-50"
+                >
+                  Сбросить
+                </button>
+              )}
+            </div>
             <p className="text-sm font-medium text-gray-700">
               Начислено за занятия:{' '}
               <span className="font-semibold text-[#1f2530]">{formatMoney(attendanceChargeTotal)}</span>
@@ -1843,8 +1880,8 @@ export default function StudentProfilePage() {
                 </tr>
               </thead>
               <tbody className="crm-table-body">
-                {attendanceRows.length > 0 ? (
-                  attendanceRows.map((row, index) => (
+                {filteredAttendanceRows.length > 0 ? (
+                  filteredAttendanceRows.map((row, index) => (
                     <tr key={row.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">{row.lessonDate ? formatDate(row.lessonDate) : '—'}</td>
