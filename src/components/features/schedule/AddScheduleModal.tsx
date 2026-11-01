@@ -3,7 +3,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
-import type { CreateScheduleRequest, DayOfWeek } from '@/lib/api';
+import type { CreateScheduleRequest, DayOfWeek, ScheduleStatus } from '@/lib/api';
 import type { ScheduleFormValues } from '@/types/schedule';
 
 interface SelectOption {
@@ -20,10 +20,20 @@ interface RoomOption extends SelectOption {
   capacity: number | null;
 }
 
+export type ScheduleSavePayload = CreateScheduleRequest & {
+  /** Только при редактировании: пустая дата окончания = бессрочное расписание. */
+  openEnded?: boolean;
+  status?: ScheduleStatus;
+};
+
 interface AddScheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: CreateScheduleRequest) => Promise<void>;
+  onSave: (data: ScheduleSavePayload) => Promise<void>;
+  /** true — режим редактирования существующего расписания. */
+  isEdit?: boolean;
+  /** Текущий статус редактируемого расписания. */
+  currentStatus?: ScheduleStatus;
   courses: CourseOption[];
   teachers: SelectOption[];
   rooms: RoomOption[];
@@ -148,6 +158,8 @@ export const AddScheduleModal = ({
   initialValues,
   isSubmitting = false,
   title = 'Добавить расписание',
+  isEdit = false,
+  currentStatus,
 }: AddScheduleModalProps) => {
   const defaults = initialValues ?? getDefaultValues();
 
@@ -159,6 +171,8 @@ export const AddScheduleModal = ({
   const [endTime, setEndTime] = useState(defaults.endTime);
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
+  const canReopen = isEdit && currentStatus === 'COMPLETED';
+  const [reopen, setReopen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedCourse = courses.find((course) => course.id === courseId) ?? null;
@@ -225,6 +239,8 @@ export const AddScheduleModal = ({
         endTime: normalizeTime(endTime),
         startDate,
         endDate: endDate || undefined,
+        ...(isEdit && !endDate ? { openEnded: true } : {}),
+        ...(canReopen && reopen ? { status: 'ACTIVE' as ScheduleStatus } : {}),
       });
     } catch (submitError) {
       setError(getErrorMessage(submitError));
@@ -347,10 +363,34 @@ export const AddScheduleModal = ({
             label="Дата окончания"
             type="date"
             value={endDate}
-            onChange={(event) => setEndDate(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setEndDate(value);
+              if (canReopen && !value) {
+                setReopen(true);
+              }
+            }}
           />
         </div>
+        <p className="mt-2 text-xs text-gray-500">
+          Оставьте дату окончания пустой — расписание станет бессрочным, занятия создадутся сразу на 90 дней вперёд.
+        </p>
       </div>
+
+      {canReopen && (
+        <label className="flex items-start gap-2 rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={reopen}
+            onChange={(event) => setReopen(event.target.checked)}
+          />
+          <span>
+            Возобновить расписание (статус «Активно»). Пропущенные занятия после прежней даты окончания
+            будут созданы автоматически.
+          </span>
+        </label>
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

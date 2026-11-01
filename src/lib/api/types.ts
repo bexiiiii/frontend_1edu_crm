@@ -470,6 +470,8 @@ export interface CreateScheduleRequest {
 
 export interface UpdateScheduleRequest extends Partial<CreateScheduleRequest> {
   status?: ScheduleStatus;
+  /** true — снять дату окончания (бессрочное расписание); null в endDate бэкенд игнорирует. */
+  openEnded?: boolean;
 }
 
 // ─── Room ───────────────────────────────────────────────────────

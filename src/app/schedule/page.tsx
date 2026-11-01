@@ -10,7 +10,7 @@ import ruLocale from '@fullcalendar/core/locales/ru';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import { AddScheduleModal } from '@/components/features/schedule/AddScheduleModal';
+import { AddScheduleModal, type ScheduleSavePayload } from '@/components/features/schedule/AddScheduleModal';
 import { EventDetailModal } from '@/components/features/schedule/EventDetailModal';
 import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { ScheduleFilters } from '@/components/features/schedule/ScheduleFilters';
@@ -22,6 +22,7 @@ import {
   staffService,
   type CreateScheduleRequest,
   type DayOfWeek,
+  type ScheduleStatus,
   type UpdateScheduleRequest,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
@@ -161,6 +162,7 @@ export default function Schedule() {
     isOpen: boolean;
     scheduleId: string | null;
     initialValues?: ScheduleFormValues;
+    status?: ScheduleStatus;
   }>({
     key: 0,
     isOpen: false,
@@ -472,17 +474,28 @@ export default function Schedule() {
       isOpen: true,
       scheduleId: selectedSchedule.id,
       initialValues: toFormValues(selectedSchedule),
+      status: selectedSchedule.status,
     }));
   };
 
-  const handleSave = async (data: CreateScheduleRequest) => {
+  const handleSave = async (data: ScheduleSavePayload) => {
     if (scheduleModalState.scheduleId) {
       await updateMutation.mutate({
         id: scheduleModalState.scheduleId,
         data,
       });
     } else {
-      await createMutation.mutate(data);
+      const createData: CreateScheduleRequest = {
+        name: data.name,
+        courseId: data.courseId,
+        roomId: data.roomId,
+        daysOfWeek: data.daysOfWeek,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        startDate: data.startDate,
+        endDate: data.endDate,
+      };
+      await createMutation.mutate(createData);
     }
 
     closeScheduleModal();
@@ -586,6 +599,8 @@ export default function Schedule() {
         initialValues={scheduleModalState.initialValues}
         isSubmitting={isSaving}
         title={scheduleModalState.scheduleId ? 'Редактировать расписание' : 'Добавить расписание'}
+        isEdit={Boolean(scheduleModalState.scheduleId)}
+        currentStatus={scheduleModalState.status}
       /> : null}
 
       <EventDetailModal
