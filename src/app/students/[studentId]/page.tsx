@@ -1,12 +1,14 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
   Building2,
   CalendarCheck2,
+  ChevronDown,
+  ChevronRight,
   RotateCcw,
   Edit2,
   GraduationCap,
@@ -266,6 +268,7 @@ export default function StudentProfilePage() {
   const studentId = Array.isArray(studentIdParam) ? studentIdParam[0] : studentIdParam;
 
   const [activeTab, setActiveTab] = useState<StudentProfileTab>('profile');
+  const [expandedSubscriptions, setExpandedSubscriptions] = useState<Set<string>>(new Set());
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTransferBranchModalOpen, setIsTransferBranchModalOpen] = useState(false);
   const [targetBranchId, setTargetBranchId] = useState('');
@@ -1971,9 +1974,28 @@ export default function StudentProfilePage() {
                         ACTIVE: 'Активен', EXPIRED: 'Истек', CANCELLED: 'Отменен', FROZEN: 'Заморожен',
                       };
                       const salaryDiscountMode = data.subscriptions.find((item) => item.id === sub.subscriptionId)?.salaryDiscountMode || 'FULL_PRICE';
+                      const expanded = expandedSubscriptions.has(sub.subscriptionId);
+                      const toggleExpanded = () =>
+                        setExpandedSubscriptions((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(sub.subscriptionId)) next.delete(sub.subscriptionId);
+                          else next.add(sub.subscriptionId);
+                          return next;
+                        });
                       return (
-                        <tr key={sub.subscriptionId} className="crm-table-row">
-                          <td className="crm-table-cell font-medium text-[#202938]">{courseName}</td>
+                        <Fragment key={sub.subscriptionId}>
+                        <tr className="crm-table-row">
+                          <td className="crm-table-cell font-medium text-[#202938]">
+                            <button
+                              type="button"
+                              onClick={toggleExpanded}
+                              className="inline-flex items-center gap-1.5 text-left hover:text-[#467aff]"
+                              title="Показать по месяцам"
+                            >
+                              {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                              {courseName}
+                            </button>
+                          </td>
                           <td className="crm-table-cell text-sm text-[#667085]">
                             {formatDate(sub.startDate)} — {sub.endDate ? formatDate(sub.endDate) : 'бессрочно'}
                           </td>
@@ -2040,6 +2062,41 @@ export default function StudentProfilePage() {
                             )}
                           </td>
                         </tr>
+                        {expanded && (
+                          <tr className="bg-[#f8fafc]">
+                            <td colSpan={7} className="px-6 py-3">
+                              {sub.months && sub.months.length > 0 ? (
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="text-left text-xs uppercase text-[#8a93a3]">
+                                      <th className="py-1.5 pr-4 font-medium">Месяц</th>
+                                      <th className="py-1.5 pr-4 font-medium">Начислено</th>
+                                      <th className="py-1.5 pr-4 font-medium">Оплачено</th>
+                                      <th className="py-1.5 pr-4 font-medium">Долг</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {sub.months.map((m) => (
+                                      <tr key={m.month} className="border-t border-[#e6ebf0]">
+                                        <td className="py-1.5 pr-4 text-[#202938]">
+                                          {new Date(`${m.month}-01T00:00:00`).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
+                                        </td>
+                                        <td className="py-1.5 pr-4">{formatMoney(m.expected)}</td>
+                                        <td className="py-1.5 pr-4 text-emerald-700">{formatMoney(m.paid)}</td>
+                                        <td className={`py-1.5 pr-4 ${m.debt > 0 ? 'font-semibold text-rose-700' : 'text-[#667085]'}`}>
+                                          {formatMoney(m.debt)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p className="text-sm text-[#667085]">Начислений по месяцам пока нет</p>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
