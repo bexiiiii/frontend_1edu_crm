@@ -166,8 +166,16 @@ export interface StudentDto {
   loyalty: string | null;
   additionalPhones: string[];
   notes: string | null;
+  /** Home branch of the card (may be absent in older API responses) */
+  branchId?: string | null;
+  /** All branches the same card is attached to (a student may study in several branches) */
+  branchIds?: string[] | null;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
 }
 
 export interface CreateStudentRequest {
@@ -201,6 +209,17 @@ export interface CreateStudentRequest {
 }
 
 export type UpdateStudentRequest = Partial<CreateStudentRequest>;
+
+/** Body for POST /api/v1/students/{studentId}/groups/{groupId}/return */
+export interface ReturnStudentToGroupRequest {
+  /** Date the student comes back to the group, YYYY-MM-DD */
+  fromDate: string;
+}
+
+/** Body for POST /api/v1/students/{studentId}/branches */
+export interface AddStudentToBranchRequest {
+  branchId: string;
+}
 
 export interface StudentStatsDto {
   totalStudents: number;

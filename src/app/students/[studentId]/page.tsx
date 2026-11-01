@@ -5,7 +5,9 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
+  Building2,
   CalendarCheck2,
+  RotateCcw,
   Edit2,
   GraduationCap,
   Loader2,
@@ -63,9 +65,12 @@ import {
   type StudentPaymentDto,
   type StudentPaymentHistoryResponse,
   type SubscriptionDto,
+  type SubscriptionPaymentSummaryDto,
   type SalaryDiscountMode,
   type TransactionDto,
   type UpdateStudentRequest,
+  addStudentToBranch,
+  returnStudentToGroup,
 } from '@/lib/api';
 import {
   formatScheduleDays,
@@ -195,6 +200,26 @@ function normalizePhoneForMessenger(phone: string): string {
   return digitsOnly;
 }
 
+// Subscriptions that ended (EXPIRED / CANCELLED) are hidden from the payment form
+// unless they still carry debt — then the cashier must be able to pay it off.
+const CLOSED_SUBSCRIPTION_STATUSES: ReadonlyArray<SubscriptionDto['status']> = ['EXPIRED', 'CANCELLED'];
+
+function subscriptionSummaryHasDebt(summary: SubscriptionPaymentSummaryDto | undefined): boolean {
+  if (!summary) return false;
+  if ((summary.totalDebt ?? 0) > 0 || (summary.grossDebt ?? 0) > 0) return true;
+  return (summary.months ?? []).some((month) => (month.debt ?? 0) > 0);
+}
+
+// Enrollment statuses meaning the student left the course/group and can be returned.
+const WITHDRAWN_ENROLLMENT_STATUSES = new Set<string>(['REMOVED', 'WITHDRAWN', 'COMPLETED']);
+
+function todayIsoDate(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
 function compareIsoDateDesc(left: string, right: string): number {
   return new Date(right).getTime() - new Date(left).getTime();
 }
@@ -244,6 +269,13 @@ export default function StudentProfilePage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTransferBranchModalOpen, setIsTransferBranchModalOpen] = useState(false);
   const [targetBranchId, setTargetBranchId] = useState('');
+  const [isAddBranchModalOpen, setIsAddBranchModalOpen] = useState(false);
+  const [addBranchId, setAddBranchId] = useState('');
+  const [returnToGroupModal, setReturnToGroupModal] = useState<{
+    groupId: string;
+    label: string;
+    fromDate: string;
+  } | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
   const [refundForm, setRefundForm] = useState({
@@ -489,6 +521,15 @@ export default function StudentProfilePage() {
   const transferBranches = (branchesResponse ?? []).filter(
     (branch) => branch.active && branch.id !== (student?.branchId || currentBranchId)
   );
+  // Branches the same card can additionally be attached to (one card, several branches).
+  const attachedBranchIds = new Set<string>(
+    [...(student?.branchIds ?? []), student?.branchId || currentBranchId].filter(
+      (id): id is string => Boolean(id)
+    )
+  );
+  const addableBranches = (branchesResponse ?? []).filter(
+    (branch) => branch.active && !attachedBranchIds.has(branch.id)
+  );
 
   const updateStudentMutation = useMutation(({ id, data }: { id: string; data: UpdateStudentRequest }) =>
     studentsService.update(id, data)
@@ -496,6 +537,13 @@ export default function StudentProfilePage() {
   const deleteStudentMutation = useMutation((id: string) => studentsService.delete(id));
   const transferStudentMutation = useMutation(({ id, branchId }: { id: string; branchId: string }) =>
     studentsService.transferToBranch(id, branchId)
+  );
+  const addToBranchMutation = useMutation(({ id, branchId }: { id: string; branchId: string }) =>
+    addStudentToBranch(id, branchId)
+  );
+  const returnToGroupMutation = useMutation(
+    ({ id, groupId, fromDate }: { id: string; groupId: string; fromDate: string }) =>
+      returnStudentToGroup(id, groupId, fromDate)
   );
   const createPaymentMutation = useMutation((payload: CreateStudentPaymentRequest) =>
     studentPaymentsService.create(payload)
@@ -532,6 +580,21 @@ export default function StudentProfilePage() {
 
     return map;
   }, [data?.courseEnrollments]);
+
+  // Courses/groups the student is currently active in — no "return" button for those.
+  const activeCourseOrGroupIds = useMemo(() => {
+    const ids = new Set<string>();
+    (data?.subscriptions ?? []).forEach((subscription) => {
+      if (subscription.status === 'ACTIVE' || subscription.status === 'FROZEN') {
+        if (subscription.courseId) ids.add(subscription.courseId);
+        if (subscription.groupId) ids.add(subscription.groupId);
+      }
+    });
+    (data?.courseEnrollments ?? []).forEach((enrollment) => {
+      if (enrollment.enrollmentStatus === 'ACTIVE') ids.add(enrollment.courseId);
+    });
+    return ids;
+  }, [data?.courseEnrollments, data?.subscriptions]);
 
   const currentEnrollmentStart = useMemo(() => {
     const activeDates = (data?.courseEnrollments ?? [])
@@ -883,8 +946,20 @@ export default function StudentProfilePage() {
     [data, paymentForm.subscriptionId]
   );
 
+  const payableSubscriptions = useMemo(() => {
+    if (!data) return [] as SubscriptionDto[];
+    return data.subscriptions.filter((subscription) => {
+      const summary = data.paymentHistory?.subscriptions.find((s) => s.subscriptionId === subscription.id);
+      // The payment summary may carry a fresher status than the subscription list.
+      const isClosed =
+        CLOSED_SUBSCRIPTION_STATUSES.includes(subscription.status) ||
+        (summary?.subscriptionStatus ? CLOSED_SUBSCRIPTION_STATUSES.includes(summary.subscriptionStatus) : false);
+      return !isClosed || subscriptionSummaryHasDebt(summary);
+    });
+  }, [data]);
+
   const openPaymentModal = () => {
-    const firstSubscription = data?.subscriptions[0] ?? null;
+    const firstSubscription = payableSubscriptions[0] ?? null;
     const subSummary = data?.paymentHistory?.subscriptions.find(
       (s) => s.subscriptionId === firstSubscription?.id
     );
@@ -939,6 +1014,45 @@ export default function StudentProfilePage() {
     await transferStudentMutation.mutate({ id: studentId, branchId: targetBranchId });
     setIsTransferBranchModalOpen(false);
     router.push('/students');
+  };
+
+  const openAddBranchModal = () => {
+    setAddBranchId(addableBranches[0]?.id ?? '');
+    setIsAddBranchModalOpen(true);
+  };
+
+  const handleAddToBranch = async () => {
+    if (!studentId || !addBranchId) return;
+    try {
+      await addToBranchMutation.mutate({ id: studentId, branchId: addBranchId });
+    } catch (err) {
+      pushToast({ message: getErrorMessage(err, 'Не удалось добавить ученика в филиал'), tone: 'error' });
+      return;
+    }
+    const branchName = (branchesResponse ?? []).find((branch) => branch.id === addBranchId)?.name;
+    pushToast({ message: branchName ? `Ученик добавлен в филиал «${branchName}»` : 'Ученик добавлен в филиал', tone: 'success' });
+    setIsAddBranchModalOpen(false);
+    await refetch();
+  };
+
+  const handleReturnToGroup = async () => {
+    if (!studentId || !returnToGroupModal?.groupId || !returnToGroupModal.fromDate) return;
+    try {
+      await returnToGroupMutation.mutate({
+        id: studentId,
+        groupId: returnToGroupModal.groupId,
+        fromDate: returnToGroupModal.fromDate,
+      });
+    } catch (err) {
+      pushToast({ message: getErrorMessage(err, 'Не удалось вернуть ученика в группу'), tone: 'error' });
+      return;
+    }
+    pushToast({
+      message: `Ученик возвращён в «${returnToGroupModal.label}» с ${formatDate(returnToGroupModal.fromDate)}`,
+      tone: 'success',
+    });
+    setReturnToGroupModal(null);
+    await refetch();
   };
 
   const handleCreatePayment = async () => {
@@ -1315,6 +1429,16 @@ export default function StudentProfilePage() {
               Перевести в филиал
             </Button>
           ) : null}
+          {addableBranches.length > 0 ? (
+            <Button
+              variant="secondary"
+              icon={Building2}
+              onClick={openAddBranchModal}
+              disabled={addToBranchMutation.loading}
+            >
+              Добавить в филиал
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             icon={PlusCircle}
@@ -1539,6 +1663,39 @@ export default function StudentProfilePage() {
                           >
                             {SUBSCRIPTION_STATUS_LABELS[subscription.status]}
                           </span>
+                          {(() => {
+                            // Group = schedule when the subscription has one, otherwise the course itself.
+                            const returnGroupId = subscription.groupId || subscription.courseId;
+                            if (!returnGroupId) return null;
+                            const isWithdrawn =
+                              (enrollment ? WITHDRAWN_ENROLLMENT_STATUSES.has(enrollment.enrollmentStatus) : false) ||
+                              (subscription.status === 'EXPIRED' && Boolean(subscription.courseId));
+                            const isActiveElsewhere =
+                              activeCourseOrGroupIds.has(returnGroupId) ||
+                              (subscription.courseId ? activeCourseOrGroupIds.has(subscription.courseId) : false);
+                            if (!isWithdrawn || isActiveElsewhere) return null;
+                            const label =
+                              (subscription.groupId ? data.schedulesById[subscription.groupId]?.name : null) ||
+                              (subscription.courseId ? data.coursesById[subscription.courseId]?.name : null) ||
+                              'группу';
+                            return (
+                              <div className="mt-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  icon={RotateCcw}
+                                  onClick={() => setReturnToGroupModal({
+                                    groupId: returnGroupId,
+                                    label,
+                                    fromDate: todayIsoDate(),
+                                  })}
+                                  disabled={returnToGroupMutation.loading}
+                                >
+                                  Вернуть в группу с даты
+                                </Button>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="crm-table-cell text-right">
                           {subscription.courseId ? (
@@ -2227,6 +2384,7 @@ export default function StudentProfilePage() {
         isSubmitting={updateStudentMutation.loading}
         title="Редактировать ученика"
         includeStatus
+        studentId={studentId}
       />
 
       <Modal
@@ -2267,6 +2425,85 @@ export default function StudentProfilePage() {
             </select>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={isAddBranchModalOpen}
+        onClose={() => setIsAddBranchModalOpen(false)}
+        title="Добавить ученика в филиал"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setIsAddBranchModalOpen(false)} disabled={addToBranchMutation.loading}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => void handleAddToBranch()}
+              disabled={!addBranchId || addToBranchMutation.loading}
+            >
+              {addToBranchMutation.loading ? 'Добавляем...' : 'Добавить'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm leading-5 text-sky-900">
+            Ученик останется в текущем филиале и будет доступен ещё в выбранном. Карточка, история оплат и посещений остаются общими — новую карточку создавать не нужно.
+          </p>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Филиал</label>
+            <select
+              value={addBranchId}
+              onChange={(event) => setAddBranchId(event.target.value)}
+              className="crm-select"
+            >
+              <option value="">Выберите филиал</option>
+              {addableBranches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={returnToGroupModal !== null}
+        onClose={() => setReturnToGroupModal(null)}
+        title="Вернуть в группу"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setReturnToGroupModal(null)} disabled={returnToGroupMutation.loading}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => void handleReturnToGroup()}
+              disabled={!returnToGroupModal?.fromDate || returnToGroupMutation.loading}
+            >
+              {returnToGroupMutation.loading ? 'Возвращаем...' : 'Вернуть'}
+            </Button>
+          </>
+        }
+      >
+        {returnToGroupModal ? (
+          <div className="space-y-4">
+            <p className="text-sm text-[#5d6676]">
+              Группа: <span className="font-medium text-[#1f2530]">{returnToGroupModal.label}</span>
+            </p>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Вернуть с даты</label>
+              <input
+                type="date"
+                value={returnToGroupModal.fromDate}
+                onChange={(event) => {
+                  const fromDate = event.target.value;
+                  setReturnToGroupModal((prev) => (prev ? { ...prev, fromDate } : prev));
+                }}
+                className="crm-input"
+              />
+            </div>
+          </div>
+        ) : null}
       </Modal>
 
       {(() => {
@@ -2440,7 +2677,7 @@ export default function StudentProfilePage() {
               }}
               className="crm-select"
             >
-              {data.subscriptions.map((subscription) => {
+              {payableSubscriptions.map((subscription) => {
                 const subSummary = data.paymentHistory?.subscriptions.find((s) => s.subscriptionId === subscription.id);
                 const monthly = subSummary?.monthlyExpected || (subscription.amount >= 10000 ? Math.round(subscription.amount / 12) : subscription.amount);
                 const courseName = subscription.courseId ? data.coursesById[subscription.courseId]?.name || 'Курс' : 'Курс';

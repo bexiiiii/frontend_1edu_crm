@@ -440,7 +440,7 @@ export default api;
 // Re-export all service modules from the api directory
 export { analyticsService } from './api/analytics';
 export { reportsService } from './api/reports';
-export { studentsService } from './api/students';
+export { studentsService, returnStudentToGroup, addStudentToBranch } from './api/students';
 export { staffService } from './api/staff';
 export { coursesService } from './api/courses';
 export { schedulesService } from './api/schedules';

@@ -8,6 +8,8 @@ import type {
   StudentStatsDto,
   StudentStatus,
   UpdateStudentRequest,
+  ReturnStudentToGroupRequest,
+  AddStudentToBranchRequest,
 } from './types';
 
 // ─── Students Service ───────────────────────────────────────────
@@ -85,4 +87,29 @@ export const studentsService = {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/students/${studentId}/groups/${groupId}`);
     return response.data;
   },
+
+  /** Return a withdrawn student to a group starting from the given date (YYYY-MM-DD) */
+  async returnToGroup(studentId: string, groupId: string, fromDate: string) {
+    const body: ReturnStudentToGroupRequest = { fromDate };
+    const response = await api.post<ApiResponse<void>>(
+      `/api/v1/students/${studentId}/groups/${groupId}/return`,
+      body
+    );
+    return response.data;
+  },
+
+  /** Attach the same student card to one more branch (student may study in several branches) */
+  async addToBranch(studentId: string, branchId: string) {
+    const body: AddStudentToBranchRequest = { branchId };
+    const response = await api.post<ApiResponse<StudentDto>>(`/api/v1/students/${studentId}/branches`, body);
+    return response.data;
+  },
 };
+
+/** POST /api/v1/students/{studentId}/groups/{groupId}/return */
+export const returnStudentToGroup = (studentId: string, groupId: string, fromDate: string) =>
+  studentsService.returnToGroup(studentId, groupId, fromDate);
+
+/** POST /api/v1/students/{studentId}/branches */
+export const addStudentToBranch = (studentId: string, branchId: string) =>
+  studentsService.addToBranch(studentId, branchId);

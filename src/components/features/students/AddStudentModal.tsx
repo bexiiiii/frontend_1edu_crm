@@ -14,6 +14,7 @@ import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
 import { filesService, type CreateStudentRequest, type UpdateStudentRequest } from '@/lib/api';
 import { pushToast } from '@/lib/toast';
 import type { StudentFormValues } from '@/types/student';
+import { SimilarStudentPhoneHint } from './SimilarStudentPhoneHint';
 
 interface AddStudentModalProps {
   isOpen: boolean;
@@ -24,6 +25,8 @@ interface AddStudentModalProps {
   isSubmitting?: boolean;
   title?: string;
   includeStatus?: boolean;
+  /** ID of the student being edited, so the duplicate-phone hint does not point to itself. */
+  studentId?: string;
 }
 
 function getDefaultValues(): StudentFormValues {
@@ -82,6 +85,7 @@ export const AddStudentModal = ({
   isSubmitting = false,
   title = 'Добавить ученика',
   includeStatus = false,
+  studentId,
 }: AddStudentModalProps) => {
   const defaults = initialValues ?? getDefaultValues();
   const photoInputId = useId();
@@ -312,12 +316,15 @@ export const AddStudentModal = ({
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <PhoneInputWithCountry
-            label="Телефон ученика"
-            value={phone}
-            onChange={setPhone}
-            placeholder="+7 777 000 00 00"
-          />
+          <div>
+            <PhoneInputWithCountry
+              label="Телефон ученика"
+              value={phone}
+              onChange={setPhone}
+              placeholder="+7 777 000 00 00"
+            />
+            {isOpen ? <SimilarStudentPhoneHint phone={phone} excludeStudentId={studentId} /> : null}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -359,12 +366,15 @@ export const AddStudentModal = ({
             onChange={(event) => setParentName(event.target.value)}
             placeholder="ФИО родителя"
           />
-          <PhoneInputWithCountry
-            label="Телефон родителя"
-            value={parentPhone}
-            onChange={setParentPhone}
-            placeholder="+7 777 222 22 22"
-          />
+          <div>
+            <PhoneInputWithCountry
+              label="Телефон родителя"
+              value={parentPhone}
+              onChange={setParentPhone}
+              placeholder="+7 777 222 22 22"
+            />
+            {isOpen ? <SimilarStudentPhoneHint phone={parentPhone} excludeStudentId={studentId} /> : null}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
