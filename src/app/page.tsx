@@ -44,7 +44,8 @@ export default function Dashboard() {
     [from, to, isManager]
   );
   const { data: subscriptionsReport, loading: subscriptionsLoading } = useApi(
-    () => isManager ? Promise.resolve({ data: null }) : analyticsService.getSubscriptions({ from, to }),
+    () => isManager ? Promise.resolve({ data: null }) : // Status chart = current status of every subscription, not only this month's new ones.
+      analyticsService.getSubscriptions({ from: '2000-01-01', to }),
     [from, to, isManager]
   );
   const { data: leadConversions, loading: leadConversionsLoading } = useApi(
