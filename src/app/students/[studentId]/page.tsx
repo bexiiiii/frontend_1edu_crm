@@ -812,10 +812,27 @@ export default function StudentProfilePage() {
         ? data.schedulesById[groupId]?.name || 'Удаленная группа'
         : 'Без группы';
 
+      // Several balance allocations to the same course month (e.g. part moved
+      // when the payment came in, the rest after the month's charge changed)
+      // are one move of money: show them as one row.
+      const allocationRowByMonth = new Map<string, number>();
       subscriptionSummary.months.forEach((month) => {
         month.payments.forEach((payment) => {
           if (!seenIds.has(payment.id)) {
             seenIds.add(payment.id);
+            if (payment.paymentScope === 'BALANCE_ALLOCATION') {
+              const key = `${payment.subscriptionId}:${payment.paymentMonth}`;
+              const existing = allocationRowByMonth.get(key);
+              if (existing != null) {
+                const row = rows[existing];
+                row.amount = Math.round((row.amount + payment.amount) * 100) / 100;
+                if (payment.paidAt < row.paidAt) row.paidAt = payment.paidAt;
+                // A merged row is not one payment any more: shown as automatic, no delete.
+                row.notes = AUTO_BALANCE_NOTE;
+                return;
+              }
+              allocationRowByMonth.set(key, rows.length);
+            }
             rows.push({
               id: payment.id,
               paidAt: payment.paidAt,
