@@ -19,3 +19,4 @@ export * from './audit';
 export * from './rooms';
 export * from './callLogs';
 export * from './inventory';
+export * from './redList';

@@ -10,6 +10,14 @@ import type { AxiosRequestConfig } from 'axios';
 import { AttendanceMonthlyTable } from '@/components/features/attendance/AttendanceMonthlyTable';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
 import { useAttendanceUnlock } from '@/components/features/attendance/useAttendanceUnlock';
+import {
+  RedListChip,
+  RedListModal,
+  canManageRedList,
+  formatRedListDate,
+  type RedListModalTarget,
+} from '@/components/features/attendance/RedListModal';
+import { useAuthStore } from '@/store/authStore';
 import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -20,6 +28,7 @@ import {
   attendanceService,
   coursesService,
   lessonsService,
+  redListService,
   roomsService,
   schedulesService,
   staffService,
@@ -35,7 +44,7 @@ import {
   isPresentStatus,
 } from '@/constants/attendance';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
-import type { AttendanceDto, AttendanceStatus, LessonDto, StudentDto } from '@/lib/api/types';
+import type { AttendanceDto, AttendanceStatus, LessonDto, RedListDto, StudentDto } from '@/lib/api/types';
 import { formatFullName } from '@/lib/utils';
 
 type AttendanceViewMode = 'lesson' | 'month';
@@ -57,6 +66,8 @@ type LessonAttendanceData = {
   monthlyError: string | null;
   /** studentId → ISO date/instant when their subscription for this course was cancelled. */
   cancelledAtByStudentId: Record<string, string>;
+  /** studentId → the student's open «Редлист» period in this course (no end date yet). */
+  openRedListByStudentId: Record<string, RedListDto>;
 };
 
 type LessonDraftState = {
@@ -94,15 +105,17 @@ function getStaffFullName(staff: {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-
+  // The backend message (e.g. «Ученик в редлисте с …») first: an axios error's own
+  // message is only "Request failed with status code 400".
   if (error && typeof error === 'object' && 'response' in error) {
     const response = (error as { response?: { data?: { message?: string } } }).response;
     if (response?.data?.message) {
       return response.data.message;
     }
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
   }
 
   return fallback;
@@ -378,6 +391,21 @@ export default function AttendanceLessonPage() {
       }
     }
 
+    // Open «Редлист» periods of the course: drive the «В редлист» / «Вывести из редлиста» actions.
+    const openRedListByStudentId: Record<string, RedListDto> = {};
+    if (courseId) {
+      try {
+        const redListResponse = await redListService.list({ courseId, active: true });
+        for (const period of redListResponse.data ?? []) {
+          if (!period.toDate && (!period.groupId || period.groupId === lesson.groupId)) {
+            openRedListByStudentId[period.studentId] = period;
+          }
+        }
+      } catch {
+        // Best-effort: without the list the actions are just hidden.
+      }
+    }
+
     const staffMap = new Map(
       (staffResponse.data.content ?? []).map((staff) => [
         staff.id,
@@ -423,9 +451,14 @@ export default function AttendanceLessonPage() {
         monthlyAttendanceByLessonId,
         monthlyError,
         cancelledAtByStudentId,
+        openRedListByStudentId,
       },
     };
   }, [lessonId]);
+
+  const roles = useAuthStore((s) => s.roles);
+  const canEditRedList = canManageRedList(roles);
+  const [redListTarget, setRedListTarget] = useState<RedListModalTarget | null>(null);
 
   const saveLessonMutation = useMutation(
     ({ id, payload }: {
@@ -509,6 +542,11 @@ export default function AttendanceLessonPage() {
     });
   };
 
+  const redListRecordByStudentId = useMemo(
+    () => new Map((data?.attendanceRecords ?? []).filter((record) => record.redList).map((record) => [record.studentId, record])),
+    [data]
+  );
+
   const attendanceRows = useMemo(() => {
     if (!data) {
       return [];
@@ -522,8 +560,12 @@ export default function AttendanceLessonPage() {
       parentPhone: student.parentPhone || '',
       status: statusDrafts[student.id] ?? 'PLANNED',
       studentStatus: student.status,
+      redList: redListRecordByStudentId.get(student.id) ?? null,
     }));
-  }, [data, statusDrafts]);
+  }, [data, statusDrafts, redListRecordByStudentId]);
+
+  /** Students whose attendance can be marked in this lesson (not in the red list). */
+  const markableRows = useMemo(() => attendanceRows.filter((student) => !student.redList), [attendanceRows]);
 
   const monthlyViewData = useMemo(() => {
     if (!data) {
@@ -543,6 +585,12 @@ export default function AttendanceLessonPage() {
       Object.entries(data.monthlyAttendanceByLessonId).map(([monthlyLessonId, records]) => [
         monthlyLessonId,
         new Map(records.map((record) => [record.studentId, record.status])),
+      ])
+    );
+    const redListMapByLessonId = new Map<string, Map<string, AttendanceDto>>(
+      Object.entries(data.monthlyAttendanceByLessonId).map(([monthlyLessonId, records]) => [
+        monthlyLessonId,
+        new Map(records.filter((record) => record.redList).map((record) => [record.studentId, record])),
       ])
     );
 
@@ -614,6 +662,18 @@ export default function AttendanceLessonPage() {
           const rawStatus = statusMapByLessonId.get(monthlyLesson.id)?.get(student.id);
           const isEligible = hasRecord || (overrideStatus !== undefined);
           const status = overrideStatus ?? rawStatus ?? (isEligible ? 'PLANNED' : null);
+          const redListRecord = redListMapByLessonId.get(monthlyLesson.id)?.get(student.id) ?? null;
+
+          if (redListRecord) {
+            return {
+              lessonId: monthlyLesson.id,
+              status,
+              isEligible,
+              redList: redListRecord,
+              timeLabel: formatTimeRange(monthlyLesson.startTime, monthlyLesson.endTime),
+              isCurrentLesson: monthlyLesson.id === lessonId,
+            };
+          }
 
           if (status && status !== 'PLANNED') {
             markedCount += 1;
@@ -627,6 +687,7 @@ export default function AttendanceLessonPage() {
             lessonId: monthlyLesson.id,
             status,
             isEligible,
+            redList: null as AttendanceDto | null,
             timeLabel: formatTimeRange(monthlyLesson.startTime, monthlyLesson.endTime),
             isCurrentLesson: monthlyLesson.id === lessonId,
           };
@@ -668,7 +729,7 @@ export default function AttendanceLessonPage() {
     );
 
     const studentRows = monthlyStudents.map((student) => {
-      const lessonEntries = new Map<string, { status: AttendanceStatus | null; isEligible: boolean }>();
+      const lessonEntries = new Map<string, { status: AttendanceStatus | null; isEligible: boolean; redList: AttendanceDto | null }>();
 
       // Build status map for this student
       for (const cell of (rows.find(r => r.studentId === student.id)?.cells ?? [])) {
@@ -676,6 +737,7 @@ export default function AttendanceLessonPage() {
           lessonEntries.set(entry.lessonId, {
             status: entry.status,
             isEligible: entry.isEligible,
+            redList: entry.redList,
           });
         }
       }
@@ -686,7 +748,9 @@ export default function AttendanceLessonPage() {
 
       const cells = lessonColumns.map((col) => {
         const entry = lessonEntries.get(col.lessonId);
-        const isEligible = entry?.isEligible === true;
+        const redList = entry?.redList ?? null;
+        // A red-listed lesson does not count for the student: not held, not marked.
+        const isEligible = entry?.isEligible === true && !redList;
         const status = entry?.status ?? null;
 
         if (isEligible) {
@@ -706,6 +770,9 @@ export default function AttendanceLessonPage() {
           timeLabel: col.timeLabel,
           isCurrentLesson: col.lessonId === lessonId,
           isEligible,
+          redList: redList
+            ? { fromDate: redList.redListFromDate ?? null, toDate: redList.redListToDate ?? null }
+            : null,
         };
       });
 
@@ -718,6 +785,9 @@ export default function AttendanceLessonPage() {
         totalLessons,
         attendanceRate: markedCount > 0 ? Math.round((presentCount / markedCount) * 100) : 0,
         cells,
+        openRedList: data.openRedListByStudentId[student.id]
+          ? { id: data.openRedListByStudentId[student.id].id, fromDate: data.openRedListByStudentId[student.id].fromDate }
+          : null,
       };
     });
 
@@ -738,19 +808,19 @@ export default function AttendanceLessonPage() {
 
   const summary = useMemo(
     () => ({
-      totalStudents: attendanceRows.length,
-      markedStudents: attendanceRows.filter((student) => student.status !== 'PLANNED').length,
-      presentStudents: attendanceRows.filter((student) => isPresentStatus(student.status)).length,
+      totalStudents: markableRows.length,
+      markedStudents: markableRows.filter((student) => student.status !== 'PLANNED').length,
+      presentStudents: markableRows.filter((student) => isPresentStatus(student.status)).length,
     }),
-    [attendanceRows]
+    [markableRows]
   );
 
   const hasAttendanceChanges = useMemo(
     () =>
-      attendanceRows.some(
+      markableRows.some(
         (student) => (originalStatusMap.get(student.id) ?? 'PLANNED') !== student.status
       ),
-    [attendanceRows, originalStatusMap]
+    [markableRows, originalStatusMap]
   );
 
   const hasLessonChanges =
@@ -833,14 +903,14 @@ export default function AttendanceLessonPage() {
   };
 
   const handleSaveAttendance = async () => {
-    if (!lessonId || attendanceRows.length === 0) {
+    if (!lessonId || markableRows.length === 0) {
       return;
     }
 
     setPageError(null);
 
     try {
-      const attendances = attendanceRows.map((student) => ({
+      const attendances = markableRows.map((student) => ({
         studentId: student.id,
         status: student.status,
       }));
@@ -854,14 +924,14 @@ export default function AttendanceLessonPage() {
   };
 
   const handleMarkAll = async () => {
-    if (!lessonId || attendanceRows.length === 0) {
+    if (!lessonId || markableRows.length === 0) {
       return;
     }
 
     setPageError(null);
 
     try {
-      const studentIds = attendanceRows.map((student) => student.id);
+      const studentIds = markableRows.map((student) => student.id);
       await attendanceUnlock.run((unlockReason, requestConfig) =>
         markAllMutation.mutate({ id: lessonId, studentIds, unlockReason, requestConfig })
       );
@@ -910,6 +980,31 @@ export default function AttendanceLessonPage() {
     } catch (createError) {
       setPageError(getErrorMessage(createError, 'Не удалось создать и добавить ученика.'));
       throw createError;
+    }
+  };
+
+  const showRedListActions = canEditRedList && Boolean(data?.courseId);
+
+  const openRedListAction = (studentId: string, studentName: string) => {
+    if (!data?.courseId) return;
+    const openPeriod = data.openRedListByStudentId[studentId];
+    if (openPeriod) {
+      setRedListTarget({
+        mode: 'close',
+        redListId: openPeriod.id,
+        studentName,
+        fromDate: openPeriod.fromDate,
+        courseName: data.groupName,
+      });
+    } else {
+      setRedListTarget({
+        mode: 'add',
+        studentId,
+        studentName,
+        courseId: data.courseId,
+        courseName: data.groupName,
+        defaultDate: data.lesson.lessonDate,
+      });
     }
   };
 
@@ -1151,7 +1246,7 @@ export default function AttendanceLessonPage() {
                     size="sm"
                     variant="secondary"
                     onClick={handleMarkAll}
-                    disabled={attendanceRows.length === 0 || isSavingAttendance}
+                    disabled={markableRows.length === 0 || isSavingAttendance}
                   >
                     Отметить всех как посетивших
                   </Button>
@@ -1251,6 +1346,7 @@ export default function AttendanceLessonPage() {
                   <th className="crm-table-th w-56">Контакты</th>
                   <th className="crm-table-th w-44">Статус ученика</th>
                   <th className="crm-table-th w-56">Посещаемость</th>
+                  {showRedListActions ? <th className="crm-table-th w-44">Редлист</th> : null}
                 </tr>
               </thead>
               <tbody className="crm-table-body">
@@ -1287,6 +1383,12 @@ export default function AttendanceLessonPage() {
                         </span>
                       </td>
                       <td className="crm-table-cell">
+                        {student.redList ? (
+                          <RedListChip
+                            fromDate={student.redList.redListFromDate}
+                            toDate={student.redList.redListToDate}
+                          />
+                        ) : (
                         <select
                           value={student.status}
                           onChange={(event) =>
@@ -1303,13 +1405,36 @@ export default function AttendanceLessonPage() {
                             </option>
                           ))}
                         </select>
+                        )}
                       </td>
+                      {showRedListActions ? (
+                        <td className="crm-table-cell">
+                          {data.openRedListByStudentId[student.id] ? (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-[#dbe2e8] bg-white px-2 py-1 text-xs font-semibold text-[#467aff] transition-colors hover:bg-[#f0f5ff]"
+                              onClick={() => openRedListAction(student.id, student.fullName)}
+                              title={`В редлисте с ${formatRedListDate(data.openRedListByStudentId[student.id].fromDate)}`}
+                            >
+                              Вывести из редлиста
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+                              onClick={() => openRedListAction(student.id, student.fullName)}
+                            >
+                              В редлист с даты
+                            </button>
+                          )}
+                        </td>
+                      ) : null}
                     </tr>
                   ))
                 ) : (
                   <tr className="crm-table-row">
                     <td
-                      colSpan={5}
+                      colSpan={showRedListActions ? 6 : 5}
                       className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]"
                     >
                       Для этого урока пока нет учеников
@@ -1318,7 +1443,7 @@ export default function AttendanceLessonPage() {
                 )}
               </tbody>
             </table>
-            <AttendanceTotals statuses={attendanceRows.map((student) => student.status)} />
+            <AttendanceTotals statuses={markableRows.map((student) => student.status)} />
           </div>
         ) : !data.lesson.groupId ? (
           <div className="crm-surface-soft p-6 text-sm text-[#7f8794]">
@@ -1338,6 +1463,11 @@ export default function AttendanceLessonPage() {
             lessonColumns={monthlyViewData.lessonColumns}
             rows={monthlyViewData.rows}
             onStatusChange={handleMonthlyStatusChange}
+            onRedListAction={
+              showRedListActions
+                ? (row) => openRedListAction(row.studentId, row.fullName)
+                : undefined
+            }
           />
         ) : (
           <div className="crm-surface-soft p-6 text-sm text-[#7f8794]">
@@ -1409,6 +1539,15 @@ export default function AttendanceLessonPage() {
       />
 
       {attendanceUnlock.modal}
+
+      <RedListModal
+        target={redListTarget}
+        onClose={() => setRedListTarget(null)}
+        onDone={async () => {
+          setMonthlyAttendanceOverrides({});
+          await refetch();
+        }}
+      />
     </div>
   );
 }

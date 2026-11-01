@@ -28,11 +28,17 @@ export function getErrorMessage(
 
     if (data && typeof data === 'object') {
       const errorCode = 'errorCode' in data ? data.errorCode : null;
+      const message = 'message' in data ? data.message : null;
+      // A Russian message from the backend is written for staff (what happened, what to do):
+      // show it as is instead of the generic text for its error code.
+      if (typeof message === 'string' && /[а-яё]/i.test(message)) {
+        return message;
+      }
+
       if (typeof errorCode === 'string' && errorCode.trim() && ERROR_CODE_MESSAGES[errorCode]) {
         return ERROR_CODE_MESSAGES[errorCode];
       }
 
-      const message = 'message' in data ? data.message : null;
       if (typeof message === 'string' && message.trim()) {
         return message;
       }

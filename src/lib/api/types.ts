@@ -566,6 +566,37 @@ export interface AttendanceDto {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  /** «Редлист»: the student is red-listed for this lesson, marking is locked. */
+  redList?: boolean;
+  redListId?: string | null;
+  redListFromDate?: string | null;
+  redListToDate?: string | null;
+}
+
+/** «Редлист» period of a student in a course (optionally one group). */
+export interface RedListDto {
+  id: string;
+  studentId: string;
+  studentName: string | null;
+  courseId: string;
+  courseName: string | null;
+  groupId: string | null;
+  branchId: string | null;
+  /** First red-listed day (YYYY-MM-DD). */
+  fromDate: string;
+  /** Last red-listed day, inclusive; null = still in the red list. */
+  toDate: string | null;
+  /** First day back (toDate + 1). */
+  returnDate: string | null;
+  active: boolean;
+  reason: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  createdByName: string | null;
+  closedAt: string | null;
+  closedBy: string | null;
+  closedByName: string | null;
+  removedAttendanceCount?: number | null;
 }
 
 // ─── Lead ───────────────────────────────────────────────────────

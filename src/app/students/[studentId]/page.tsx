@@ -37,6 +37,15 @@ import {
   STUDENT_STATUS_LABELS,
 } from '@/constants/student';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { formatFullName } from '@/lib/utils';
+import {
+  RedListChip,
+  RedListModal,
+  canManageRedList,
+  formatRedListDate,
+  formatRedListPeriod,
+  type RedListModalTarget,
+} from '@/components/features/attendance/RedListModal';
 import { pushToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/error-message';
 import { formatDiscountPeriod, isDiscountPeriodValid } from '@/lib/discount-period';
@@ -46,6 +55,7 @@ import {
   coursesService,
   financeService,
   lessonsService,
+  redListService,
   schedulesService,
   settingsService,
   studentCallLogsService,
@@ -59,6 +69,7 @@ import {
   type CourseDto,
   type CourseEnrollmentDto,
   type LessonDto,
+  type RedListDto,
   type SaveStudentCallLogRequest,
   type ScheduleDto,
   type StudentCallLogDto,
@@ -523,6 +534,24 @@ export default function StudentProfilePage() {
   const student = data?.student ?? null;
   const photoUrl = useResolvedFileUrl(student?.studentPhoto);
   const { data: branchesResponse } = useApi<BranchDto[]>(() => settingsService.getBranches(), []);
+
+  // «Редлист» periods of the student, per course.
+  const authRoles = useAuthStore((s) => s.roles);
+  const canEditRedList = canManageRedList(authRoles);
+  const [redListTarget, setRedListTarget] = useState<RedListModalTarget | null>(null);
+  const { data: redListPeriods, refetch: refetchRedList } = useApi<RedListDto[]>(
+    () => (studentId ? redListService.list({ studentId }) : Promise.resolve({ data: [] as RedListDto[] })),
+    [studentId]
+  );
+  const redListByCourseId = useMemo(() => {
+    const map = new Map<string, RedListDto[]>();
+    for (const period of redListPeriods ?? []) {
+      const list = map.get(period.courseId) ?? [];
+      list.push(period);
+      map.set(period.courseId, list);
+    }
+    return map;
+  }, [redListPeriods]);
   const transferBranches = (branchesResponse ?? []).filter(
     (branch) => branch.active && branch.id !== (student?.branchId || currentBranchId)
   );
@@ -1658,6 +1687,7 @@ export default function StudentProfilePage() {
                   <th className="crm-table-th">Уроки</th>
                   <th className="crm-table-th">Сумма</th>
                   <th className="crm-table-th">Статус</th>
+                  <th className="crm-table-th">Редлист</th>
                   <th className="crm-table-th text-right">Скидка</th>
                 </tr>
               </thead>
@@ -1790,6 +1820,71 @@ export default function StudentProfilePage() {
                             );
                           })()}
                         </td>
+                        <td className="crm-table-cell">
+                          {subscription.courseId ? (() => {
+                            const courseId = subscription.courseId;
+                            const courseName = data.coursesById[courseId]?.name || 'Курс';
+                            const studentName = formatFullName(data.student) || 'Ученик';
+                            const periods = redListByCourseId.get(courseId) ?? [];
+                            const openPeriod = periods.find((period) => !period.toDate);
+                            const pastPeriods = periods.filter((period) => period !== openPeriod);
+                            const canAct = canEditRedList && (subscription.status === 'ACTIVE' || Boolean(openPeriod));
+                            return (
+                              <div className="flex min-w-[170px] flex-col items-start gap-1">
+                                {openPeriod ? (
+                                  <RedListChip fromDate={openPeriod.fromDate} toDate={null} />
+                                ) : null}
+                                {pastPeriods.map((period) => (
+                                  <span
+                                    key={period.id}
+                                    className={`text-xs ${period.active ? 'font-semibold text-red-700' : 'text-[#8a93a3]'}`}
+                                    title={period.reason || undefined}
+                                  >
+                                    {period.toDate && period.toDate < period.fromDate
+                                      ? `Редлист с ${formatRedListDate(period.fromDate)} отменён`
+                                      : formatRedListPeriod(period.fromDate, period.toDate)}
+                                  </span>
+                                ))}
+                                {openPeriod?.reason ? (
+                                  <span className="text-xs text-[#7f8794]">{openPeriod.reason}</span>
+                                ) : null}
+                                {canAct ? (
+                                  openPeriod ? (
+                                    <button
+                                      type="button"
+                                      className="text-xs font-semibold text-[#467aff] hover:underline"
+                                      onClick={() => setRedListTarget({
+                                        mode: 'close',
+                                        redListId: openPeriod.id,
+                                        studentName,
+                                        fromDate: openPeriod.fromDate,
+                                        courseName,
+                                      })}
+                                    >
+                                      Вывести из редлиста
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="text-xs font-semibold text-red-600 hover:underline"
+                                      onClick={() => setRedListTarget({
+                                        mode: 'add',
+                                        studentId: data.student.id,
+                                        studentName,
+                                        courseId,
+                                        courseName,
+                                      })}
+                                    >
+                                      В редлист с даты
+                                    </button>
+                                  )
+                                ) : periods.length === 0 ? (
+                                  <span className="text-xs text-[#8a93a3]">—</span>
+                                ) : null}
+                              </div>
+                            );
+                          })() : '—'}
+                        </td>
                         <td className="crm-table-cell text-right">
                           {subscription.courseId ? (
                             <Button
@@ -1817,7 +1912,7 @@ export default function StudentProfilePage() {
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       У студента пока нет активных групп или абонементов
                     </td>
                   </tr>
@@ -3180,6 +3275,14 @@ export default function StudentProfilePage() {
           </p>
         </div>
       </Modal>
+
+      <RedListModal
+        target={redListTarget}
+        onClose={() => setRedListTarget(null)}
+        onDone={async () => {
+          await Promise.all([refetchRedList(), refetch()]);
+        }}
+      />
     </div>
   );
 }

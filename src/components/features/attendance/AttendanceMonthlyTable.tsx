@@ -10,6 +10,7 @@ import {
   ATTENDANCE_STATUS_OPTIONS,
 } from '@/constants/attendance';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
+import { RedListChip, formatRedListDate } from './RedListModal';
 import type { AttendanceStatus, StudentStatus } from '@/lib/api/types';
 
 export type AttendanceMonthlyLessonColumn = {
@@ -28,6 +29,8 @@ export type AttendanceMonthlyStudentCell = {
   timeLabel: string;
   isCurrentLesson: boolean;
   isEligible?: boolean;
+  /** «Редлист»: the student is red-listed for this lesson; marking is locked. */
+  redList?: { fromDate: string | null; toDate: string | null } | null;
 };
 
 export type AttendanceMonthlyStudentRow = {
@@ -39,6 +42,8 @@ export type AttendanceMonthlyStudentRow = {
   totalLessons: number;
   attendanceRate: number;
   cells: AttendanceMonthlyStudentCell[];
+  /** The student's open «Редлист» period in this course, if any. */
+  openRedList?: { id: string; fromDate: string } | null;
 };
 
 interface AttendanceMonthlyTableProps {
@@ -50,6 +55,8 @@ interface AttendanceMonthlyTableProps {
   lessonColumns: AttendanceMonthlyLessonColumn[];
   rows: AttendanceMonthlyStudentRow[];
   onStatusChange: (studentId: string, lessonId: string, status: AttendanceStatus) => void;
+  /** «В редлист с даты» / «Вывести из редлиста» for the row; hidden when omitted. */
+  onRedListAction?: (row: AttendanceMonthlyStudentRow) => void;
 }
 
 function toRateToneClass(rate: number) {
@@ -148,6 +155,7 @@ export function AttendanceMonthlyTable({
   lessonColumns,
   rows,
   onStatusChange,
+  onRedListAction,
 }: AttendanceMonthlyTableProps) {
   return (
     <div className="crm-table-wrap overflow-hidden">
@@ -216,6 +224,18 @@ export function AttendanceMonthlyTable({
                       >
                         {STUDENT_STATUS_LABELS[row.studentStatus]}
                       </span>
+                      {onRedListAction ? (
+                        <button
+                          type="button"
+                          className={`mt-1 block text-[11px] font-semibold hover:underline ${
+                            row.openRedList ? 'text-[#467aff]' : 'text-red-600'
+                          }`}
+                          onClick={() => onRedListAction(row)}
+                          title={row.openRedList ? `В редлисте с ${formatRedListDate(row.openRedList.fromDate)}` : undefined}
+                        >
+                          {row.openRedList ? 'Вывести из редлиста' : 'В редлист с даты'}
+                        </button>
+                      ) : null}
                     </div>
                   </td>
 
@@ -224,7 +244,9 @@ export function AttendanceMonthlyTable({
                       key={`${row.studentId}-${cell.lessonId}`}
                       className="crm-table-cell border border-[#e4eaf0] p-1 text-center"
                     >
-                      {cell.status && cell.isEligible !== false ? (
+                      {cell.redList ? (
+                        <RedListChip compact fromDate={cell.redList.fromDate} toDate={cell.redList.toDate} />
+                      ) : cell.status && cell.isEligible !== false ? (
                         <AttendanceStatusDropdown
                           status={cell.status}
                           lessonId={cell.lessonId}

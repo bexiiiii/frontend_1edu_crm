@@ -470,4 +470,5 @@ export { auditService } from './api/audit';
 export { roomsService } from './api/rooms';
 export { studentCallLogsService } from './api/callLogs';
 export { inventoryService } from './api/inventory';
+export { redListService } from './api/redList';
 export * from './api/types';
