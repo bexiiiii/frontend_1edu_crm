@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { AttendanceTotals } from './AttendanceTotals';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ATTENDANCE_STATUS_COLORS,
   ATTENDANCE_STATUS_LABELS,
@@ -67,15 +68,36 @@ function AttendanceStatusDropdown({
   onChange: (status: AttendanceStatus) => void;
   lessonId: string;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const normalizedStatus = (status === 'NOT_MARKED' ? 'PLANNED' : status) as AttendanceStatus;
   const currentOption = ATTENDANCE_STATUS_OPTIONS.find(o => o.value === normalizedStatus);
+
+  // The menu is rendered in a portal with fixed coordinates: inside the table's
+  // scroll container it was clipped on the last rows. It opens upward when
+  // there is not enough room below the button.
+  const toggle = () => {
+    if (menuPos) {
+      setMenuPos(null);
+      return;
+    }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuHeight = ATTENDANCE_STATUS_OPTIONS.length * 34 + 8;
+    const left = rect.left + rect.width / 2;
+    if (window.innerHeight - rect.bottom < menuHeight + 8 && rect.top > menuHeight + 8) {
+      setMenuPos({ left, bottom: window.innerHeight - rect.top + 4 });
+    } else {
+      setMenuPos({ left, top: rect.bottom + 4 });
+    }
+  };
 
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggle}
         className={`w-full rounded-lg border px-2 py-1.5 text-left text-[11px] font-semibold transition-all hover:brightness-95 ${ATTENDANCE_STATUS_COLORS[normalizedStatus] || ATTENDANCE_STATUS_COLORS.PLANNED}`}
       >
         <span className="block leading-3">
@@ -83,13 +105,17 @@ function AttendanceStatusDropdown({
         </span>
       </button>
 
-      {isOpen && (
+      {menuPos && typeof document !== 'undefined' && createPortal(
         <>
           <div
             className="fixed inset-0 z-40"
-            onClick={() => setIsOpen(false)}
+            onClick={() => setMenuPos(null)}
+            onWheel={() => setMenuPos(null)}
           />
-          <div className="absolute left-1/2 z-50 min-w-[140px] -translate-x-1/2 rounded-lg border border-[#e4eaf0] bg-white py-1 shadow-lg">
+          <div
+            className="fixed z-50 min-w-[140px] -translate-x-1/2 rounded-lg border border-[#e4eaf0] bg-white py-1 shadow-lg"
+            style={{ left: menuPos.left, top: menuPos.top, bottom: menuPos.bottom }}
+          >
             {ATTENDANCE_STATUS_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -99,14 +125,15 @@ function AttendanceStatusDropdown({
                 }`}
                 onClick={() => {
                   onChange(option.value);
-                  setIsOpen(false);
+                  setMenuPos(null);
                 }}
               >
                 {option.label}
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
