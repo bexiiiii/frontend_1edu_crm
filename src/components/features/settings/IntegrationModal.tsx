@@ -1,5 +1,5 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Loader2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, Copy, Loader2, RefreshCw, Smartphone } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -192,6 +192,12 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
   const [runningBackup, setRunningBackup] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [lastRunResult, setLastRunResult] = useState<CloudBackupRunResultDto | null>(null);
+  const [kaspiPhone, setKaspiPhone] = useState('');
+  const [kaspiOtp, setKaspiOtp] = useState('');
+  const [kaspiProcessId, setKaspiProcessId] = useState('');
+  const [kaspiAuthStep, setKaspiAuthStep] = useState<'phone' | 'otp' | 'connected'>('phone');
+  const [kaspiAuthBusy, setKaspiAuthBusy] = useState(false);
+  const [kaspiAuthError, setKaspiAuthError] = useState<string | null>(null);
   const latestLoadRequestIdRef = useRef(0);
   const draftRef = useRef<IntegrationDraft>(getInitialDraft());
 
@@ -353,6 +359,7 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
               apiKeyMasked: result.data.apiKeyMasked,
               webhookUrl: result.data.webhookUrl,
             });
+            setKaspiAuthStep(result.data.configured ? 'connected' : 'phone');
             break;
           }
 
@@ -457,6 +464,48 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
 
   const updateDraft = <K extends keyof IntegrationDraft>(key: K, value: IntegrationDraft[K]) => {
     applyDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleKaspiSendCode = async () => {
+    if (!kaspiPhone.trim()) {
+      setKaspiAuthError('Введите номер кассира Kaspi Pay.');
+      return;
+    }
+    setKaspiAuthBusy(true);
+    setKaspiAuthError(null);
+    try {
+      const initialized = await settingsService.initKaspiPosAuth();
+      const processId = initialized.data.processId;
+      await settingsService.sendKaspiPosPhone({ phoneNumber: kaspiPhone, processId });
+      setKaspiProcessId(processId);
+      setKaspiAuthStep('otp');
+      pushToast({ message: 'SMS-код отправлен на номер кассира.', tone: 'success' });
+    } catch (error) {
+      setKaspiAuthError(getErrorMessage(error, 'Не удалось отправить SMS-код.'));
+    } finally {
+      setKaspiAuthBusy(false);
+    }
+  };
+
+  const handleKaspiVerifyOtp = async () => {
+    if (!kaspiOtp.trim() || !kaspiProcessId) {
+      setKaspiAuthError('Введите код из SMS.');
+      return;
+    }
+    setKaspiAuthBusy(true);
+    setKaspiAuthError(null);
+    try {
+      await settingsService.verifyKaspiPosOtp({ otp: kaspiOtp, processId: kaspiProcessId });
+      setKaspiAuthStep('connected');
+      setKaspiOtp('');
+      setMeta((prev) => ({ ...(prev ?? { configured: true }), configured: true }));
+      applyDraft((prev) => ({ ...prev, enabled: true, apiBaseUrl: 'http://kaspi-pos:3000' }));
+      pushToast({ message: 'Kaspi POS успешно подключён.', tone: 'success' });
+    } catch (error) {
+      setKaspiAuthError(getErrorMessage(error, 'Неверный или просроченный SMS-код.'));
+    } finally {
+      setKaspiAuthBusy(false);
+    }
   };
 
   const handleSave = async () => {
@@ -778,12 +827,6 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
               disabledText: 'Интеграция отключена',
               onToggle: toggleEnabled,
             })}
-            <Input
-              label="API Base URL"
-              value={draft.apiBaseUrl}
-              onChange={(event) => updateDraft('apiBaseUrl', event.target.value)}
-              placeholder="https://..."
-            />
             <Select
               label="Куда отправлять инвойс"
               value={draft.recipientField}
@@ -795,16 +838,67 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
                 </option>
               ))}
             </Select>
-            {renderSecretField({
-              label: 'API Key',
-              value: draft.apiKey,
-              onChange: (event) => updateDraft('apiKey', event.target.value),
-              placeholder: 'Введите новый API key',
-              maskedValue: meta?.apiKeyMasked,
-              type: 'text',
-            })}
-            <div className="rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] px-4 py-3 text-sm text-[#5d6676]">
-              <p>Webhook URL: <span className="font-medium text-[#1f2530]">{meta?.webhookUrl || '—'}</span></p>
+
+            <div className="overflow-hidden rounded-2xl border border-[#e1e6ec] bg-white shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="flex items-center gap-3 border-b border-[#edf0f4] bg-[linear-gradient(120deg,#fff7f7_0%,#ffffff_55%,#f5f9ff_100%)] px-4 py-4">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#f14635] text-white shadow-[0_6px_16px_rgba(241,70,53,0.25)]">
+                  <Smartphone className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-[#1f2530]">Аккаунт кассира Kaspi Pay</p>
+                  <p className="mt-0.5 text-xs text-[#697386]">Защищённый вход по одноразовому SMS-коду</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 p-4">
+                {kaspiAuthStep === 'connected' ? (
+                  <>
+                    <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-emerald-800">
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-semibold">Kaspi POS подключён</p>
+                        <p className="mt-0.5 text-xs text-emerald-700">Счета и подтверждения оплаты работают автоматически.</p>
+                      </div>
+                    </div>
+                    <Button variant="secondary" onClick={() => setKaspiAuthStep('phone')} disabled={kaspiAuthBusy}>
+                      Переподключить аккаунт
+                    </Button>
+                  </>
+                ) : kaspiAuthStep === 'phone' ? (
+                  <>
+                    <Input
+                      label="Номер кассира Kaspi Pay"
+                      value={kaspiPhone}
+                      onChange={(event) => setKaspiPhone(event.target.value)}
+                      placeholder="+7 700 000 00 00"
+                    />
+                    <Button onClick={() => void handleKaspiSendCode()} disabled={kaspiAuthBusy}>
+                      {kaspiAuthBusy ? 'Отправляем код...' : 'Получить SMS-код'}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      label="Код из SMS"
+                      value={kaspiOtp}
+                      onChange={(event) => setKaspiOtp(event.target.value.replace(/\D/g, ''))}
+                      placeholder="0000"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => void handleKaspiVerifyOtp()} disabled={kaspiAuthBusy}>
+                        {kaspiAuthBusy ? 'Проверяем...' : 'Подключить Kaspi POS'}
+                      </Button>
+                      <Button variant="ghost" onClick={() => setKaspiAuthStep('phone')} disabled={kaspiAuthBusy}>
+                        Изменить номер
+                      </Button>
+                    </div>
+                  </>
+                )}
+
+                {kaspiAuthError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{kaspiAuthError}</div>
+                ) : null}
+              </div>
             </div>
           </div>
         );
@@ -997,7 +1091,7 @@ export const IntegrationModal = ({ isOpen, onClose, integration, onSaved }: Inte
           </div>
         );
     }
-  }, [draft, integrationId, meta]);
+  }, [draft, integrationId, kaspiAuthBusy, kaspiAuthError, kaspiAuthStep, kaspiOtp, kaspiPhone, meta]);
 
   const footer = useMemo(() => {
     if (!integrationId) {

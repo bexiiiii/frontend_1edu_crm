@@ -21,6 +21,7 @@ interface AddEmployeeModalProps {
   isSubmitting?: boolean;
   title?: string;
   includeStatus?: boolean;
+  showSalary?: boolean;
 }
 
 function getTodayDate(): string {
@@ -43,8 +44,11 @@ function getDefaultValues(): StaffFormValues {
     salary: '',
     salaryType: 'FIXED',
     salaryPercentage: '',
+    individualSalaryPercentage: '',
+    birthdate: '',
     hireDate: getTodayDate(),
     notes: '',
+    scheduleColor: '#467aff',
   };
 }
 
@@ -71,6 +75,7 @@ export const AddEmployeeModal = ({
   isSubmitting = false,
   title = 'Добавить сотрудника',
   includeStatus = false,
+  showSalary = true,
 }: AddEmployeeModalProps) => {
   const defaults = initialValues ?? getDefaultValues();
 
@@ -86,8 +91,11 @@ export const AddEmployeeModal = ({
   const [salary, setSalary] = useState(defaults.salary);
   const [salaryType, setSalaryType] = useState(defaults.salaryType);
   const [salaryPercentage, setSalaryPercentage] = useState(defaults.salaryPercentage);
+  const [individualSalaryPercentage, setIndividualSalaryPercentage] = useState(defaults.individualSalaryPercentage);
+  const [birthdate, setBirthdate] = useState(defaults.birthdate);
   const [hireDate, setHireDate] = useState(defaults.hireDate);
   const [notes, setNotes] = useState(defaults.notes);
+  const [scheduleColor, setScheduleColor] = useState(defaults.scheduleColor || '#467aff');
   const [fieldErrors, setFieldErrors] = useState<{
     firstName?: boolean;
     lastName?: boolean;
@@ -108,13 +116,13 @@ export const AddEmployeeModal = ({
     }
 
     const parsedSalary = salary ? Number(salary) : undefined;
-    if (parsedSalary !== undefined && (!Number.isFinite(parsedSalary) || parsedSalary < 0)) {
+    if (showSalary && parsedSalary !== undefined && (!Number.isFinite(parsedSalary) || parsedSalary < 0)) {
       setFieldErrors({ salary: true });
       pushToast({ message: 'Зарплата должна быть положительным числом.', tone: 'error' });
       return;
     }
 
-    if (salaryType === 'FIXED' && parsedSalary === undefined) {
+    if (showSalary && salaryType === 'FIXED' && parsedSalary === undefined) {
       setFieldErrors({ salary: true });
       pushToast({ message: 'Для фиксированной схемы укажите зарплату.', tone: 'error' });
       return;
@@ -122,6 +130,7 @@ export const AddEmployeeModal = ({
 
     const parsedSalaryPercentage = salaryPercentage ? Number(salaryPercentage) : undefined;
     if (
+      showSalary &&
       parsedSalaryPercentage !== undefined &&
       (!Number.isFinite(parsedSalaryPercentage) || parsedSalaryPercentage < 0 || parsedSalaryPercentage > 100)
     ) {
@@ -130,7 +139,7 @@ export const AddEmployeeModal = ({
       return;
     }
 
-    if (salaryType === 'PER_STUDENT_PERCENTAGE' && parsedSalaryPercentage === undefined) {
+    if (showSalary && salaryType === 'PER_STUDENT_PERCENTAGE' && parsedSalaryPercentage === undefined) {
       setFieldErrors({ salaryPercentage: true });
       pushToast({ message: 'Для процентной схемы укажите процент сотрудника.', tone: 'error' });
       return;
@@ -148,8 +157,12 @@ export const AddEmployeeModal = ({
       salary: salaryType === 'FIXED' ? parsedSalary : 0,
       salaryType,
       salaryPercentage: salaryType === 'PER_STUDENT_PERCENTAGE' ? parsedSalaryPercentage : undefined,
+      individualSalaryPercentage: salaryType === 'PER_STUDENT_PERCENTAGE' && individualSalaryPercentage
+        ? Number(individualSalaryPercentage) : undefined,
+      birthdate: birthdate || undefined,
       hireDate: hireDate || undefined,
       notes: notes.trim() || undefined,
+      scheduleColor,
       ...(includeStatus ? { status } : {}),
     };
 
@@ -222,6 +235,29 @@ export const AddEmployeeModal = ({
           />
         </div>
 
+        <Input
+          label="Дата рождения"
+          type="date"
+          value={birthdate}
+          onChange={(event) => setBirthdate(event.target.value)}
+        />
+
+        {role === 'TEACHER' ? (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <label className="mb-2 block text-sm font-medium text-gray-700">Цвет преподавателя в расписании</label>
+            <div className="flex items-center gap-3">
+              <input
+                aria-label="Цвет преподавателя в расписании"
+                type="color"
+                value={scheduleColor}
+                onChange={(event) => setScheduleColor(event.target.value)}
+                className="h-9 w-12 cursor-pointer rounded border border-gray-300 bg-white p-1"
+              />
+              <span className="text-sm text-gray-600">Занятия этого преподавателя будут отмечены этим цветом.</span>
+            </div>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Select
             label="Роль"
@@ -256,17 +292,19 @@ export const AddEmployeeModal = ({
             />
           )}
 
-          <Select
-            label="Схема оплаты"
-            value={salaryType}
-            onChange={(event) => setSalaryType(event.target.value as StaffFormValues['salaryType'])}
-          >
-            {STAFF_SALARY_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+          {showSalary && (
+            <Select
+              label="Схема оплаты"
+              value={salaryType}
+              onChange={(event) => setSalaryType(event.target.value as StaffFormValues['salaryType'])}
+            >
+              {STAFF_SALARY_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -284,33 +322,46 @@ export const AddEmployeeModal = ({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {salaryType === 'FIXED' ? (
-            <Input
-              label="Фиксированная зарплата"
-              type="number"
-              value={salary}
-              onChange={(event) => {
-                setSalary(event.target.value);
-                setFieldErrors((prev) => ({ ...prev, salary: false }));
-              }}
-              placeholder="Например, 3000000"
-              error={Boolean(fieldErrors.salary)}
-            />
-          ) : (
-            <Input
-              label="Процент сотрудника"
-              type="number"
-              value={salaryPercentage}
-              onChange={(event) => {
-                setSalaryPercentage(event.target.value);
-                setFieldErrors((prev) => ({ ...prev, salaryPercentage: false }));
-              }}
-              placeholder="Например, 35"
-              error={Boolean(fieldErrors.salaryPercentage)}
-            />
-          )}
-        </div>
+        {showSalary && (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {salaryType === 'FIXED' ? (
+              <Input
+                label="Фиксированная зарплата"
+                type="number"
+                value={salary}
+                onChange={(event) => {
+                  setSalary(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, salary: false }));
+                }}
+                placeholder="Например, 3000000"
+                error={Boolean(fieldErrors.salary)}
+              />
+            ) : (
+              <>
+              <Input
+                label="Процент за групповые занятия"
+                type="number"
+                value={salaryPercentage}
+                onChange={(event) => {
+                  setSalaryPercentage(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, salaryPercentage: false }));
+                }}
+                placeholder="Например, 35"
+                error={Boolean(fieldErrors.salaryPercentage)}
+              />
+              <Input
+                label="Процент за индивидуальные занятия"
+                type="number"
+                min="0"
+                max="100"
+                value={individualSalaryPercentage}
+                onChange={(event) => setIndividualSalaryPercentage(event.target.value)}
+                placeholder="Например, 50"
+              />
+              </>
+            )}
+          </div>
+        )}
 
         {includeStatus && (
           <Input

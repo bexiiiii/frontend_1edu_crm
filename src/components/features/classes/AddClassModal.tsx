@@ -1,4 +1,7 @@
-import { useMemo, useState } from 'react';
+import type { DiscountPeriod } from '@/lib/api/types';
+import { isDiscountPeriodValid } from '@/lib/discount-period';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -12,13 +15,22 @@ interface SelectOption {
   name: string;
 }
 
+interface LevelOption extends SelectOption {
+  active: boolean;
+}
+
 interface AddClassModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: CreateCourseRequest & { status?: CourseStatus }) => Promise<void>;
+  onSave: (
+    data: CreateCourseRequest & { status?: CourseStatus },
+    studentDiscounts?: Record<string, number>,
+    studentDiscountPeriods?: Record<string, DiscountPeriod>
+  ) => Promise<void>;
   teachers: SelectOption[];
   rooms: SelectOption[];
   students: SelectOption[];
+  levels: LevelOption[];
   initialValues?: CourseFormValues;
   isSubmitting?: boolean;
   title?: string;
@@ -32,10 +44,13 @@ function getDefaultValues(): CourseFormValues {
     name: '',
     description: '',
     basePrice: '',
+    totalLessons: '',
+    levelId: '',
     enrollmentLimit: '',
     color: COLORS[0],
     status: 'ACTIVE',
     teacherId: '',
+    teacherIds: [],
     roomId: '',
     studentIds: [],
   };
@@ -63,6 +78,7 @@ export const AddClassModal = ({
   teachers,
   rooms,
   students,
+  levels,
   initialValues,
   isSubmitting = false,
   title = 'Добавить курс',
@@ -75,14 +91,43 @@ export const AddClassModal = ({
   const [name, setName] = useState(defaults.name);
   const [description, setDescription] = useState(defaults.description);
   const [basePrice, setBasePrice] = useState(defaults.basePrice);
+  const [totalLessons, setTotalLessons] = useState(defaults.totalLessons);
+  const [levelId, setLevelId] = useState(defaults.levelId);
   const [enrollmentLimit, setEnrollmentLimit] = useState(defaults.enrollmentLimit);
   const [color, setColor] = useState(defaults.color || COLORS[0]);
   const [status, setStatus] = useState(defaults.status);
-  const [teacherId, setTeacherId] = useState(defaults.teacherId);
+  const [teacherIds, setTeacherIds] = useState(defaults.teacherIds.length ? defaults.teacherIds : defaults.teacherId ? [defaults.teacherId] : []);
+  const [teacherDropdownOpen, setTeacherDropdownOpen] = useState(false);
   const [roomId, setRoomId] = useState(defaults.roomId);
   const [studentIds, setStudentIds] = useState(defaults.studentIds);
+  const [studentDiscounts, setStudentDiscounts] = useState<Record<string, number>>({});
+  const [studentDiscountPeriods, setStudentDiscountPeriods] = useState<Record<string, DiscountPeriod>>({});
   const [studentQuery, setStudentQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const wasOpen = useRef(false);
+
+  useEffect(() => {
+    if (isOpen && !wasOpen.current) {
+      const incoming = initialValues ?? getDefaultValues();
+      setType(incoming.type);
+      setFormat(incoming.format);
+      setName(incoming.name);
+      setDescription(incoming.description);
+      setBasePrice(incoming.basePrice);
+      setTotalLessons(incoming.totalLessons);
+      setLevelId(incoming.levelId);
+      setEnrollmentLimit(incoming.enrollmentLimit);
+      setColor(incoming.color || COLORS[0]);
+      setStatus(incoming.status);
+      setTeacherIds(incoming.teacherIds.length ? incoming.teacherIds : incoming.teacherId ? [incoming.teacherId] : []);
+      setRoomId(incoming.roomId);
+      setStudentIds(incoming.studentIds);
+      setStudentQuery('');
+      setTeacherDropdownOpen(false);
+      setError(null);
+    }
+    wasOpen.current = isOpen;
+  }, [initialValues, isOpen]);
 
   const filteredStudents = useMemo(() => {
     const query = studentQuery.trim().toLowerCase();
@@ -92,12 +137,21 @@ export const AddClassModal = ({
     );
   }, [studentQuery, students]);
 
+  const selectedTeacherNames = useMemo(
+    () => teachers.filter((teacher) => teacherIds.includes(teacher.id)).map((teacher) => teacher.name),
+    [teacherIds, teachers]
+  );
+
   const handleStudentToggle = (studentId: string) => {
     setStudentIds((prev) =>
       prev.includes(studentId)
         ? prev.filter((id) => id !== studentId)
         : [...prev, studentId]
     );
+  };
+
+  const handleTeacherToggle = (teacherId: string) => {
+    setTeacherIds((prev) => prev.includes(teacherId) ? prev.filter((id) => id !== teacherId) : [...prev, teacherId]);
   };
 
   const handleSave = async () => {
@@ -108,6 +162,11 @@ export const AddClassModal = ({
       return;
     }
 
+    if (!levelId) {
+      setError('Уровень курса обязателен. Добавьте его в Настройки → Статусы → Уровни.');
+      return;
+    }
+
     const parsedBasePrice = Number(basePrice);
     if (!Number.isFinite(parsedBasePrice) || parsedBasePrice < 0) {
       setError('Укажите корректную базовую цену.');
@@ -115,11 +174,24 @@ export const AddClassModal = ({
     }
 
     const parsedEnrollmentLimit = enrollmentLimit.trim() ? Number(enrollmentLimit) : undefined;
+    const parsedTotalLessons = totalLessons.trim() ? Number(totalLessons) : undefined;
+    if (!parsedTotalLessons || !Number.isInteger(parsedTotalLessons) || parsedTotalLessons < 1) {
+      setError('Укажите количество уроков.');
+      return;
+    }
     if (
       parsedEnrollmentLimit !== undefined &&
       (!Number.isFinite(parsedEnrollmentLimit) || parsedEnrollmentLimit <= 0)
     ) {
       setError('Лимит учеников должен быть положительным числом.');
+      return;
+    }
+
+    const invalidPeriod = Object.entries(studentDiscountPeriods).some(
+      ([id, period]) => studentIds.includes(id) && !isDiscountPeriodValid(period.fromMonth, period.toMonth)
+    );
+    if (invalidPeriod) {
+      setError('Период скидки: месяц начала не может быть позже месяца окончания.');
       return;
     }
 
@@ -130,13 +202,16 @@ export const AddClassModal = ({
         name: name.trim(),
         description: description.trim() || undefined,
         basePrice: parsedBasePrice,
+        totalLessons: parsedTotalLessons,
+        levelId,
         enrollmentLimit: parsedEnrollmentLimit,
         color: color || undefined,
-        teacherId: teacherId || undefined,
+        teacherId: teacherIds[0] || undefined,
+        teacherIds,
         roomId: roomId || undefined,
         studentIds,
         ...(includeStatus ? { status } : {}),
-      });
+      }, studentDiscounts, studentDiscountPeriods);
     } catch (submitError) {
       setError(getErrorMessage(submitError));
     }
@@ -206,36 +281,73 @@ export const AddClassModal = ({
           placeholder="Например, Английский Beginner"
         />
 
+        <Select label="Уровень курса *" value={levelId} onChange={(event) => setLevelId(event.target.value)}>
+          <option value="">Выберите уровень</option>
+          {levels.map((level) => (
+            <option key={level.id} value={level.id} disabled={!level.active && level.id !== levelId}>
+              {level.name}{level.active ? '' : ' (неактивен)'}
+            </option>
+          ))}
+        </Select>
+
+        {levels.length === 0 ? (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Сначала добавьте хотя бы один активный уровень в разделе «Настройки → Статусы».
+          </p>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
-            label="Базовая цена"
+            label={type === 'GROUP' ? 'Общая сумма за курс' : 'Цена за один урок'}
             type="number"
             value={basePrice}
             onChange={(event) => setBasePrice(event.target.value)}
-            placeholder="Например, 600000"
+            placeholder={type === 'GROUP' ? 'Например, 600000' : 'Например, 15000'}
           />
           <Input
-            label="Лимит учеников"
+            label="Количество уроков"
             type="number"
-            value={enrollmentLimit}
-            onChange={(event) => setEnrollmentLimit(event.target.value)}
-            placeholder="Например, 12"
+            value={totalLessons}
+            onChange={(event) => setTotalLessons(event.target.value)}
+            placeholder="Например, 24"
           />
         </div>
 
+        {type === 'GROUP' ? (
+          <Input label="Лимит учеников" type="number" value={enrollmentLimit}
+            onChange={(event) => setEnrollmentLimit(event.target.value)} placeholder="Например, 12" />
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Select
-            label="Преподаватель"
-            value={teacherId}
-            onChange={(event) => setTeacherId(event.target.value)}
-          >
-            <option value="">Не выбрано</option>
-            {teachers.map((teacher) => (
-              <option key={teacher.id} value={teacher.id}>
-                {teacher.name}
-              </option>
-            ))}
-          </Select>
+          <div className="relative">
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-sm font-medium text-[#5d6676]">Преподаватели курса</label>
+              <span className="text-xs text-[#7f8897]">Выбрано: {teacherIds.length}</span>
+            </div>
+            <button type="button" onClick={() => setTeacherDropdownOpen((open) => !open)}
+              className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-[#dbe2e8] bg-white px-3 py-2 text-left transition-colors hover:border-[#b9c7d5] focus:border-[#467aff] focus:outline-none focus:ring-2 focus:ring-[#467aff]/15">
+              <span className={`truncate text-sm ${selectedTeacherNames.length ? 'text-[#202938]' : 'text-[#8a93a3]'}`}>
+                {selectedTeacherNames.length ? selectedTeacherNames.join(', ') : 'Выберите преподавателей'}
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-[#7f8897] transition-transform ${teacherDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {teacherDropdownOpen ? (
+              <div className="absolute left-0 right-0 z-30 mt-2 max-h-56 overflow-y-auto rounded-xl border border-[#dbe2e8] bg-white p-2 shadow-[0_16px_36px_rgba(31,37,48,0.16)]">
+                {teachers.length ? teachers.map((teacher) => {
+                  const selected = teacherIds.includes(teacher.id);
+                  return (
+                    <button key={teacher.id} type="button" onClick={() => handleTeacherToggle(teacher.id)}
+                      className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-[#f5f8fb]">
+                      <span className="truncate text-sm text-[#202938]">{teacher.name}</span>
+                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${selected ? 'border-[#467aff] bg-[#467aff] text-white' : 'border-[#cfd8e1] text-transparent'}`}>
+                        <Check className="h-3.5 w-3.5" />
+                      </span>
+                    </button>
+                  );
+                }) : <p className="px-3 py-2 text-sm text-[#8a93a3]">Преподаватели не найдены</p>}
+              </div>
+            ) : null}
+          </div>
 
           <Select
             label="Кабинет"
@@ -265,17 +377,72 @@ export const AddClassModal = ({
           />
           <div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-[#dbe2e8] bg-[#fbfcfd] p-3">
             {filteredStudents.length > 0 ? (
-              filteredStudents.map((student) => (
-                <label key={student.id} className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-white">
-                  <input
-                    type="checkbox"
-                    checked={studentIds.includes(student.id)}
-                    onChange={() => handleStudentToggle(student.id)}
-                    className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
-                  />
-                  <span className="text-sm text-[#202938]">{student.name}</span>
-                </label>
-              ))
+              filteredStudents.map((student) => {
+                const isSelected = studentIds.includes(student.id);
+                return (
+                  <div
+                    key={student.id}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-xl px-2 py-1.5 hover:bg-white"
+                  >
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleStudentToggle(student.id)}
+                        className="h-4 w-4 rounded border-[#cfd8e1] text-[#467aff] focus:ring-[#467aff]"
+                      />
+                      <span className="truncate text-sm text-[#202938]">{student.name}</span>
+                    </label>
+                    {isSelected ? (
+                      <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <span className="text-xs text-[#8a93a3]">Скидка:</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={studentDiscounts[student.id] ?? ''}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            setStudentDiscounts((prev) => ({
+                              ...prev,
+                              [student.id]: isNaN(val) ? 0 : Math.min(100, Math.max(0, val)),
+                            }));
+                          }}
+                          placeholder="0"
+                          className="w-14 rounded-lg border border-[#cfd8e1] bg-white px-1.5 py-0.5 text-center text-xs font-semibold text-[#202938] focus:border-[#467aff] focus:outline-none"
+                        />
+                        <span className="text-xs text-[#8a93a3]">%</span>
+                      </div>
+                    ) : null}
+                    {isSelected && (studentDiscounts[student.id] ?? 0) > 0 ? (
+                      <div className="flex basis-full items-center justify-end gap-1.5 pl-7" onClick={(e) => e.stopPropagation()}>
+                        <span className="text-xs text-[#8a93a3]">с</span>
+                        <input
+                          type="month"
+                          value={studentDiscountPeriods[student.id]?.fromMonth ?? ''}
+                          max={studentDiscountPeriods[student.id]?.toMonth || undefined}
+                          onChange={(e) => setStudentDiscountPeriods((prev) => ({
+                            ...prev,
+                            [student.id]: { ...prev[student.id], fromMonth: e.target.value },
+                          }))}
+                          className="rounded-lg border border-[#cfd8e1] bg-white px-1.5 py-0.5 text-xs font-semibold text-[#202938] focus:border-[#467aff] focus:outline-none"
+                        />
+                        <span className="text-xs text-[#8a93a3]">по</span>
+                        <input
+                          type="month"
+                          value={studentDiscountPeriods[student.id]?.toMonth ?? ''}
+                          min={studentDiscountPeriods[student.id]?.fromMonth || undefined}
+                          onChange={(e) => setStudentDiscountPeriods((prev) => ({
+                            ...prev,
+                            [student.id]: { ...prev[student.id], toMonth: e.target.value },
+                          }))}
+                          className="rounded-lg border border-[#cfd8e1] bg-white px-1.5 py-0.5 text-xs font-semibold text-[#202938] focus:border-[#467aff] focus:outline-none"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
             ) : (
               <p className="text-sm text-[#8a93a3]">Ученики не найдены</p>
             )}

@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.1edu.kz';
+const API_GATEWAY_URL = process.env.API_GATEWAY_URL || process.env.BACKEND_URL || 'http://api-gateway:8090';
+const KEYCLOAK_INTERNAL_URL = process.env.KEYCLOAK_INTERNAL_URL || 'http://keycloak:8080/auth';
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -12,11 +13,11 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: `${BACKEND_URL}/api/:path*`,
+        destination: `${API_GATEWAY_URL}/api/:path*`,
       },
       {
         source: '/auth/:path*',
-        destination: `${BACKEND_URL}/auth/:path*`,
+        destination: `${KEYCLOAK_INTERNAL_URL}/:path*`,
       },
     ];
   },

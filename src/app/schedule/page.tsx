@@ -8,12 +8,15 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ruLocale from '@fullcalendar/core/locales/ru';
 import timeGridPlugin from '@fullcalendar/timegrid';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { AddScheduleModal } from '@/components/features/schedule/AddScheduleModal';
 import { EventDetailModal } from '@/components/features/schedule/EventDetailModal';
+import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { ScheduleFilters } from '@/components/features/schedule/ScheduleFilters';
 import {
   coursesService,
+  lessonsService,
   roomsService,
   schedulesService,
   staffService,
@@ -24,6 +27,7 @@ import {
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { ScheduleCalendarItem, ScheduleFormValues } from '@/types/schedule';
 import { useAuthStore } from '@/store/authStore';
+import { formatFullName } from '@/lib/utils';
 
 const EVENT_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#ec4899', '#467aff'];
 
@@ -143,12 +147,15 @@ function buildSelectionDefaults(selection: DateSelectArg): ScheduleFormValues {
 }
 
 export default function Schedule() {
+  const router = useRouter();
   const [teacherFilter, setTeacherFilter] = useState('');
   const [courseFilter, setCourseFilter] = useState('');
   const [roomFilter, setRoomFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduleCalendarItem | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [selectedLesson, setSelectedLesson] = useState<{ id: string; bonus: boolean; date: string; substituteTeacherId: string | null } | null>(null);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
   const [scheduleModalState, setScheduleModalState] = useState<{
     key: number;
     isOpen: boolean;
@@ -177,7 +184,8 @@ export default function Schedule() {
     () => coursesService.getAll({ page: 0, size: 500 }),
     []
   );
-  const { roles, permissions } = useAuthStore();
+  const { roles, permissions, user } = useAuthStore();
+  const isTeacher = roles.includes('TEACHER');
   const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
 
   const { data: teachersData, loading: teachersLoading } = useApi(
@@ -194,6 +202,20 @@ export default function Schedule() {
     schedulesService.update(id, data)
   );
   const deleteMutation = useMutation((id: string) => schedulesService.delete(id));
+  const bonusMutation = useMutation(({ id, bonus }: { id: string; bonus: boolean }) => lessonsService.update(id, { bonus }));
+  const cancelLessonMutation = useMutation((id: string) => lessonsService.cancel(id));
+  const substituteMutation = useMutation(
+    ({ id, substituteTeacherId }: { id: string; substituteTeacherId: string | null }) =>
+      lessonsService.assignSubstitute(id, substituteTeacherId)
+  );
+
+  const substituteRangeMutation = useMutation((data: {
+    groupId: string;
+    teacherId: string;
+    substituteTeacherId: string | null;
+    fromDate: string;
+    toDate: string;
+  }) => lessonsService.bulkAssignSubstitute(data));
 
   const isLoading = schedulesLoading || coursesLoading || teachersLoading || roomsLoading;
   const isSaving = createMutation.loading || updateMutation.loading;
@@ -203,8 +225,20 @@ export default function Schedule() {
     [coursesData]
   );
   const teacherMap = useMemo(
-    () => new Map((teachersData?.content ?? []).map((teacher) => [teacher.id, teacher.fullName])),
-    [teachersData]
+    () => {
+      const map = new Map((teachersData?.content ?? []).map((teacher, index) => [teacher.id, {
+        name: formatFullName(teacher),
+        color: teacher.scheduleColor || EVENT_COLORS[index % EVENT_COLORS.length],
+      }]));
+      if (isTeacher && user?.staffId) {
+        map.set(user.staffId, {
+          name: formatFullName(user) || user.email,
+          color: EVENT_COLORS[0],
+        });
+      }
+      return map;
+    },
+    [isTeacher, teachersData, user]
   );
   const roomMap = useMemo(
     () => new Map((roomsData?.content ?? []).map((room) => [room.id, room.name])),
@@ -238,13 +272,14 @@ export default function Schedule() {
     () =>
       filteredSchedules.map((schedule, index) => {
         const course = schedule.courseId ? courseMap.get(schedule.courseId) : undefined;
+        const teacher = schedule.teacherId ? teacherMap.get(schedule.teacherId) : undefined;
         return {
           id: schedule.id,
           name: schedule.name,
           courseId: schedule.courseId,
           courseName: course?.name || '—',
           teacherId: schedule.teacherId,
-          teacherName: schedule.teacherId ? teacherMap.get(schedule.teacherId) || '—' : '—',
+          teacherName: teacher?.name || '—',
           roomId: schedule.roomId,
           roomName: schedule.roomId ? roomMap.get(schedule.roomId) || '—' : '—',
           daysOfWeek: schedule.daysOfWeek,
@@ -258,7 +293,13 @@ export default function Schedule() {
           endDate: schedule.endDate,
           maxStudents: schedule.maxStudents,
           status: schedule.status,
-          color: course?.color || EVENT_COLORS[index % EVENT_COLORS.length],
+          color: teacher?.color || course?.color || EVENT_COLORS[index % EVENT_COLORS.length],
+          createdAt: schedule.createdAt,
+          createdBy: schedule.createdBy || null,
+          createdByName: schedule.createdByName || null,
+          updatedAt: schedule.updatedAt,
+          updatedBy: schedule.updatedBy || null,
+          updatedByName: schedule.updatedByName || null,
         };
       }),
     [courseMap, filteredSchedules, roomMap, teacherMap]
@@ -318,7 +359,7 @@ export default function Schedule() {
     [coursesData]
   );
   const teacherOptions = useMemo(
-    () => (teachersData?.content ?? []).map((teacher) => ({ id: teacher.id, name: teacher.fullName })),
+    () => (teachersData?.content ?? []).map((teacher) => ({ id: teacher.id, name: formatFullName(teacher) })),
     [teachersData]
   );
   const roomOptions = useMemo(
@@ -349,14 +390,75 @@ export default function Schedule() {
     }));
   };
 
-  const handleEventClick = (info: EventClickArg) => {
+  const [selectedEventDate, setSelectedEventDate] = useState<string | undefined>();
+
+  const handleEventClick = async (info: EventClickArg) => {
     const schedule = scheduleItemMap.get(info.event.id);
     if (!schedule) {
       return;
     }
 
+    const eventDate = info.event.startStr ? info.event.startStr.slice(0, 10) : undefined;
+    setSelectedEventDate(eventDate);
+    setSelectedLesson(null);
     setSelectedSchedule(schedule);
     setIsDetailModalOpen(true);
+    if (eventDate) {
+      try {
+        const response = await lessonsService.getByGroup(schedule.id, { page: 0, size: 20, from: eventDate, to: eventDate });
+        const lesson = response.data.content.find((item) => item.lessonDate === eventDate);
+        if (lesson) setSelectedLesson({
+          id: lesson.id,
+          bonus: lesson.bonus,
+          date: lesson.lessonDate,
+          substituteTeacherId: lesson.substituteTeacherId ?? null,
+        });
+      } catch {
+        // The modal remains useful even if a lesson was not generated yet.
+      }
+    }
+  };
+
+  const handleToggleBonus = async () => {
+    if (!selectedLesson) return;
+    await bonusMutation.mutate({ id: selectedLesson.id, bonus: !selectedLesson.bonus });
+    setSelectedLesson((current) => current ? { ...current, bonus: !current.bonus } : current);
+  };
+
+  const handleCancelLesson = async () => {
+    if (!selectedLesson || !confirm('Отменить только это занятие? Оно не будет учитываться в оплате и зарплате.')) return;
+    await cancelLessonMutation.mutate(selectedLesson.id);
+    setIsDetailModalOpen(false);
+  };
+
+  const handleAssignSubstitute = async (substituteTeacherId: string | null) => {
+    if (!selectedLesson) return;
+    await substituteMutation.mutate({ id: selectedLesson.id, substituteTeacherId });
+    setSelectedLesson((current) => current ? { ...current, substituteTeacherId } : current);
+  };
+
+  const handleAssignSubstituteRange = async (params: {
+    substituteTeacherId: string | null;
+    fromDate: string;
+    toDate: string;
+  }) => {
+    if (!selectedLesson || !selectedSchedule?.teacherId) return;
+    await substituteRangeMutation.mutate({
+      groupId: selectedSchedule.id,
+      teacherId: selectedSchedule.teacherId,
+      substituteTeacherId: params.substituteTeacherId,
+      fromDate: params.fromDate,
+      toDate: params.toDate,
+    });
+    setSelectedLesson((current) => current
+      ? { ...current, substituteTeacherId: params.substituteTeacherId }
+      : current);
+  };
+
+  const handleOpenAttendance = (schedule: ScheduleCalendarItem, date?: string) => {
+    setIsDetailModalOpen(false);
+    const dateParam = date ? `?date=${date}` : '';
+    router.push(`/attendance${dateParam}`);
   };
 
   const handleEdit = () => {
@@ -419,9 +521,11 @@ export default function Schedule() {
             onCourseChange={setCourseFilter}
             onStatusChange={setStatusFilter}
           />
-          <Button icon={Plus} onClick={() => openCreateModal()}>
-            Добавить занятие
-          </Button>
+          {!isTeacher ? (
+            <Button icon={Plus} onClick={() => openCreateModal()}>
+              Добавить занятие
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -456,7 +560,7 @@ export default function Schedule() {
             }}
             events={events}
             editable={false}
-            selectable
+            selectable={!isTeacher}
             selectMirror
             dayMaxEvents
             weekends
@@ -466,12 +570,12 @@ export default function Schedule() {
             allDaySlot={false}
             slotDuration="01:00:00"
             eventClick={handleEventClick}
-            select={handleDateSelect}
+            select={isTeacher ? undefined : handleDateSelect}
           />
         )}
       </div>
 
-      <AddScheduleModal
+      {!isTeacher ? <AddScheduleModal
         key={scheduleModalState.key}
         isOpen={scheduleModalState.isOpen}
         onClose={closeScheduleModal}
@@ -482,15 +586,40 @@ export default function Schedule() {
         initialValues={scheduleModalState.initialValues}
         isSubmitting={isSaving}
         title={scheduleModalState.scheduleId ? 'Редактировать расписание' : 'Добавить расписание'}
-      />
+      /> : null}
 
       <EventDetailModal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         schedule={selectedSchedule}
+        eventDate={selectedEventDate}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onOpenAttendance={handleOpenAttendance}
+        lessonBonus={selectedLesson?.bonus}
+        onToggleBonus={selectedLesson ? handleToggleBonus : undefined}
+        onCancelLesson={selectedLesson ? handleCancelLesson : undefined}
+        onAssignSubstitute={selectedLesson && !isTeacher ? () => setIsSubstituteModalOpen(true) : undefined}
+        substituteTeacherName={
+          selectedLesson?.substituteTeacherId
+            ? teacherOptions.find((teacher) => teacher.id === selectedLesson.substituteTeacherId)?.name
+            : null
+        }
+        isLessonSaving={bonusMutation.loading || cancelLessonMutation.loading || substituteMutation.loading || substituteRangeMutation.loading}
         isDeleting={deleteMutation.loading}
+        readOnly={isTeacher}
+      />
+
+      <AssignSubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        teacherName={selectedSchedule?.teacherName}
+        lessonDate={selectedLesson?.date}
+        currentSubstituteId={selectedLesson?.substituteTeacherId}
+        staffOptions={teacherOptions}
+        saving={substituteMutation.loading || substituteRangeMutation.loading}
+        onSave={handleAssignSubstitute}
+        onSaveRange={selectedSchedule?.teacherId ? handleAssignSubstituteRange : undefined}
       />
     </div>
   );

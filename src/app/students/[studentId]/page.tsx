@@ -2,6 +2,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ArrowLeft,
   CalendarCheck2,
@@ -11,6 +12,7 @@ import {
   Phone,
   PlusCircle,
   Trash2,
+  Undo2,
   User,
   Wallet,
 } from 'lucide-react';
@@ -31,6 +33,9 @@ import {
   STUDENT_STATUS_LABELS,
 } from '@/constants/student';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { pushToast } from '@/lib/toast';
+import { getErrorMessage } from '@/lib/error-message';
+import { formatDiscountPeriod, isDiscountPeriodValid } from '@/lib/discount-period';
 import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
 import {
   attendanceService,
@@ -38,6 +43,7 @@ import {
   financeService,
   lessonsService,
   schedulesService,
+  settingsService,
   studentCallLogsService,
   studentPaymentsService,
   studentsService,
@@ -45,6 +51,7 @@ import {
   type CreateStudentPaymentRequest,
   type CreateStudentRequest,
   type AttendanceDto,
+  type BranchDto,
   type CourseDto,
   type CourseEnrollmentDto,
   type LessonDto,
@@ -52,9 +59,11 @@ import {
   type ScheduleDto,
   type StudentCallLogDto,
   type StudentDto,
+  type StudentAttendanceChargeDto,
   type StudentPaymentDto,
   type StudentPaymentHistoryResponse,
   type SubscriptionDto,
+  type SalaryDiscountMode,
   type TransactionDto,
   type UpdateStudentRequest,
 } from '@/lib/api';
@@ -73,6 +82,7 @@ type StudentProfileData = {
   courseEnrollments: CourseEnrollmentDto[];
   attendanceHistory: AttendanceDto[];
   paymentHistory: StudentPaymentHistoryResponse | null;
+  attendanceCharges: StudentAttendanceChargeDto[];
   transactions: TransactionDto[];
   callLogs: StudentCallLogDto[];
   schedulesById: Record<string, ScheduleDto>;
@@ -146,19 +156,18 @@ function formatMoney(amount: number | null | undefined): string {
 }
 
 function getStudentDisplayName(student: StudentDto): string {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
+  // `fullName` is a legacy free-text value and may keep the former order.
+  // Prefer the structured fields so every screen consistently shows Фамилия Имя Отчество.
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim()
+    || student.fullName?.trim()
+    || 'Без имени';
 }
 
 function getPrimaryPhone(student: StudentDto): string | null {
   const candidates = [
-    student.phone,
     student.studentPhone,
     student.parentPhone,
-    ...(student.additionalPhones ?? []),
+    student.phone,
   ];
 
   const firstPhone = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
@@ -188,8 +197,8 @@ function toFormValues(student: StudentDto): StudentFormValues {
     customer: student.customer || '',
     studentPhoto: student.studentPhoto || '',
     email: student.email || '',
-    phone: student.phone || '',
-    studentPhone: student.studentPhone || '',
+    phone: student.studentPhone || student.phone || '',
+    studentPhone: student.studentPhone || student.phone || '',
     birthDate: student.birthDate || '',
     gender: student.gender || '',
     status: student.status,
@@ -206,7 +215,7 @@ function toFormValues(student: StudentDto): StudentFormValues {
     comment: student.comment || '',
     stateOrderParticipant: Boolean(student.stateOrderParticipant),
     loyalty: student.loyalty || '',
-    additionalPhones: student.additionalPhones.join(', '),
+    additionalPhones: '',
     notes: student.notes || '',
   };
 }
@@ -217,11 +226,25 @@ export default function StudentProfilePage() {
   const studentIdParam = params.studentId;
   const currentStaffId = useAuthStore((s) => s.user?.staffId ?? null);
   const currentUser = useAuthStore((s) => s.user);
+  const currentBranchId = useAuthStore((s) => s.branchId);
   const studentId = Array.isArray(studentIdParam) ? studentIdParam[0] : studentIdParam;
 
   const [activeTab, setActiveTab] = useState<StudentProfileTab>('profile');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isTransferBranchModalOpen, setIsTransferBranchModalOpen] = useState(false);
+  const [targetBranchId, setTargetBranchId] = useState('');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
+  const [refundForm, setRefundForm] = useState({
+    amount: '',
+    refundDate: new Date().toISOString().slice(0, 10),
+    method: 'CASH' as StudentPaymentDto['method'],
+    notes: '',
+  });
+  const [enrollmentDateModal, setEnrollmentDateModal] = useState<{
+    enrollment: CourseEnrollmentDto;
+    startDate: string;
+  } | null>(null);
   const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
   const [isCallLogReasonModalOpen, setIsCallLogReasonModalOpen] = useState(false);
   const [callLogPage, setCallLogPage] = useState(0);
@@ -261,6 +284,48 @@ export default function StudentProfilePage() {
     notes: '',
   });
 
+  const [discountModal, setDiscountModal] = useState<{
+    isOpen: boolean;
+    subscriptionId: string;
+    courseId?: string | null;
+    courseName: string;
+    discountPercent: number;
+    discountAmount: string;
+    discountFromMonth: string;
+    discountToMonth: string;
+    salaryDiscountMode: SalaryDiscountMode;
+  }>({
+    isOpen: false,
+    subscriptionId: '',
+    courseId: null,
+    courseName: '',
+    discountPercent: 0,
+    discountAmount: '',
+    discountFromMonth: '',
+    discountToMonth: '',
+    salaryDiscountMode: 'FULL_PRICE',
+  });
+  const discountPeriodValid = isDiscountPeriodValid(discountModal.discountFromMonth, discountModal.discountToMonth);
+  const discountPeriodLabel = formatDiscountPeriod(discountModal.discountFromMonth, discountModal.discountToMonth);
+
+  const handleSaveDiscount = async () => {
+    if (!studentId || !discountModal.courseId || !discountPeriodValid) return;
+    try {
+      await studentPaymentsService.updateSubscriptionDiscount(
+        studentId,
+        discountModal.courseId,
+        discountModal.discountPercent,
+        discountModal.salaryDiscountMode,
+        discountModal.discountAmount ? Number(discountModal.discountAmount) : undefined,
+        { fromMonth: discountModal.discountFromMonth, toMonth: discountModal.discountToMonth }
+      );
+      setDiscountModal((prev) => ({ ...prev, isOpen: false }));
+      refetch();
+    } catch (saveError) {
+      alert(getErrorMessage(saveError) || 'Не удалось обновить скидку');
+    }
+  };
+
   const { data, loading, error, refetch } = useApi<StudentProfileData | null>(async () => {
     if (!studentId) {
       return { data: null };
@@ -268,13 +333,14 @@ export default function StudentProfilePage() {
 
     const studentResponse = await studentsService.getById(studentId);
 
-    const [subscriptionsResult, enrollmentsResult, attendanceResult, paymentHistoryResult, transactionsResult, callLogsResult] = await Promise.all([
+    const [subscriptionsResult, enrollmentsResult, attendanceResult, paymentHistoryResult, transactionsResult, callLogsResult, attendanceChargesResult] = await Promise.all([
       subscriptionsService.getByStudent(studentId, { page: 0, size: 200 }).catch(() => null),
       coursesService.getStudentEnrollments(studentId).catch(() => null),
       attendanceService.getStudentHistory(studentId, { page: 0, size: 200 }).catch(() => null),
       studentPaymentsService.getByStudent(studentId).catch(() => null),
       financeService.getStudentTransactions(studentId, { page: 0, size: 200 }).catch(() => null),
       studentCallLogsService.getByStudent(studentId, { page: 0, size: 200 }).catch(() => null),
+      studentPaymentsService.getAttendanceCharges(studentId).catch(() => null),
     ]);
 
     const subscriptions = subscriptionsResult?.data.content ?? [];
@@ -283,6 +349,7 @@ export default function StudentProfilePage() {
     const paymentHistory = paymentHistoryResult?.data ?? null;
     const transactions = transactionsResult?.data.content ?? [];
     const callLogs = callLogsResult?.data.content ?? [];
+    const attendanceCharges = attendanceChargesResult?.data ?? [];
 
     const lessonIds = Array.from(new Set(attendanceHistory.map((row) => row.lessonId))).slice(0, 120);
 
@@ -392,6 +459,7 @@ export default function StudentProfilePage() {
         courseEnrollments,
         attendanceHistory,
         paymentHistory,
+        attendanceCharges,
         transactions,
         callLogs,
         schedulesById,
@@ -404,13 +472,28 @@ export default function StudentProfilePage() {
 
   const student = data?.student ?? null;
   const photoUrl = useResolvedFileUrl(student?.studentPhoto);
+  const { data: branchesResponse } = useApi<BranchDto[]>(() => settingsService.getBranches(), []);
+  const transferBranches = (branchesResponse ?? []).filter(
+    (branch) => branch.active && branch.id !== (student?.branchId || currentBranchId)
+  );
 
   const updateStudentMutation = useMutation(({ id, data }: { id: string; data: UpdateStudentRequest }) =>
     studentsService.update(id, data)
   );
   const deleteStudentMutation = useMutation((id: string) => studentsService.delete(id));
+  const transferStudentMutation = useMutation(({ id, branchId }: { id: string; branchId: string }) =>
+    studentsService.transferToBranch(id, branchId)
+  );
   const createPaymentMutation = useMutation((payload: CreateStudentPaymentRequest) =>
     studentPaymentsService.create(payload)
+  );
+  const refundBalanceMutation = useMutation((payload: { studentId: string; amount: number; refundDate: string; method: StudentPaymentDto['method']; notes?: string }) => {
+    const { studentId: refundStudentId, ...request } = payload;
+    return studentPaymentsService.refundBalance(refundStudentId, request);
+  });
+  const deletePaymentMutation = useMutation((paymentId: string) => studentPaymentsService.delete(paymentId));
+  const updateEnrollmentDateMutation = useMutation((payload: { courseId: string; studentId: string; startDate: string }) =>
+    coursesService.updateEnrollmentDate(payload.courseId, payload.studentId, payload.startDate)
   );
   const createCallLogMutation = useMutation((payload: SaveStudentCallLogRequest) =>
     studentCallLogsService.create(payload)
@@ -421,14 +504,6 @@ export default function StudentProfilePage() {
   const deleteCallLogMutation = useMutation(({ id, reason }: { id: string; reason: string }) =>
     studentCallLogsService.delete(id, reason)
   );
-
-  const groupsCount = useMemo(() => {
-    if (!data) {
-      return 0;
-    }
-
-    return new Set(data.subscriptions.map((subscription) => subscription.groupId).filter(Boolean)).size;
-  }, [data]);
 
   const latestEnrollmentByCourseId = useMemo(() => {
     const map = new Map<string, CourseEnrollmentDto>();
@@ -444,6 +519,20 @@ export default function StudentProfilePage() {
 
     return map;
   }, [data?.courseEnrollments]);
+
+  const currentEnrollmentStart = useMemo(() => {
+    const activeDates = (data?.courseEnrollments ?? [])
+      .filter((enrollment) => enrollment.enrollmentStatus === 'ACTIVE')
+      .map((enrollment) => enrollment.enrolledAt)
+      .filter(Boolean)
+      .sort();
+    if (activeDates.length > 0) return activeDates[0];
+    return (data?.subscriptions ?? [])
+      .filter((subscription) => subscription.status === 'ACTIVE')
+      .map((subscription) => subscription.startDate)
+      .filter(Boolean)
+      .sort()[0] || null;
+  }, [data?.courseEnrollments, data?.subscriptions]);
 
   const attendanceStats = useMemo(() => {
     if (!data) {
@@ -483,6 +572,7 @@ export default function StudentProfilePage() {
     }> = [];
     const seenScheduleIds = new Set<string>();
 
+    // 1. Groups from subscriptions with explicit groupId
     data.subscriptions.forEach((subscription) => {
       if (!subscription.groupId) {
         return;
@@ -504,12 +594,13 @@ export default function StudentProfilePage() {
         daysText: formatScheduleDays(schedule.daysOfWeek),
         timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
         periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
-        statusText: SUBSCRIPTION_STATUS_LABELS[subscription.status],
+        statusText: SUBSCRIPTION_STATUS_LABELS[subscription.status] || 'Активна запись',
         startDate: schedule.startDate,
         startTime: schedule.startTime,
       });
     });
 
+    // 2. Groups from course enrollments
     data.courseEnrollments
       .filter((enrollment) => enrollment.enrollmentStatus === 'ACTIVE')
       .forEach((enrollment) => {
@@ -536,8 +627,38 @@ export default function StudentProfilePage() {
         });
       });
 
+    // 3. Fallback: all courses from subscriptions or payment history
+    const allCourseIds = new Set<string>();
+    data.subscriptions.forEach((sub) => {
+      if (sub.courseId && (sub.status === 'ACTIVE' || !sub.status)) allCourseIds.add(sub.courseId);
+    });
+    if (data.paymentHistory?.subscriptions) {
+      data.paymentHistory.subscriptions.forEach((sub) => {
+        if (sub.courseId && sub.subscriptionStatus === 'ACTIVE') allCourseIds.add(sub.courseId);
+      });
+    }
+
+    allCourseIds.forEach((courseId) => {
+      const courseSchedules = data.courseSchedulesById[courseId] ?? [];
+      courseSchedules.forEach((schedule) => {
+        if (seenScheduleIds.has(schedule.id)) return;
+        seenScheduleIds.add(schedule.id);
+        rows.push({
+          key: `${courseId}-${schedule.id}`,
+          groupName: schedule.name,
+          courseName: data.coursesById[courseId]?.name || 'Курс обучения',
+          daysText: formatScheduleDays(schedule.daysOfWeek),
+          timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
+          periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
+          statusText: 'Активен',
+          startDate: schedule.startDate || '',
+          startTime: schedule.startTime || '',
+        });
+      });
+    });
+
     return rows
-      .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.startTime.localeCompare(right.startTime))
+      .sort((left, right) => (left.startDate || '').localeCompare(right.startDate || '') || (left.startTime || '').localeCompare(right.startTime || ''))
       .map(({ key, groupName, courseName, daysText, timeText, periodText, statusText }) => ({
         key,
         groupName,
@@ -548,6 +669,14 @@ export default function StudentProfilePage() {
         statusText,
       }));
   }, [data]);
+
+  const groupsCount = useMemo(() => {
+    if (!data) {
+      return 0;
+    }
+
+    return studentScheduleRows.length;
+  }, [data, studentScheduleRows]);
 
   const paymentRows = useMemo(() => {
     if (!data?.paymentHistory) {
@@ -561,6 +690,10 @@ export default function StudentProfilePage() {
         subscriptionId: string;
         courseName: string;
         groupName: string;
+        paymentScope?: StudentPaymentDto['paymentScope'];
+        deleted?: boolean;
+        deletedBy?: string | null;
+        deletedAt?: string | null;
       }>;
     }
 
@@ -572,27 +705,62 @@ export default function StudentProfilePage() {
       method: StudentPaymentDto['method'];
       notes: string | null;
       subscriptionId: string;
+      courseId?: string | null;
       courseName: string;
+      groupId?: string | null;
       groupName: string;
+      cashierName?: string | null;
+      paymentScope?: StudentPaymentDto['paymentScope'];
+      deleted?: boolean;
+      deletedBy?: string | null;
+      deletedAt?: string | null;
     }> = [];
+
+    const seenIds = new Set<string>();
 
     data.paymentHistory.subscriptions.forEach((subscriptionSummary) => {
       const matchedSubscription = data.subscriptions.find(
         (subscription) => subscription.id === subscriptionSummary.subscriptionId
       );
 
-      const courseName = matchedSubscription?.courseId
-        ? data.coursesById[matchedSubscription.courseId]?.name || 'Неизвестный курс'
-        : subscriptionSummary.courseId
-          ? data.coursesById[subscriptionSummary.courseId]?.name || 'Неизвестный курс'
-          : 'Без курса';
+      const courseId = matchedSubscription?.courseId || subscriptionSummary.courseId || null;
+      const courseName = courseId
+        ? data.coursesById[courseId]?.name || 'Неизвестный курс'
+        : 'Без курса';
 
-      const groupName = matchedSubscription?.groupId
-        ? data.schedulesById[matchedSubscription.groupId]?.name || 'Удаленная группа'
+      const groupId = matchedSubscription?.groupId || null;
+      const groupName = groupId
+        ? data.schedulesById[groupId]?.name || 'Удаленная группа'
         : 'Без группы';
 
       subscriptionSummary.months.forEach((month) => {
         month.payments.forEach((payment) => {
+          if (!seenIds.has(payment.id)) {
+            seenIds.add(payment.id);
+            rows.push({
+              id: payment.id,
+              paidAt: payment.paidAt,
+              paymentMonth: payment.paymentMonth,
+              amount: payment.amount,
+              method: payment.method,
+              notes: payment.notes,
+              subscriptionId: payment.subscriptionId,
+              courseId,
+              courseName,
+              groupId,
+              groupName,
+              cashierName: (payment as any).cashierName || null,
+              paymentScope: payment.paymentScope,
+            });
+          }
+        });
+      });
+    });
+
+    if (data.paymentHistory.balancePayments) {
+      data.paymentHistory.balancePayments.forEach((payment) => {
+        if (!seenIds.has(payment.id)) {
+          seenIds.add(payment.id);
           rows.push({
             id: payment.id,
             paidAt: payment.paidAt,
@@ -600,13 +768,47 @@ export default function StudentProfilePage() {
             amount: payment.amount,
             method: payment.method,
             notes: payment.notes,
-            subscriptionId: payment.subscriptionId,
-            courseName,
-            groupName,
+            subscriptionId: payment.subscriptionId || '',
+            courseId: null,
+            courseName: 'Оплата / Баланс',
+            groupId: null,
+            groupName: '—',
+            cashierName: (payment as any).cashierName || null,
+            paymentScope: payment.paymentScope,
           });
+        }
+      });
+    }
+
+    if (data.paymentHistory.deletedPayments) {
+      data.paymentHistory.deletedPayments.forEach((payment) => {
+        if (seenIds.has(payment.id)) return;
+        seenIds.add(payment.id);
+        const matchedSubscription = payment.subscriptionId
+          ? data.subscriptions.find((subscription) => subscription.id === payment.subscriptionId)
+          : undefined;
+        const courseId = matchedSubscription?.courseId || null;
+        const groupId = matchedSubscription?.groupId || null;
+        rows.push({
+          id: payment.id,
+          paidAt: payment.paidAt,
+          paymentMonth: payment.paymentMonth,
+          amount: payment.amount,
+          method: payment.method,
+          notes: payment.notes,
+          subscriptionId: payment.subscriptionId || '',
+          courseId,
+          courseName: courseId ? data.coursesById[courseId]?.name || 'Неизвестный курс' : 'Оплата / Баланс',
+          groupId,
+          groupName: groupId ? data.schedulesById[groupId]?.name || 'Удаленная группа' : '—',
+          cashierName: payment.cashierName || null,
+          paymentScope: payment.paymentScope,
+          deleted: true,
+          deletedBy: payment.deletedBy,
+          deletedAt: payment.deletedAt,
         });
       });
-    });
+    }
 
     return rows.sort((left, right) => compareIsoDateDesc(left.paidAt, right.paidAt));
   }, [data]);
@@ -620,26 +822,35 @@ export default function StudentProfilePage() {
         lessonTime: string;
         groupName: string;
         markedAt: string;
+        charge: StudentAttendanceChargeDto | null;
       }>;
     }
+
+    const chargeByLesson = new Map(
+      data.attendanceCharges.filter((charge) => charge.lessonId).map((charge) => [charge.lessonId as string, charge])
+    );
 
     return data.attendanceHistory
       .map((row) => {
         const lesson = data.lessonsById[row.lessonId];
+        const charge = chargeByLesson.get(row.lessonId) ?? null;
 
-        const lessonDate = lesson?.lessonDate || '';
+        const lessonDate = lesson?.lessonDate || charge?.lessonDate || '';
         const lessonTime = lesson ? `${lesson.startTime.slice(0, 5)} - ${lesson.endTime.slice(0, 5)}` : '—';
+        const groupId = lesson?.groupId || null;
         const groupName = lesson?.groupId
           ? data.schedulesById[lesson.groupId]?.name || 'Удаленная группа'
-          : 'Не указана';
+          : charge?.groupName || 'Не указана';
 
         return {
           id: row.id,
           status: row.status,
           lessonDate,
           lessonTime,
+          groupId,
           groupName,
           markedAt: row.updatedAt || row.createdAt,
+          charge,
         };
       })
       .sort((left, right) => {
@@ -649,6 +860,11 @@ export default function StudentProfilePage() {
       });
   }, [data]);
 
+  const attendanceChargeTotal = useMemo(
+    () => attendanceRows.reduce((sum, row) => sum + (row.charge?.billable ? row.charge.chargedAmount : 0), 0),
+    [attendanceRows]
+  );
+
   const selectedSubscription = useMemo(
     () => data?.subscriptions.find((subscription) => subscription.id === paymentForm.subscriptionId) ?? null,
     [data, paymentForm.subscriptionId]
@@ -656,11 +872,20 @@ export default function StudentProfilePage() {
 
   const openPaymentModal = () => {
     const firstSubscription = data?.subscriptions[0] ?? null;
+    const subSummary = data?.paymentHistory?.subscriptions.find(
+      (s) => s.subscriptionId === firstSubscription?.id
+    );
+    let defaultAmount = 4500;
+    if (subSummary?.monthlyExpected && subSummary.monthlyExpected > 0) {
+      defaultAmount = subSummary.monthlyExpected;
+    } else if (firstSubscription?.amount) {
+      defaultAmount = firstSubscription.amount >= 10000 ? Math.round(firstSubscription.amount / 12) : firstSubscription.amount;
+    }
 
     setPaymentForm((previous) => ({
       ...previous,
       subscriptionId: firstSubscription?.id || '',
-      amount: firstSubscription?.amount ? String(firstSubscription.amount) : '',
+      amount: String(defaultAmount),
       paidAt: new Date().toISOString().slice(0, 10),
       paymentMonth: new Date().toISOString().slice(0, 7),
       method: 'CASH',
@@ -692,6 +917,16 @@ export default function StudentProfilePage() {
     router.push('/students');
   };
 
+  const handleTransferStudent = async () => {
+    if (!studentId || !targetBranchId) {
+      return;
+    }
+
+    await transferStudentMutation.mutate({ id: studentId, branchId: targetBranchId });
+    setIsTransferBranchModalOpen(false);
+    router.push('/students');
+  };
+
   const handleCreatePayment = async () => {
     if (!studentId || !paymentForm.subscriptionId) {
       return;
@@ -713,6 +948,67 @@ export default function StudentProfilePage() {
     });
 
     setIsPaymentModalOpen(false);
+    await refetch();
+  };
+
+  const openRefundModal = () => {
+    const available = data?.paymentHistory?.studentBalance ?? 0;
+    setRefundForm({
+      amount: available > 0 ? String(available) : '',
+      refundDate: new Date().toISOString().slice(0, 10),
+      method: 'CASH',
+      notes: '',
+    });
+    setIsRefundModalOpen(true);
+  };
+
+  const handleRefundBalance = async () => {
+    if (!studentId) return;
+    const amount = Number(refundForm.amount);
+    const available = Math.max(data?.paymentHistory?.studentBalance ?? 0, data?.paymentHistory?.totalPaid ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      pushToast({ message: 'Введите корректную сумму возврата', tone: 'error' });
+      return;
+    }
+    if (amount > available) {
+      pushToast({ message: `Сумма возврата превышает доступную сумму (максимум: ${formatMoney(available)})`, tone: 'error' });
+      return;
+    }
+    try {
+      await refundBalanceMutation.mutate({
+        studentId,
+        amount,
+        refundDate: refundForm.refundDate,
+        method: refundForm.method,
+        notes: refundForm.notes.trim() || undefined,
+      });
+    } catch (err) {
+      pushToast({ message: getErrorMessage(err, 'Не удалось выполнить возврат'), tone: 'error' });
+      return;
+    }
+    setIsRefundModalOpen(false);
+    await refetch();
+  };
+
+  const handleDeletePayment = async (paymentId: string) => {
+    if (!window.confirm('Удалить эту оплату? Действие будет видно в истории (кто и когда удалил).')) return;
+    try {
+      await deletePaymentMutation.mutate(paymentId);
+    } catch (err) {
+      pushToast({ message: getErrorMessage(err, 'Не удалось удалить оплату'), tone: 'error' });
+      return;
+    }
+    await refetch();
+  };
+
+  const handleUpdateEnrollmentDate = async () => {
+    if (!studentId || !enrollmentDateModal?.startDate) return;
+    await updateEnrollmentDateMutation.mutate({
+      courseId: enrollmentDateModal.enrollment.courseId,
+      studentId,
+      startDate: enrollmentDateModal.startDate,
+    });
+    setEnrollmentDateModal(null);
     await refetch();
   };
 
@@ -828,13 +1124,18 @@ export default function StudentProfilePage() {
   }
 
   if (error || !data) {
+    const isNotFound = error?.toLowerCase().includes('not found') || error?.toLowerCase().includes('не найден');
     return (
       <div className="space-y-4">
         <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/students')}>
           Назад к ученикам
         </Button>
         <div className="crm-surface space-y-4 p-6">
-          <p className="text-sm text-red-600">{error || 'Не удалось загрузить карточку ученика.'}</p>
+          <p className="text-sm font-medium text-red-600">
+            {isNotFound
+              ? 'Ученик не найден или был удалён из системы.'
+              : error || 'Не удалось загрузить карточку ученика.'}
+          </p>
           <Button onClick={() => void refetch()}>Повторить</Button>
         </div>
       </div>
@@ -906,12 +1207,9 @@ export default function StudentProfilePage() {
             </div>
           </div>
 
-          <div className="grid min-w-60 grid-cols-1 gap-2 text-sm text-[#586272]">
+          <div className="grid min-w-60 grid-cols-1 gap-1.5 text-sm text-[#586272]">
             <div>
-              <span className="text-[#8a93a3]">Телефон:</span> {data.student.phone || '—'}
-            </div>
-            <div>
-              <span className="text-[#8a93a3]">Телефон ученика:</span> {data.student.studentPhone || '—'}
+              <span className="text-[#8a93a3]">Телефон ученика:</span> {data.student.studentPhone || data.student.phone || '—'}
             </div>
             <div>
               <span className="text-[#8a93a3]">Email:</span> {data.student.email || '—'}
@@ -919,10 +1217,26 @@ export default function StudentProfilePage() {
             <div>
               <span className="text-[#8a93a3]">Дата рождения:</span> {formatDate(data.student.birthDate)}
             </div>
+            <div className="pt-1 text-xs border-t border-[#f0f3f6]">
+              <span className="text-[#8a93a3]">Создал(а):</span>{' '}
+              <span className="font-medium text-[#374151]">{data.student.createdByName || data.student.createdBy || 'Администратор'}</span>
+              {data.student.createdAt ? <span className="text-[#9ca3af]"> · {formatDate(data.student.createdAt)}</span> : null}
+            </div>
+            {data.student.updatedAt && (
+              <div className="text-xs">
+                <span className="text-[#8a93a3]">Изменил(а):</span>{' '}
+                <span className="font-medium text-[#374151]">{data.student.updatedByName || data.student.updatedBy || 'Администратор'}</span>
+                <span className="text-[#9ca3af]"> · {formatDate(data.student.updatedAt)}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[#e6ebf0] pt-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[#e6ebf0] pt-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+          <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-blue-700">Начало действия</p>
+            <p className="mt-1 text-lg font-semibold text-blue-900">{formatDate(currentEnrollmentStart)}</p>
+          </div>
           <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Группы</p>
             <p className="mt-1 text-lg font-semibold text-[#1f2530]">{groupsCount}</p>
@@ -938,7 +1252,32 @@ export default function StudentProfilePage() {
           <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Долг / оплачено</p>
             <p className="mt-1 text-lg font-semibold text-[#1f2530]">
-              {formatMoney(data.paymentHistory?.totalDebt ?? 0)} / {formatMoney(data.paymentHistory?.totalPaid ?? 0)}
+              <span className={data.paymentHistory?.totalDebt ? 'text-rose-600' : 'text-[#1f2530]'}>
+                {formatMoney(data.paymentHistory?.totalDebt ?? 0)}
+              </span>
+              {' / '}
+              <span className="text-emerald-600">
+                {formatMoney(data.paymentHistory?.totalPaid ?? 0)}
+              </span>
+            </p>
+          </div>
+          <div className={`rounded-xl border px-4 py-3 ${
+            (data.paymentHistory?.studentBalance ?? 0) > 0
+              ? 'border-emerald-300 bg-emerald-50/80 shadow-sm'
+              : 'border-[#e7edf3] bg-white'
+          }`}>
+            <div className="flex items-center justify-between">
+              <p className={`text-xs font-medium uppercase tracking-wide ${
+                (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-800' : 'text-[#8a93a3]'
+              }`}>Баланс (Аванс)</p>
+              <Wallet className={`h-4 w-4 ${
+                (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-600' : 'text-[#8a93a3]'
+              }`} />
+            </div>
+            <p className={`mt-1 text-lg font-bold ${
+              (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-700' : 'text-[#1f2530]'
+            }`}>
+              {formatMoney(data.paymentHistory?.studentBalance ?? 0)}
             </p>
           </div>
         </div>
@@ -952,6 +1291,15 @@ export default function StudentProfilePage() {
           >
             Редактировать
           </Button>
+          {transferBranches.length > 0 ? (
+            <Button
+              variant="secondary"
+              onClick={() => setIsTransferBranchModalOpen(true)}
+              disabled={transferStudentMutation.loading}
+            >
+              Перевести в филиал
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             icon={PlusCircle}
@@ -959,6 +1307,15 @@ export default function StudentProfilePage() {
             disabled={createPaymentMutation.loading || data.subscriptions.length === 0}
           >
             Добавить оплату
+          </Button>
+          <Button
+            variant="secondary"
+            icon={Undo2}
+            onClick={openRefundModal}
+            disabled={refundBalanceMutation.loading}
+            className="border-rose-200 text-rose-700 hover:bg-rose-50"
+          >
+            Сделать возврат
           </Button>
           <Button
             variant="secondary"
@@ -1063,12 +1420,13 @@ export default function StudentProfilePage() {
               <thead className="crm-table-head">
                 <tr>
                   <th className="crm-table-th">#</th>
-                  <th className="crm-table-th">Группа</th>
                   <th className="crm-table-th">Курс</th>
-                  <th className="crm-table-th">Период</th>
+                  <th className="crm-table-th">Начало действия</th>
+                  <th className="crm-table-th">Кто добавил</th>
                   <th className="crm-table-th">Уроки</th>
                   <th className="crm-table-th">Сумма</th>
                   <th className="crm-table-th">Статус</th>
+                  <th className="crm-table-th text-right">Скидка</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
@@ -1081,25 +1439,85 @@ export default function StudentProfilePage() {
                     return (
                       <tr key={subscription.id} className="crm-table-row">
                         <td className="crm-table-cell">{index + 1}</td>
-                        <td className="crm-table-cell">
-                          {subscription.groupId
-                            ? data.schedulesById[subscription.groupId]?.name || 'Удаленная группа'
-                            : 'Без группы'}
+<td className="crm-table-cell">
+                          {subscription.courseId ? (
+                            <Link
+                              href="/classes"
+                              className="font-medium text-[#202938] transition-colors hover:text-[#3568eb] hover:underline"
+                            >
+                              {data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'}
+                            </Link>
+                          ) : (
+                            'Без курса'
+                          )}
+                          {subscription.groupId && data.schedulesById[subscription.groupId] && (
+                            <div>
+                              <Link
+                                href={`/classes/${subscription.groupId}`}
+                                className="text-xs text-[#8a93a3] transition-colors hover:text-[#3568eb] hover:underline"
+                              >
+                                {data.schedulesById[subscription.groupId].name}
+                              </Link>
+                            </div>
+                          )}
                         </td>
                         <td className="crm-table-cell">
-                          {subscription.courseId
-                            ? data.coursesById[subscription.courseId]?.name || 'Неизвестный курс'
-                            : 'Без курса'}
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <div className="font-medium text-[#273142]">
+                                {formatDate(enrollment?.enrolledAt || subscription.startDate)}
+                              </div>
+                              <div className="text-xs text-[#8a93a3]">
+                                {enrollment?.removedAt ? `до ${formatDate(enrollment.removedAt)}` : 'без даты окончания'}
+                              </div>
+                              {enrollment?.updatedByName || enrollment?.updatedBy ? (
+                                <div className="text-xs text-[#b3bac6]">
+                                  Изменил: {enrollment.updatedByName || enrollment.updatedBy}
+                                </div>
+                              ) : null}
+                            </div>
+                            {enrollment?.enrollmentStatus === 'ACTIVE' ? (
+                              <button
+                                type="button"
+                                onClick={() => setEnrollmentDateModal({
+                                  enrollment,
+                                  startDate: enrollment.enrolledAt.slice(0, 10),
+                                })}
+                                className="rounded-md p-1 text-[#8a93a3] transition-colors hover:bg-[#edf3ff] hover:text-[#3568eb]"
+                                title="Изменить начало действия"
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="crm-table-cell">
-                          {enrollment
-                            ? `${formatDate(enrollment.enrolledAt)} - ${formatDate(enrollment.removedAt)}`
-                            : `${formatDate(subscription.startDate)} - ${formatDate(subscription.endDate)}`}
+                          <div className="text-sm font-medium text-[#374151]">
+                            {enrollment?.createdByName || enrollment?.createdBy || 'Администратор'}
+                          </div>
+                          <div className="text-xs text-[#8a93a3]">
+                            {formatDateTime(enrollment?.createdAt)}
+                          </div>
                         </td>
                         <td className="crm-table-cell">
                           {subscription.lessonsLeft} / {subscription.totalLessons}
                         </td>
-                        <td className="crm-table-cell">{formatMoney(subscription.amount)}</td>
+                        <td className="crm-table-cell">
+                          {(() => {
+                            const subSummary = data.paymentHistory?.subscriptions.find(
+                              (s) => s.subscriptionId === subscription.id
+                            );
+                            if (subSummary?.monthlyExpected && subSummary.totalAmount && subSummary.totalAmount > subSummary.monthlyExpected) {
+                              return (
+                                <div>
+                                  <div className="font-medium text-[#202938]">{formatMoney(subSummary.monthlyExpected)} <span className="text-xs text-[#8a93a3]">/ мес</span></div>
+                                  <div className="text-xs text-[#8a93a3]">Всего: {formatMoney(subscription.amount)}</div>
+                                </div>
+                              );
+                            }
+                            return <span>{formatMoney(subscription.amount)}</span>;
+                          })()}
+                        </td>
                         <td className="crm-table-cell">
                           <span
                             className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${SUBSCRIPTION_STATUS_COLORS[subscription.status]}`}
@@ -1107,12 +1525,34 @@ export default function StudentProfilePage() {
                             {SUBSCRIPTION_STATUS_LABELS[subscription.status]}
                           </span>
                         </td>
+                        <td className="crm-table-cell text-right">
+                          {subscription.courseId ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              icon={Edit2}
+                              onClick={() => setDiscountModal({
+                                isOpen: true,
+                                subscriptionId: subscription.id,
+                                courseId: subscription.courseId,
+                                courseName: data.coursesById[subscription.courseId]?.name || 'Курс',
+                                discountPercent: subscription.discountPercent ?? 0,
+                                discountAmount: subscription.discountAmount?.toString() || '',
+                                discountFromMonth: subscription.discountFromMonth || '',
+                                discountToMonth: subscription.discountToMonth || '',
+                                salaryDiscountMode: subscription.salaryDiscountMode || 'FULL_PRICE',
+                              })}
+                            >
+                              Скидка
+                            </Button>
+                          ) : '—'}
+                        </td>
                       </tr>
                     );
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       У студента пока нет активных групп или абонементов
                     </td>
                   </tr>
@@ -1149,8 +1589,22 @@ export default function StudentProfilePage() {
                   studentScheduleRows.map((row, index) => (
                     <tr key={row.key} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
-                      <td className="crm-table-cell">{row.groupName}</td>
-                      <td className="crm-table-cell">{row.courseName}</td>
+                      <td className="crm-table-cell">
+                        <Link
+                          href={`/classes/${row.key}`}
+                          className="font-medium text-[#273142] transition-colors hover:text-[#3568eb] hover:underline"
+                        >
+                          {row.groupName}
+                        </Link>
+                      </td>
+                      <td className="crm-table-cell">
+                        <Link
+                          href="/classes"
+                          className="text-sm text-[#586272] transition-colors hover:text-[#3568eb] hover:underline"
+                        >
+                          {row.courseName}
+                        </Link>
+                      </td>
                       <td className="crm-table-cell">{row.daysText}</td>
                       <td className="crm-table-cell">{row.timeText}</td>
                       <td className="crm-table-cell">{row.periodText}</td>
@@ -1159,7 +1613,7 @@ export default function StudentProfilePage() {
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Для ученика пока не найдено расписаний
                     </td>
                   </tr>
@@ -1177,6 +1631,10 @@ export default function StudentProfilePage() {
               <CalendarCheck2 className="mr-2 inline h-4 w-4" />
               Записей посещаемости: <span className="font-semibold text-gray-900">{attendanceRows.length}</span>
             </p>
+            <p className="text-sm font-medium text-gray-700">
+              Начислено за занятия:{' '}
+              <span className="font-semibold text-[#1f2530]">{formatMoney(attendanceChargeTotal)}</span>
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -1187,6 +1645,8 @@ export default function StudentProfilePage() {
                   <th className="crm-table-th">Время</th>
                   <th className="crm-table-th">Группа</th>
                   <th className="crm-table-th">Статус</th>
+                  <th className="crm-table-th">Начислено</th>
+                  <th className="crm-table-th">Расчёт</th>
                   <th className="crm-table-th">Отмечено</th>
                 </tr>
               </thead>
@@ -1197,7 +1657,18 @@ export default function StudentProfilePage() {
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">{row.lessonDate ? formatDate(row.lessonDate) : '—'}</td>
                       <td className="crm-table-cell">{row.lessonTime}</td>
-                      <td className="crm-table-cell">{row.groupName}</td>
+                      <td className="crm-table-cell">
+                        {row.groupId ? (
+                          <Link
+                            href={`/classes/${row.groupId}`}
+                            className="font-medium text-[#273142] transition-colors hover:text-[#3568eb] hover:underline"
+                          >
+                            {row.groupName}
+                          </Link>
+                        ) : (
+                          row.groupName
+                        )}
+                      </td>
                       <td className="crm-table-cell">
                         <span
                           className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${ATTENDANCE_STATUS_COLORS[row.status]}`}
@@ -1205,13 +1676,41 @@ export default function StudentProfilePage() {
                           {ATTENDANCE_STATUS_LABELS[row.status]}
                         </span>
                       </td>
+                      <td className="crm-table-cell">
+                        {row.charge && row.charge.billable ? (
+                          <span className="font-semibold text-[#1f2530]">{formatMoney(row.charge.chargedAmount)}</span>
+                        ) : (
+                          <span className="text-[#8a93a3]">—</span>
+                        )}
+                      </td>
+                      <td className="crm-table-cell text-xs text-[#6b7686]">
+                        {row.charge
+                          ? row.charge.billable
+                            ? row.charge.splitCount && row.charge.splitCount > 1
+                              ? `${formatMoney(row.charge.lessonPrice)} ÷ ${row.charge.splitCount} уч.`
+                              : `Стоимость занятия ${formatMoney(row.charge.lessonPrice)}`
+                            : row.charge.note || 'Оплата не начисляется'
+                          : '—'}
+                      </td>
                       <td className="crm-table-cell">{formatDateTime(row.markedAt)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={6} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
-                      История посещаемости отсутствует
+                    <td colSpan={8} className="crm-table-cell py-10 text-center text-sm">
+                      {studentScheduleRows.length > 0 ? (
+                        <div className="flex flex-col items-center justify-center gap-1.5 text-gray-600">
+                          <p className="font-semibold text-gray-800">
+                            Ученик записан в группы: {studentScheduleRows.map((r) => r.groupName).join(', ')}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Занятия начнутся по расписанию ({studentScheduleRows[0]?.daysText || ''} {studentScheduleRows[0]?.timeText || ''}).
+                            Отметки посещаемости появятся сразу после первого проведенного урока.
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-[#8a93a3]">История посещаемости отсутствует</span>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -1224,18 +1723,44 @@ export default function StudentProfilePage() {
       {activeTab === 'payments' && (
         <div className="space-y-4">
           <div className="crm-surface p-5">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className={`rounded-xl border px-4 py-3.5 ${
+                (data.paymentHistory?.studentBalance ?? 0) > 0
+                  ? 'border-emerald-300 bg-emerald-50/90 shadow-sm'
+                  : 'border-[#e7edf3] bg-white'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <p className={`text-xs font-semibold uppercase tracking-wide ${
+                    (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-800' : 'text-[#8a93a3]'
+                  }`}>
+                    Баланс ученика (Аванс)
+                  </p>
+                  <Wallet className={`h-4 w-4 ${
+                    (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-600' : 'text-[#8a93a3]'
+                  }`} />
+                </div>
+                <p className={`mt-1.5 text-xl font-bold ${
+                  (data.paymentHistory?.studentBalance ?? 0) > 0 ? 'text-emerald-700' : 'text-[#1f2530]'
+                }`}>
+                  {formatMoney(data.paymentHistory?.studentBalance ?? 0)}
+                </p>
+                {(data.paymentHistory?.studentBalance ?? 0) > 0 && (
+                  <p className="mt-1 text-xs text-emerald-700 font-medium">Доступно для списания в счёт курсов</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Оплачено всего</p>
-                <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(data.paymentHistory?.totalPaid ?? 0)}</p>
+                <p className="mt-1.5 text-xl font-semibold text-emerald-700">{formatMoney(data.paymentHistory?.totalPaid ?? 0)}</p>
               </div>
-              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
+              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Общий долг</p>
-                <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(data.paymentHistory?.totalDebt ?? 0)}</p>
+                <p className={`mt-1.5 text-xl font-semibold ${(data.paymentHistory?.totalDebt ?? 0) > 0 ? 'text-rose-600' : 'text-[#1f2530]'}`}>
+                  {formatMoney(data.paymentHistory?.totalDebt ?? 0)}
+                </p>
               </div>
-              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
+              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Платежей</p>
-                <p className="mt-1 text-lg font-semibold text-[#1f2530]">{paymentRows.length}</p>
+                <p className="mt-1.5 text-xl font-semibold text-[#1f2530]">{paymentRows.length}</p>
               </div>
             </div>
           </div>
@@ -1273,6 +1798,7 @@ export default function StudentProfilePage() {
                       const statusLabels: Record<string, string> = {
                         ACTIVE: 'Активен', EXPIRED: 'Истек', CANCELLED: 'Отменен', FROZEN: 'Заморожен',
                       };
+                      const salaryDiscountMode = data.subscriptions.find((item) => item.id === sub.subscriptionId)?.salaryDiscountMode || 'FULL_PRICE';
                       return (
                         <tr key={sub.subscriptionId} className="crm-table-row">
                           <td className="crm-table-cell font-medium text-[#202938]">{courseName}</td>
@@ -1285,15 +1811,62 @@ export default function StudentProfilePage() {
                             </span>
                           </td>
                           <td className="crm-table-cell">
-                            {sub.discountPercent != null && sub.discountPercent > 0 ? (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                                {sub.discountPercent}%
-                              </span>
-                            ) : '—'}
+                            <div className="flex items-center gap-1.5">
+                              {sub.discountPercent != null && sub.discountPercent > 0 ? (
+                                <span className="inline-flex flex-col items-start gap-0.5">
+                                  <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                    {sub.discountPercent}%
+                                  </span>
+                                  {formatDiscountPeriod(sub.discountFromMonth, sub.discountToMonth) ? (
+                                    <span className="text-[11px] text-[#8a93a3]">
+                                      {formatDiscountPeriod(sub.discountFromMonth, sub.discountToMonth)}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              ) : (
+                                <span className="text-[#667085]">—</span>
+                              )}
+                              {sub.courseId && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDiscountModal({
+                                      isOpen: true,
+                                      subscriptionId: sub.subscriptionId,
+                                      courseId: sub.courseId,
+                                      courseName,
+                                      discountPercent: sub.discountPercent ?? 0,
+                                      discountAmount: data.subscriptions.find((item) => item.id === sub.subscriptionId)?.discountAmount?.toString() || '',
+                                      discountFromMonth: sub.discountFromMonth || '',
+                                      discountToMonth: sub.discountToMonth || '',
+                                      salaryDiscountMode,
+                                    })
+                                  }
+                                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[#467aff] transition-colors"
+                                  title="Изменить скидку на курс"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
-                          <td className="crm-table-cell">{formatMoney(sub.monthlyExpected)}</td>
+                          <td className="crm-table-cell">
+                            {formatMoney(sub.monthlyExpected)}
+                            {sub.lessonPrice != null && sub.lessonPrice > 0 && (
+                              <span className="mt-0.5 block text-xs text-[#8a93a3]">
+                                занятие {formatMoney(sub.lessonPrice)} · делится между учениками
+                              </span>
+                            )}
+                          </td>
                           <td className="crm-table-cell text-emerald-700">{formatMoney(sub.totalPaid)}</td>
-                          <td className="crm-table-cell text-rose-700 font-semibold">{formatMoney(sub.totalDebt)}</td>
+                          <td className="crm-table-cell text-rose-700 font-semibold">
+                            {formatMoney(sub.totalDebt)}
+                            {sub.advanceApplied != null && sub.advanceApplied > 0 && (
+                              <span className="mt-0.5 block text-xs font-normal text-emerald-700">
+                                зачтено авансом {formatMoney(sub.advanceApplied)} из {formatMoney(sub.grossDebt ?? 0)}
+                              </span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -1320,28 +1893,102 @@ export default function StudentProfilePage() {
                     <th className="crm-table-th">Группа / курс</th>
                     <th className="crm-table-th">Метод</th>
                     <th className="crm-table-th">Сумма</th>
+                    <th className="crm-table-th">Кто принял</th>
                     <th className="crm-table-th">Комментарий</th>
+                    <th className="crm-table-th">Действие</th>
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
                   {paymentRows.length > 0 ? (
                     paymentRows.map((row, index) => (
-                      <tr key={row.id} className="crm-table-row">
+                      <tr key={row.id} className={`crm-table-row ${row.deleted ? 'bg-slate-50 text-slate-400 line-through opacity-70' : ''}`}>
                         <td className="crm-table-cell">{index + 1}</td>
                         <td className="crm-table-cell">{formatDate(row.paidAt)}</td>
                         <td className="crm-table-cell">{row.paymentMonth || '—'}</td>
                         <td className="crm-table-cell">
-                          <div className="text-sm text-[#273142]">{row.groupName}</div>
-                          <div className="text-xs text-[#8a93a3]">{row.courseName}</div>
+                          {row.courseName === 'Оплата / Баланс' || !row.subscriptionId ? (
+                            <span className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${
+                              row.paymentScope === 'BALANCE_REFUND'
+                                ? 'border-rose-200 bg-rose-50 text-rose-800'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            }`}>
+                              {row.paymentScope === 'BALANCE_REFUND' ? (
+                                <Undo2 className="h-3.5 w-3.5 text-rose-600" />
+                              ) : (
+                                <Wallet className="h-3.5 w-3.5 text-emerald-600" />
+                              )}
+                              {row.paymentScope === 'BALANCE_REFUND' ? 'Возврат с баланса' : 'Пополнение баланса (Аванс)'}
+                            </span>
+                          ) : (
+                            <>
+                              <div className="text-sm font-medium text-[#273142]">
+                                {row.groupId ? (
+                                  <Link
+                                    href={`/classes/${row.groupId}`}
+                                    className="transition-colors hover:text-[#3568eb] hover:underline"
+                                  >
+                                    {row.groupName}
+                                  </Link>
+                                ) : (
+                                  row.groupName
+                                )}
+                              </div>
+                              <div className="text-xs text-[#8a93a3]">
+                                <Link
+                                  href="/classes"
+                                  className="transition-colors hover:text-[#3568eb] hover:underline"
+                                >
+                                  {row.courseName}
+                                </Link>
+                              </div>
+                            </>
+                          )}
                         </td>
-                        <td className="crm-table-cell">{PAYMENT_METHOD_LABELS[row.method]}</td>
-                        <td className="crm-table-cell">{formatMoney(row.amount)}</td>
+                        <td className="crm-table-cell">{PAYMENT_METHOD_LABELS[row.method] || row.method}</td>
+                        <td className={`crm-table-cell font-medium ${
+                          row.paymentScope === 'BALANCE_REFUND'
+                            ? 'text-rose-700 font-semibold'
+                            : row.courseName === 'Оплата / Баланс' || !row.subscriptionId
+                            ? 'text-emerald-700 font-semibold'
+                            : ''
+                        }`}>
+                          {row.paymentScope === 'BALANCE_REFUND'
+                            ? `− ${formatMoney(row.amount)}`
+                            : row.courseName === 'Оплата / Баланс' || !row.subscriptionId
+                            ? `+ ${formatMoney(row.amount)}`
+                            : formatMoney(row.amount)}
+                        </td>
+                        <td className="crm-table-cell text-sm text-[#374151]">
+                          <span className="inline-flex items-center gap-1 font-medium">
+                            {row.cashierName || 'Администратор'}
+                          </span>
+                        </td>
                         <td className="crm-table-cell">{row.notes || '—'}</td>
+                        <td className="crm-table-cell">
+                          {row.deleted ? (
+                            <span
+                              className="text-xs font-semibold text-rose-500 no-underline"
+                              title={`${row.deletedBy || ''} ${row.deletedAt ? formatDateTime(row.deletedAt) : ''}`.trim()}
+                            >
+                              Удалено{row.deletedBy ? ` (${row.deletedBy})` : ''}
+                              {row.deletedAt ? ` · ${formatDateTime(row.deletedAt)}` : ''}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleDeletePayment(row.id)}
+                              disabled={deletePaymentMutation.loading}
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Удалить
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr className="crm-table-row">
-                      <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      <td colSpan={9} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                         {data.paymentHistory ? 'Платежи ещё не внесены' : 'Нет данных об оплатах'}
                       </td>
                     </tr>
@@ -1550,6 +2197,169 @@ export default function StudentProfilePage() {
       />
 
       <Modal
+        isOpen={isTransferBranchModalOpen}
+        onClose={() => setIsTransferBranchModalOpen(false)}
+        title="Перевести ученика в другой филиал"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setIsTransferBranchModalOpen(false)} disabled={transferStudentMutation.loading}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => void handleTransferStudent()}
+              disabled={!targetBranchId || transferStudentMutation.loading}
+            >
+              {transferStudentMutation.loading ? 'Переводим...' : 'Перевести'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900">
+            Активные записи ученика в группах текущего филиала будут закрыты как «Переведён». История посещений и оплат сохранится в прежнем филиале. После перевода добавьте ученика в группу нового филиала.
+          </p>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Новый филиал</label>
+            <select
+              value={targetBranchId}
+              onChange={(event) => setTargetBranchId(event.target.value)}
+              className="crm-select"
+            >
+              <option value="">Выберите филиал</option>
+              {transferBranches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Modal>
+
+      {(() => {
+        const maxRefundable = Math.max(data.paymentHistory?.studentBalance ?? 0, data.paymentHistory?.totalPaid ?? 0);
+        return (
+          <Modal
+            isOpen={isRefundModalOpen}
+            onClose={() => setIsRefundModalOpen(false)}
+            title="Возврат ученику"
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setIsRefundModalOpen(false)} disabled={refundBalanceMutation.loading}>
+                  Отмена
+                </Button>
+                <Button
+                  onClick={() => void handleRefundBalance()}
+                  disabled={
+                    refundBalanceMutation.loading ||
+                    Number(refundForm.amount) <= 0 ||
+                    (maxRefundable > 0 && Number(refundForm.amount) > maxRefundable)
+                  }
+                  className="bg-rose-600 hover:bg-rose-700"
+                >
+                  {refundBalanceMutation.loading ? 'Возвращаем...' : 'Подтвердить возврат'}
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Доступно для возврата</p>
+                <p className="mt-1 text-xl font-bold text-emerald-800">
+                  {formatMoney(maxRefundable)}
+                </p>
+                {(data.paymentHistory?.studentBalance ?? 0) > 0 ? (
+                  <p className="mt-0.5 text-xs text-emerald-600">
+                    Баланс: {formatMoney(data.paymentHistory?.studentBalance ?? 0)}, всего оплат: {formatMoney(data.paymentHistory?.totalPaid ?? 0)}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-xs text-emerald-600">
+                    Всего оплат: {formatMoney(data.paymentHistory?.totalPaid ?? 0)}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-[#5d6676]">Сумма возврата *</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    max={maxRefundable > 0 ? maxRefundable : undefined}
+                    step="0.01"
+                    value={refundForm.amount}
+                    onChange={(event) => setRefundForm((prev) => ({ ...prev, amount: event.target.value }))}
+                    className="crm-input"
+                  />
+                </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">Дата возврата *</label>
+              <input
+                type="date"
+                value={refundForm.refundDate}
+                onChange={(event) => setRefundForm((prev) => ({ ...prev, refundDate: event.target.value }))}
+                className="crm-input"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Способ возврата</label>
+            <select
+              value={refundForm.method}
+              onChange={(event) => setRefundForm((prev) => ({ ...prev, method: event.target.value as StudentPaymentDto['method'] }))}
+              className="crm-select"
+            >
+              {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#5d6676]">Комментарий</label>
+            <textarea
+              value={refundForm.notes}
+              onChange={(event) => setRefundForm((prev) => ({ ...prev, notes: event.target.value }))}
+              className="crm-input min-h-24 resize-y"
+              placeholder="Причина возврата"
+            />
+          </div>
+          <p className="text-xs text-[#8a93a3]">Автор и точное время возврата сохранятся автоматически.</p>
+        </div>
+      </Modal>
+        );
+      })()}
+
+      <Modal
+        isOpen={Boolean(enrollmentDateModal)}
+        onClose={() => setEnrollmentDateModal(null)}
+        title="Начало действия зачисления"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEnrollmentDateModal(null)} disabled={updateEnrollmentDateMutation.loading}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => void handleUpdateEnrollmentDate()}
+              disabled={!enrollmentDateModal?.startDate || updateEnrollmentDateMutation.loading}
+            >
+              {updateEnrollmentDateMutation.loading ? 'Сохраняем...' : 'Сохранить'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-[#667085]">
+            До этой даты ученик не появится в посещаемости, а начисление будет считаться только с начала действия.
+          </p>
+          <input
+            type="date"
+            value={enrollmentDateModal?.startDate || ''}
+            onChange={(event) => setEnrollmentDateModal((prev) => prev ? { ...prev, startDate: event.target.value } : prev)}
+            className="crm-input"
+          />
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         title="Добавить оплату"
@@ -1578,17 +2388,35 @@ export default function StudentProfilePage() {
             <label className="mb-2 block text-sm font-medium text-[#5d6676]">Абонемент</label>
             <select
               value={paymentForm.subscriptionId}
-              onChange={(event) => setPaymentForm((prev) => ({ ...prev, subscriptionId: event.target.value }))}
+              onChange={(event) => {
+                const subId = event.target.value;
+                const sub = data.subscriptions.find((s) => s.id === subId);
+                const subSummary = data.paymentHistory?.subscriptions.find((s) => s.subscriptionId === subId);
+                let defaultAmt = 4500;
+                if (subSummary?.monthlyExpected && subSummary.monthlyExpected > 0) {
+                  defaultAmt = subSummary.monthlyExpected;
+                } else if (sub?.amount) {
+                  defaultAmt = sub.amount >= 10000 ? Math.round(sub.amount / 12) : sub.amount;
+                }
+                setPaymentForm((prev) => ({
+                  ...prev,
+                  subscriptionId: subId,
+                  amount: String(defaultAmt),
+                }));
+              }}
               className="crm-select"
             >
               {data.subscriptions.map((subscription) => {
+                const subSummary = data.paymentHistory?.subscriptions.find((s) => s.subscriptionId === subscription.id);
+                const monthly = subSummary?.monthlyExpected || (subscription.amount >= 10000 ? Math.round(subscription.amount / 12) : subscription.amount);
+                const courseName = subscription.courseId ? data.coursesById[subscription.courseId]?.name || 'Курс' : 'Курс';
                 const groupLabel = subscription.groupId
                   ? data.schedulesById[subscription.groupId]?.name || subscription.groupId
                   : 'Без группы';
 
                 return (
                   <option key={subscription.id} value={subscription.id}>
-                    {groupLabel} • {formatMoney(subscription.amount)}
+                    {courseName} ({groupLabel}) • {formatMoney(monthly)} / мес
                   </option>
                 );
               })}
@@ -1795,6 +2623,117 @@ export default function StudentProfilePage() {
             placeholder="Например: Исправлена дата звонка"
             autoFocus
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={discountModal.isOpen}
+        onClose={() => setDiscountModal((prev) => ({ ...prev, isOpen: false }))}
+        title={`Скидка на курс: ${discountModal.courseName}`}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setDiscountModal((prev) => ({ ...prev, isOpen: false }))}
+            >
+              Отмена
+            </Button>
+            <Button onClick={handleSaveDiscount} disabled={!discountPeriodValid}>
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <label className="block text-sm font-semibold text-[#3f4b5a]">
+            Процент скидки (%)
+            <input
+              className="mt-2 h-10 w-full rounded-xl border border-[#dbe2e8] px-3 text-base font-semibold outline-none focus:border-[#467aff]"
+              type="number"
+              min="0"
+              max="100"
+              value={discountModal.discountPercent}
+              onChange={(e) =>
+                setDiscountModal((prev) => ({
+                  ...prev,
+                  discountPercent: Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)),
+                }))
+              }
+            />
+          </label>
+          <p className="text-xs text-[#7f8794]">
+            При установке скидки размер долга и ежемесячный платёж по курсу автоматически пересчитаются в соответствии с указанным процентом.
+          </p>
+          <label className="block text-sm font-semibold text-[#3f4b5a]">
+            Или скидка суммой (₸)
+            <input
+              className="mt-2 h-10 w-full rounded-xl border border-[#dbe2e8] px-3 text-base font-semibold outline-none focus:border-[#467aff]"
+              type="number" min="0" value={discountModal.discountAmount}
+              placeholder="Например, 5000"
+              onChange={(e) => setDiscountModal((prev) => ({ ...prev, discountAmount: e.target.value }))}
+            />
+          </label>
+          <p className="text-xs text-[#7f8794]">Можно использовать процент, сумму или оба варианта: сначала применяется процент, затем сумма.</p>
+          <div>
+            <p className="text-sm font-semibold text-[#3f4b5a]">Период действия скидки</p>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-medium text-[#7f8794]">
+                С месяца
+                <input
+                  className="mt-1 h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm font-semibold text-[#202938] outline-none focus:border-[#467aff]"
+                  type="month"
+                  value={discountModal.discountFromMonth}
+                  max={discountModal.discountToMonth || undefined}
+                  onChange={(e) => setDiscountModal((prev) => ({ ...prev, discountFromMonth: e.target.value }))}
+                />
+              </label>
+              <label className="block text-xs font-medium text-[#7f8794]">
+                По месяц
+                <input
+                  className="mt-1 h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm font-semibold text-[#202938] outline-none focus:border-[#467aff]"
+                  type="month"
+                  value={discountModal.discountToMonth}
+                  min={discountModal.discountFromMonth || undefined}
+                  onChange={(e) => setDiscountModal((prev) => ({ ...prev, discountToMonth: e.target.value }))}
+                />
+              </label>
+            </div>
+            {!discountPeriodValid ? (
+              <p className="mt-2 text-xs font-medium text-red-600">Месяц начала не может быть позже месяца окончания.</p>
+            ) : (
+              <p className="mt-2 text-xs text-[#7f8794]">
+                {discountPeriodLabel
+                  ? `Скидка действует: ${discountPeriodLabel}. В остальные месяцы — полная цена.`
+                  : 'Оставьте пустым, чтобы скидка действовала без ограничения по времени.'}
+              </p>
+            )}
+            {discountModal.discountFromMonth || discountModal.discountToMonth ? (
+              <button
+                type="button"
+                className="mt-1 text-xs font-medium text-[#467aff] hover:underline"
+                onClick={() => setDiscountModal((prev) => ({ ...prev, discountFromMonth: '', discountToMonth: '' }))}
+              >
+                Сбросить период
+              </button>
+            ) : null}
+          </div>
+          <label className="block text-sm font-semibold text-[#3f4b5a]">
+            Расчёт зарплаты преподавателя
+            <select
+              className="mt-2 h-10 w-full rounded-xl border border-[#dbe2e8] bg-white px-3 text-sm outline-none focus:border-[#467aff]"
+              value={discountModal.salaryDiscountMode}
+              onChange={(e) => setDiscountModal((prev) => ({
+                ...prev,
+                salaryDiscountMode: e.target.value as SalaryDiscountMode,
+              }))}
+            >
+              <option value="FULL_PRICE">От полной цены курса</option>
+              <option value="DISCOUNTED_PRICE">От цены после скидки</option>
+            </select>
+          </label>
+          <p className="text-xs text-[#7f8794]">
+            Этот выбор влияет только на базу для начисления преподавателю, а не на скидку ученика.
+          </p>
         </div>
       </Modal>
     </div>

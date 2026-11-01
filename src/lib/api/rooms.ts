@@ -5,8 +5,11 @@ import type { ApiResponse, PageResponse, PaginationParams, RoomDto, CreateRoomRe
 
 export const roomsService = {
   /** Get all rooms */
-  async getAll(params?: PaginationParams & { status?: RoomStatus }) {
-    const response = await api.get<ApiResponse<PageResponse<RoomDto>>>('/api/v1/rooms', { params });
+  async getAll(params?: PaginationParams & { status?: RoomStatus }, branchId?: string) {
+    const response = await api.get<ApiResponse<PageResponse<RoomDto>>>('/api/v1/rooms', {
+      params,
+      headers: branchId ? { 'X-Branch-ID': branchId } : undefined,
+    });
     return response.data;
   },
 

@@ -15,6 +15,7 @@ import {
 } from '@/constants/employee';
 import { staffService, type CreateStaffRequest, type UpdateStaffRequest } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { useAuthStore } from '@/store/authStore';
 import type { StaffFilters, StaffFormValues, StaffListItem } from '@/types/employee';
 
 const PAGE_SIZE = 20;
@@ -48,12 +49,17 @@ function toFormValues(employee: StaffListItem): StaffFormValues {
     salary: employee.salary !== null ? String(employee.salary) : '',
     salaryType: employee.salaryType,
     salaryPercentage: employee.salaryPercentage !== null ? String(employee.salaryPercentage) : '',
+    individualSalaryPercentage: employee.individualSalaryPercentage !== null ? String(employee.individualSalaryPercentage) : '',
+    birthdate: employee.birthdate || '',
     hireDate: employee.hireDate,
     notes: employee.notes,
+    scheduleColor: employee.scheduleColor,
   };
 }
 
 export default function Employees() {
+  const roles = useAuthStore((state) => state.roles);
+  const isManager = roles.includes('MANAGER') && !roles.some((role) => role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN');
   const [filters, setFilters] = useState<StaffFilters>({
     search: '',
     role: 'all',
@@ -113,8 +119,11 @@ export default function Employees() {
           salary: staff.salary,
           salaryType: staff.salaryType,
           salaryPercentage: staff.salaryPercentage,
+          individualSalaryPercentage: staff.individualSalaryPercentage ?? null,
+          birthdate: staff.birthdate || '',
           hireDate: staff.hireDate || '',
           notes: staff.notes || '',
+          scheduleColor: staff.scheduleColor || '#467aff',
         }))
         .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU')),
     [staffPage]
@@ -301,7 +310,7 @@ export default function Employees() {
                   <th className="crm-table-th">Роль</th>
                   <th className="crm-table-th">Кастомный статус</th>
                   <th className="crm-table-th">Должность</th>
-                  <th className="crm-table-th">Оплата</th>
+                  {!isManager && <th className="crm-table-th">Оплата</th>}
                   <th className="crm-table-th">Дата найма</th>
                   <th className="crm-table-th">Статус</th>
                   <th className="crm-table-th">Действия</th>
@@ -313,7 +322,12 @@ export default function Employees() {
                     <tr key={employee.id} className="crm-table-row">
                       <td className="crm-table-cell">{currentPage * PAGE_SIZE + index + 1}</td>
                       <td className="crm-table-cell">
-                        <div className="text-sm font-medium text-gray-900">{employee.fullName}</div>
+                        <Link
+                          href={`/staff/${employee.id}`}
+                          className="text-sm font-medium text-[#467aff] hover:underline"
+                        >
+                          {employee.fullName}
+                        </Link>
                         <div className="text-xs text-gray-500">{employee.position || '—'}</div>
                       </td>
                       <td className="crm-table-cell">{employee.phone || '—'}</td>
@@ -321,18 +335,20 @@ export default function Employees() {
                       <td className="crm-table-cell">{STAFF_ROLE_LABELS[employee.role]}</td>
                       <td className="crm-table-cell">{employee.customStatus || '—'}</td>
                       <td className="crm-table-cell">{employee.position || '—'}</td>
-                      <td className="crm-table-cell">
-                        <div className="text-sm text-gray-900">{STAFF_SALARY_TYPE_LABELS[employee.salaryType]}</div>
-                        <div className="text-xs text-gray-500">
-                          {employee.salaryType === 'FIXED'
-                            ? employee.salary !== null
-                              ? `${employee.salary.toLocaleString('ru-RU')} ₸`
-                              : '—'
-                            : employee.salaryPercentage !== null
-                              ? `${employee.salaryPercentage}%`
-                              : '—'}
-                        </div>
-                      </td>
+                      {!isManager && (
+                        <td className="crm-table-cell">
+                          <div className="text-sm text-gray-900">{STAFF_SALARY_TYPE_LABELS[employee.salaryType]}</div>
+                          <div className="text-xs text-gray-500">
+                            {employee.salaryType === 'FIXED'
+                              ? employee.salary !== null
+                                ? `${employee.salary.toLocaleString('ru-RU')} ₸`
+                                : '—'
+                              : employee.salaryPercentage !== null
+                                ? `${employee.salaryPercentage}%`
+                                : '—'}
+                          </div>
+                        </td>
+                      )}
                       <td className="crm-table-cell">{employee.hireDate || '—'}</td>
                       <td className="crm-table-cell">
                         <span className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-medium ${STAFF_STATUS_COLORS[employee.status]}`}>
@@ -368,7 +384,7 @@ export default function Employees() {
                   ))
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={isManager ? 10 : 11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Сотрудники не найдены
                     </td>
                   </tr>
@@ -412,6 +428,7 @@ export default function Employees() {
         isSubmitting={createMutation.loading || updateMutation.loading}
         title={modalState.employeeId ? 'Редактировать сотрудника' : 'Добавить сотрудника'}
         includeStatus={Boolean(modalState.employeeId)}
+        showSalary={!isManager}
       />
     </div>
   );

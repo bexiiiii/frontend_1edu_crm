@@ -13,6 +13,7 @@ import { getErrorMessage } from '@/lib/error-message';
 import { pushToast } from '@/lib/toast';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
+import { canAccessPath } from '@/lib/rbac';
 
 type SearchItem = {
   label: string;
@@ -42,10 +43,11 @@ const pageTitles: Record<string, string> = {
   '/finance': 'Финансы',
   '/finance/student-payments': 'Платежи студентов',
   '/finance/salary': 'Зарплаты',
+  '/finance/cashier': 'Касса',
   '/inventory': 'Инвентаризация',
   '/warehouse': 'Склад',
   '/integrations/kpay': 'KPAY инвойсы',
-  '/integrations/apipay': 'ApiPay инвойсы',
+  '/integrations/apipay': 'Kaspi POS счета',
   '/analytics': 'Аналитика',
   '/notifications': 'Уведомления',
   '/logs': 'Logs',
@@ -69,10 +71,11 @@ const STATIC_SEARCH_ITEMS: SearchItem[] = [
   { label: 'Финансы', href: '/finance', keywords: ['финансы', 'finance'] },
   { label: 'Платежи студентов', href: '/finance/student-payments', keywords: ['платежи', 'students payments'] },
   { label: 'Зарплаты', href: '/finance/salary', keywords: ['зарплаты', 'salary'] },
+  { label: 'Касса', href: '/finance/cashier', keywords: ['касса', 'смена', 'cashier', 'pos'] },
   { label: 'Инвентаризация', href: '/inventory', keywords: ['инвентаризация', 'inventory', 'пересчет', 'остатки'] },
   { label: 'Склад', href: '/warehouse', keywords: ['склад', 'warehouse', 'товары', 'остатки'] },
   { label: 'KPAY инвойсы', href: '/integrations/kpay', keywords: ['kpay', 'инвойсы', 'счета', 'оплата'] },
-  { label: 'ApiPay инвойсы', href: '/integrations/apipay', keywords: ['apipay', 'инвойсы', 'счета', 'оплата'] },
+  { label: 'Kaspi POS счета', href: '/integrations/apipay', keywords: ['kaspi', 'pos', 'инвойсы', 'счета', 'оплата'] },
   { label: 'Аналитика', href: '/analytics', keywords: ['аналитика', 'reports'] },
   { label: 'Уведомления', href: '/notifications', keywords: ['уведомления', 'notifications', 'bell'] },
   { label: 'Logs', href: '/logs', keywords: ['логи', 'logs'] },
@@ -113,7 +116,9 @@ export default function Header({
   const storeBranchId = useAuthStore((s) => s.branchId);
   const storeBranchIds = useAuthStore((s) => s.branchIds);
   const storeRoles = useAuthStore((s) => s.roles);
+  const storePermissions = useAuthStore((s) => s.permissions);
   const isTenantAdmin = storeRoles.includes('TENANT_ADMIN');
+  const isTeacher = storeRoles.includes('TEACHER');
   const canSwitchBranch = isTenantAdmin || storeBranchIds.length > 1;
   useEffect(() => {
     if (storeBranchId && storeBranchId !== selectedBranchId) {
@@ -149,10 +154,12 @@ export default function Header({
   }) => settingsService.createBranch(payload));
 
   const branches = useMemo(() => {
+    const allowedBranchIds = new Set(storeBranchIds);
     return (branchesData || []).filter((branch): branch is BranchDto =>
       Boolean(branch?.id && branch?.name)
+      && (isTenantAdmin || allowedBranchIds.has(branch.id))
     );
-  }, [branchesData]);
+  }, [branchesData, isTenantAdmin, storeBranchIds]);
 
   const selectedBranch = useMemo(() => {
     if (!selectedBranchId) {
@@ -177,8 +184,9 @@ export default function Header({
       keywords: ['система', 'ошибка', 'system', page.slug, toLowerSafe(page.title), toLowerSafe(page.badge)],
     }));
 
-    return [...STATIC_SEARCH_ITEMS, ...analyticsItems, ...systemItems];
-  }, []);
+    return [...STATIC_SEARCH_ITEMS, ...analyticsItems, ...systemItems]
+      .filter((item) => canAccessPath(item.href, storeRoles, storePermissions));
+  }, [storePermissions, storeRoles]);
 
   const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -205,7 +213,7 @@ export default function Header({
   if (pathname.startsWith('/attendance/')) {
     title = 'Посещение занятия';
   } else if (pathname.startsWith('/classes/')) {
-    title = 'Настройка курса';
+    title = storeRoles.includes('TEACHER') ? 'Курс' : 'Настройка курса';
   } else if (pathname.startsWith('/system/')) {
     const systemSlug = pathname.replace('/system/', '');
     const systemPageTitle = SYSTEM_PAGES_BY_SLUG[systemSlug]?.title;
@@ -244,7 +252,7 @@ export default function Header({
 
       if (hasCommandModifier && event.shiftKey && key === 'n') {
         event.preventDefault();
-        router.push('/notifications');
+        if (!isTeacher) router.push('/notifications');
         return;
       }
 
@@ -266,7 +274,7 @@ export default function Header({
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
-  }, [router]);
+  }, [isTeacher, router]);
 
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
@@ -337,16 +345,12 @@ export default function Header({
         ? parsed.branchIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [];
 
-      const nextBranchIds = currentBranchIds.includes(branchId)
-        ? currentBranchIds
-        : [branchId, ...currentBranchIds];
-
       localStorage.setItem('edu_crm_auth', JSON.stringify({
         ...parsed,
         branchId,
-        branchIds: nextBranchIds,
+        branchIds: currentBranchIds,
       }));
-      localStorage.setItem('branch_ids', JSON.stringify(nextBranchIds));
+      localStorage.setItem('branch_ids', JSON.stringify(currentBranchIds));
     } catch {
       // Ignore local storage parsing errors.
     }
@@ -454,14 +458,14 @@ export default function Header({
     <header className="border-b border-[#e8eaee] bg-[#fbfcfd]">
       <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:gap-4">
         <div className="flex items-center gap-2">
-          <button
+          {!isTeacher ? <button
             type="button"
             onClick={onOpenMobileSidebar}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#e0e3e8] bg-white text-[#4b5565] transition-colors hover:bg-[#f4f6f8] md:hidden"
             aria-label="Открыть меню"
           >
             <Menu className="h-5 w-5" />
-          </button>
+          </button> : null}
           <h1 className="min-w-0 shrink-0 truncate text-xl font-bold tracking-tight text-[#1a1d22] lg:min-w-36 lg:text-[28px]">
             {title}
           </h1>

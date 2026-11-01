@@ -1,7 +1,8 @@
 'use client';
+import type { DiscountPeriod } from '@/lib/api/types';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Edit2, FileText, Loader2, PlusCircle, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, Calendar, Edit2, FileText, Loader2, PlusCircle, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
@@ -13,15 +14,20 @@ import {
   coursesService,
   roomsService,
   schedulesService,
+  settingsService,
   staffService,
   studentsService,
   type CourseDto,
+  type CourseEnrollmentDto,
   type CourseStatus,
+  type CreateCourseRequest,
+  type UpdateCourseRequest,
   type RoomDto,
   type ScheduleDto,
   type StaffDto,
   type StudentDto,
 } from '@/lib/api';
+import { studentPaymentsService } from '@/lib/api/finance';
 import {
   formatScheduleDays,
   formatSchedulePeriod,
@@ -30,6 +36,8 @@ import {
 import { COURSE_FORMATS, COURSE_STATUSES, COURSE_TYPES } from '@/constants/class';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
 import type { CourseFormValues } from '@/types/class';
+import { useAuthStore } from '@/store/authStore';
+import { formatFullName } from '@/lib/utils';
 
 type ClassDetailsTab = 'students' | 'schedule';
 
@@ -40,6 +48,7 @@ type ClassDetailsData = {
   students: StudentDto[];
   allStudents: StudentDto[];
   schedules: ScheduleDto[];
+  enrollments: Record<string, CourseEnrollmentDto>;
 };
 
 const classDetailsTabs: Array<{ id: ClassDetailsTab; label: string }> = [
@@ -54,23 +63,13 @@ const SCHEDULE_STATUS_LABELS: Record<ScheduleDto['status'], string> = {
 };
 
 function getStaffFullName(staff: StaffDto | null): string {
-  if (!staff) {
-    return '—';
-  }
-
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ') || '—';
+  return formatFullName(staff) || '—';
 }
 
 function getStudentFullName(student: StudentDto): string {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim()
+    || student.fullName?.trim()
+    || 'Без имени';
 }
 
 function getStudentPrimaryContact(student: StudentDto): string {
@@ -100,6 +99,17 @@ function formatDateTime(value: string): string {
   });
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
 function toEditFormValues(course: CourseDto): CourseFormValues {
   return {
     type: course.type,
@@ -107,10 +117,13 @@ function toEditFormValues(course: CourseDto): CourseFormValues {
     name: course.name,
     description: course.description || '',
     basePrice: course.basePrice == null ? '' : String(course.basePrice),
+    totalLessons: course.totalLessons == null ? '' : String(course.totalLessons),
+    levelId: course.levelId || '00000000-0000-0000-0000-000000000101',
     enrollmentLimit: course.enrollmentLimit ? String(course.enrollmentLimit) : '',
     color: course.color || '#ffffff',
     status: course.status,
     teacherId: course.teacherId || '',
+    teacherIds: course.teacherIds ?? (course.teacherId ? [course.teacherId] : []),
     roomId: course.roomId || '',
     studentIds: course.studentIds ?? [],
   };
@@ -118,6 +131,8 @@ function toEditFormValues(course: CourseDto): CourseFormValues {
 
 export default function ClassDetailsPage() {
   const router = useRouter();
+  const { roles, setBranchId } = useAuthStore();
+  const isTeacher = roles.includes('TEACHER');
   const params = useParams();
   const classIdParam = params.classId;
   const classId = Array.isArray(classIdParam) ? classIdParam[0] : classIdParam;
@@ -126,8 +141,21 @@ export default function ClassDetailsPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [addSearch, setAddSearch] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [studentDiscount, setStudentDiscount] = useState<number>(0);
+  const [enrollmentStartDate, setEnrollmentStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [studentsPage, setStudentsPage] = useState(1);
   const [activeTab, setActiveTab] = useState<ClassDetailsTab>('students');
+  const [enrollmentDateModal, setEnrollmentDateModal] = useState<{
+    student: StudentDto;
+    startDate: string;
+  } | null>(null);
+  // Keeps the table responsive after changing an effective start date without
+  // briefly replacing the entire course page with a loading state.
+  const [enrollmentStartDateOverrides, setEnrollmentStartDateOverrides] = useState<Record<string, string>>({});
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [targetBranchId, setTargetBranchId] = useState('');
+  const [targetLevelId, setTargetLevelId] = useState('');
+  const [targetRoomId, setTargetRoomId] = useState('');
 
   const { data, loading, error, refetch } = useApi<ClassDetailsData | null>(async () => {
     if (!classId) {
@@ -148,11 +176,12 @@ export default function ClassDetailsPage() {
       return { data: null };
     }
 
-    const [teacherResult, roomResult, studentsPage, schedulesResult] = await Promise.all([
+    const [teacherResult, roomResult, studentsPage, schedulesResult, enrollmentsResult] = await Promise.all([
       course.teacherId ? staffService.getById(course.teacherId).catch(() => null) : Promise.resolve(null),
       course.roomId ? roomsService.getById(course.roomId).catch(() => null) : Promise.resolve(null),
       studentsService.getAll({ page: 0, size: 2000 }).catch(() => null),
       schedulesService.getAll({ page: 0, size: 500, courseId: classId }).catch(() => null),
+      coursesService.getCourseEnrollments(classId).catch(() => null),
     ]);
 
     const allStudents = (studentsPage?.data.content ?? []).slice();
@@ -160,6 +189,13 @@ export default function ClassDetailsPage() {
     const students = allStudents
       .filter((student) => studentIds.has(student.id))
       .sort((left, right) => getStudentFullName(left).localeCompare(getStudentFullName(right), 'ru'));
+
+    const enrollments: Record<string, CourseEnrollmentDto> = {};
+    (enrollmentsResult?.data ?? []).forEach((enrollment) => {
+      if (enrollment.studentId) {
+        enrollments[enrollment.studentId] = enrollment;
+      }
+    });
 
     return {
       data: {
@@ -169,35 +205,53 @@ export default function ClassDetailsPage() {
         students,
         allStudents,
         schedules: schedulesResult?.data.content ?? [],
+        enrollments,
       },
     };
   }, [classId]);
 
-  const addStudentMutation = useMutation(({ courseId: id, studentId }: { courseId: string; studentId: string }) =>
-    coursesService.enrollStudent(id, studentId)
+  const addStudentMutation = useMutation(({ courseId: id, studentId, startDate }: { courseId: string; studentId: string; startDate: string }) =>
+    coursesService.enrollStudent(id, studentId, undefined, startDate)
   );
   const removeStudentMutation = useMutation(({ courseId: id, studentId }: { courseId: string; studentId: string }) =>
     coursesService.removeStudent(id, studentId)
   );
-  const updateCourseMutation = useMutation(({ id, data }: { id: string; data: CourseDto & { status?: CourseStatus } }) =>
-    coursesService.update(id, {
-      type: data.type,
-      format: data.format,
-      name: data.name,
-      description: data.description,
-      basePrice: data.basePrice,
-      enrollmentLimit: data.enrollmentLimit,
-      color: data.color,
-      status: data.status,
-      teacherId: data.teacherId,
-      roomId: data.roomId,
-      studentIds: data.studentIds,
-    })
+  const updateEnrollmentDateMutation = useMutation(
+    ({ courseId: id, studentId, startDate }: { courseId: string; studentId: string; startDate: string }) =>
+      coursesService.updateEnrollmentDate(id, studentId, startDate)
+  );
+  const updateCourseMutation = useMutation(({ id, data }: { id: string; data: UpdateCourseRequest }) =>
+    coursesService.update(id, data)
   );
   const deleteCourseMutation = useMutation((id: string) => coursesService.delete(id));
+  const transferCourseMutation = useMutation(
+    ({ id, targetBranchId: branchId, targetLevelId: levelId, targetRoomId: roomId }: {
+      id: string;
+      targetBranchId: string;
+      targetLevelId: string;
+      targetRoomId?: string | null;
+    }) => coursesService.transferToBranch(id, { targetBranchId: branchId, targetLevelId: levelId, targetRoomId: roomId })
+  );
 
-  const { data: teachersData } = useApi(() => staffService.getTeachers({ page: 0, size: 300 }), []);
+  const { data: teachersData } = useApi(
+    () => isTeacher
+      ? Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 300 })
+      : staffService.getTeachers({ page: 0, size: 300 }),
+    [isTeacher]
+  );
   const { data: roomsData } = useApi(() => roomsService.getAll({ page: 0, size: 300 }), []);
+  const { data: levelsData } = useApi(() => settingsService.getCourseLevels(), []);
+  const { data: branchesData } = useApi(() => settingsService.getBranches(), []);
+  const { data: targetLevelsData } = useApi(
+    () => targetBranchId ? settingsService.getCourseLevels(targetBranchId) : Promise.resolve({ data: [] }),
+    [targetBranchId]
+  );
+  const { data: targetRoomsData } = useApi(
+    () => targetBranchId
+      ? roomsService.getAll({ page: 0, size: 300 }, targetBranchId)
+      : Promise.resolve({ data: { content: [], totalElements: 0, totalPages: 0, page: 0, size: 300 } }),
+    [targetBranchId]
+  );
 
   const course = data?.course ?? null;
   const teacher = data?.teacher ?? null;
@@ -205,6 +259,12 @@ export default function ClassDetailsPage() {
   const students = useMemo(() => data?.students ?? [], [data?.students]);
   const allStudents = useMemo(() => data?.allStudents ?? [], [data?.allStudents]);
   const schedules = useMemo(() => data?.schedules ?? [], [data?.schedules]);
+  const transferBranches = useMemo(
+    () => (branchesData ?? []).filter((branch) => branch.active && branch.id !== course?.branchId),
+    [branchesData, course?.branchId]
+  );
+  const targetLevels = useMemo(() => targetLevelsData ?? [], [targetLevelsData]);
+  const targetRooms = useMemo(() => targetRoomsData?.content ?? [], [targetRoomsData]);
 
   const typeLabel = course ? COURSE_TYPES.find((item) => item.value === course.type)?.label ?? course.type : '—';
   const formatLabel = course ? COURSE_FORMATS.find((item) => item.value === course.format)?.label ?? course.format : '—';
@@ -320,9 +380,14 @@ export default function ClassDetailsPage() {
       return;
     }
 
-    await addStudentMutation.mutate({ courseId: course.id, studentId: selectedStudentId });
+    await addStudentMutation.mutate({ courseId: course.id, studentId: selectedStudentId, startDate: enrollmentStartDate });
+    if (studentDiscount > 0) {
+      await studentPaymentsService.updateSubscriptionDiscount(selectedStudentId, course.id, studentDiscount).catch(() => {});
+    }
     setAddModalOpen(false);
+    setEnrollmentStartDate(new Date().toISOString().slice(0, 10));
     setSelectedStudentId(null);
+    setStudentDiscount(0);
     setAddSearch('');
     await refetch();
   };
@@ -334,6 +399,18 @@ export default function ClassDetailsPage() {
 
     await removeStudentMutation.mutate({ courseId: course.id, studentId });
     await refetch();
+  };
+
+  const handleSaveEnrollmentDate = async () => {
+    if (!course || !enrollmentDateModal?.student?.id || !enrollmentDateModal.startDate) return;
+    const { student, startDate } = enrollmentDateModal;
+    await updateEnrollmentDateMutation.mutate({
+      courseId: course.id,
+      studentId: student.id,
+      startDate,
+    });
+    setEnrollmentStartDateOverrides((previous) => ({ ...previous, [student.id]: startDate }));
+    setEnrollmentDateModal(null);
   };
 
   const handleDeleteCourse = async () => {
@@ -349,18 +426,51 @@ export default function ClassDetailsPage() {
     router.push('/classes');
   };
 
-  const handleEditCourse = async (payload: Omit<CourseDto, 'id' | 'createdAt' | 'updatedAt'> & { status?: CourseStatus }) => {
+  const openTransferModal = () => {
+    setTargetBranchId('');
+    setTargetLevelId(course?.levelId || '');
+    setTargetRoomId('');
+    setTransferModalOpen(true);
+  };
+
+  const handleTransferCourse = async () => {
+    if (!course || !targetBranchId || !targetLevelId) return;
+    await transferCourseMutation.mutate({
+      id: course.id,
+      targetBranchId,
+      targetLevelId,
+      targetRoomId: targetRoomId || null,
+    });
+    setTransferModalOpen(false);
+    setBranchId(targetBranchId);
+    router.push('/classes');
+  };
+
+  const handleEditCourse = async (
+    payload: CreateCourseRequest & { status?: CourseStatus },
+    studentDiscounts?: Record<string, number>,
+    studentDiscountPeriods?: Record<string, DiscountPeriod>
+  ) => {
     if (!course) {
       return;
     }
 
     await updateCourseMutation.mutate({
       id: course.id,
-      data: {
-        ...course,
-        ...payload,
-      },
+      data: payload,
     });
+
+    if (studentDiscounts && Object.keys(studentDiscounts).length > 0) {
+      await Promise.all(
+        Object.entries(studentDiscounts).map(async ([studentId, discount]) => {
+          if (discount > 0) {
+            await studentPaymentsService
+              .updateSubscriptionDiscount(studentId, course.id, discount, undefined, undefined, studentDiscountPeriods?.[studentId])
+              .catch(() => {});
+          }
+        })
+      );
+    }
 
     setEditModalOpen(false);
     await refetch();
@@ -387,44 +497,51 @@ export default function ClassDetailsPage() {
           </div>
 
           <div className="flex min-w-fit flex-col items-end gap-2 max-sm:w-full max-sm:items-start">
-            <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
-              <span className="rounded-lg bg-[#eaf5ff] px-3 py-1 text-xs font-semibold text-[#2a6cc8]">
-                {typeLabel}
-              </span>
-              <span
-                className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
-                  statusConfig?.color ?? 'bg-gray-100 text-gray-700 border-gray-200'
-                }`}
-              >
-                {statusConfig?.label ?? '—'}
-              </span>
-            </div>
+            {!isTeacher ? (
+              <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
+                <span className="rounded-lg bg-[#eaf5ff] px-3 py-1 text-xs font-semibold text-[#2a6cc8]">
+                  {typeLabel}
+                </span>
+                <span
+                  className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
+                    statusConfig?.color ?? 'bg-gray-100 text-gray-700 border-gray-200'
+                  }`}
+                >
+                  {statusConfig?.label ?? '—'}
+                </span>
+              </div>
+            ) : null}
 
-            <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
-              <Button
-                variant="outline"
-                icon={Edit2}
-                onClick={() => setEditModalOpen(true)}
-              >
-                Редактировать
-              </Button>
-              <Button icon={PlusCircle} onClick={() => setAddModalOpen(true)}>
-                Добавить ученика
-              </Button>
-              <Button
-                variant="outline"
-                icon={Trash2}
-                onClick={() => void handleDeleteCourse()}
-                disabled={deleteCourseMutation.loading}
-                className="border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
-              >
-                Удалить
-              </Button>
-            </div>
+            {!isTeacher ? (
+              <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
+                <Button
+                  variant="outline"
+                  icon={Edit2}
+                  onClick={() => setEditModalOpen(true)}
+                >
+                  Редактировать
+                </Button>
+                <Button icon={PlusCircle} onClick={() => setAddModalOpen(true)}>
+                  Добавить ученика
+                </Button>
+                <Button variant="outline" icon={ArrowRightLeft} onClick={openTransferModal}>
+                  Перевести в филиал
+                </Button>
+                <Button
+                  variant="outline"
+                  icon={Trash2}
+                  onClick={() => void handleDeleteCourse()}
+                  disabled={deleteCourseMutation.loading}
+                  className="border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                >
+                  Удалить
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[#e6ebf0] pt-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[#e6ebf0] pt-4 md:grid-cols-2 xl:grid-cols-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Преподаватель</p>
             <p className="mt-1 text-sm font-semibold text-[#273142]">{getStaffFullName(teacher)}</p>
@@ -436,6 +553,10 @@ export default function ClassDetailsPage() {
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Формат</p>
             <p className="mt-1 text-sm font-semibold text-[#273142]">{formatLabel}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Уровень</p>
+            <p className="mt-1 text-sm font-semibold text-[#273142]">{course.levelName || '—'}</p>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Базовая цена</p>
@@ -452,11 +573,13 @@ export default function ClassDetailsPage() {
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Создан</p>
-            <p className="mt-1 text-sm font-semibold text-[#273142]">{formatDateTime(course.createdAt)}</p>
+            <p className="mt-1 text-sm font-semibold text-[#273142]">{course.createdByName || course.createdBy || 'Администратор'}</p>
+            <p className="text-xs text-[#8a93a3]">{formatDateTime(course.createdAt)}</p>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Обновлен</p>
-            <p className="mt-1 text-sm font-semibold text-[#273142]">{formatDateTime(course.updatedAt)}</p>
+            <p className="mt-1 text-sm font-semibold text-[#273142]">{course.updatedByName || course.updatedBy || 'Администратор'}</p>
+            <p className="text-xs text-[#8a93a3]">{formatDateTime(course.updatedAt)}</p>
           </div>
         </div>
       </div>
@@ -501,13 +624,18 @@ export default function ClassDetailsPage() {
                   <th className="crm-table-th">#</th>
                   <th className="crm-table-th">Ученик</th>
                   <th className="crm-table-th">Контакт</th>
+                  <th className="crm-table-th">Начало действия</th>
                   <th className="crm-table-th">Статус</th>
-                  <th className="crm-table-th">Действия</th>
+                  <th className="crm-table-th">{isTeacher ? 'Просмотр' : 'Действия'}</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
                 {visibleStudents.length > 0 ? (
-                  visibleStudents.map((student, index) => (
+                  visibleStudents.map((student, index) => {
+                    const enrollment = data?.enrollments?.[student.id];
+                    const startDateStr = enrollmentStartDateOverrides[student.id]
+                      ?? (enrollment?.enrolledAt ? enrollment.enrolledAt.slice(0, 10) : new Date().toISOString().slice(0, 10));
+                    return (
                     <tr key={student.id} className="crm-table-row">
                       <td className="crm-table-cell">{(currentStudentsPage - 1) * 10 + index + 1}</td>
                       <td className="crm-table-cell">
@@ -517,6 +645,25 @@ export default function ClassDetailsPage() {
                         </div>
                       </td>
                       <td className="crm-table-cell">{getStudentPrimaryContact(student)}</td>
+                      <td className="crm-table-cell">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-[#273142]">
+                            {enrollment?.enrolledAt || enrollmentStartDateOverrides[student.id]
+                              ? formatDate(startDateStr)
+                              : '—'}
+                          </span>
+                          {!isTeacher ? (
+                            <button
+                              type="button"
+                              onClick={() => setEnrollmentDateModal({ student, startDate: startDateStr })}
+                              className="inline-flex rounded-md p-1 text-[#8a93a3] transition-colors hover:bg-blue-50 hover:text-blue-600"
+                              title="Изменить начало действия"
+                            >
+                              <Calendar className="h-3.5 w-3.5" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="crm-table-cell">
                         <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${STUDENT_STATUS_COLORS[student.status]}`}>
                           {STUDENT_STATUS_LABELS[student.status]}
@@ -531,7 +678,17 @@ export default function ClassDetailsPage() {
                           >
                             <FileText className="h-4 w-4" />
                           </Link>
-                          <button
+                          {!isTeacher ? (
+                            <button
+                              type="button"
+                              onClick={() => setEnrollmentDateModal({ student, startDate: startDateStr })}
+                              className="inline-flex rounded-lg p-2 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-600"
+                              title="Начало действия"
+                            >
+                              <Calendar className="h-4 w-4" />
+                            </button>
+                          ) : null}
+                          {!isTeacher ? <button
                             type="button"
                             onClick={() => void handleRemoveStudent(student.id)}
                             disabled={removeStudentMutation.loading}
@@ -539,14 +696,15 @@ export default function ClassDetailsPage() {
                             title="Удалить из курса"
                           >
                             <Trash2 className="h-4 w-4" />
-                          </button>
+                          </button> : null}
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={5} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={6} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Участники не найдены
                     </td>
                   </tr>
@@ -631,20 +789,91 @@ export default function ClassDetailsPage() {
         </div>
       )}
 
-      <AddClassModal
+      {!isTeacher ? <AddClassModal
+        key={`${course?.id ?? 'course'}-${editModalOpen ? 'open' : 'closed'}`}
         isOpen={editModalOpen}
         onClose={() => setEditModalOpen(false)}
         onSave={handleEditCourse}
         teachers={teacherOptions}
         rooms={roomOptions}
         students={studentOptions}
+        levels={(levelsData ?? []).map((level) => ({ id: level.id, name: level.name, active: level.active }))}
         initialValues={course ? toEditFormValues(course) : undefined}
         isSubmitting={updateCourseMutation.loading}
         title="Редактировать курс"
         includeStatus
-      />
+      /> : null}
 
-      <Modal
+      {!isTeacher ? (
+        <Modal
+          isOpen={transferModalOpen}
+          onClose={() => setTransferModalOpen(false)}
+          title="Перевести курс в филиал"
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setTransferModalOpen(false)} disabled={transferCourseMutation.loading}>
+                Отмена
+              </Button>
+              <Button
+                icon={ArrowRightLeft}
+                onClick={() => void handleTransferCourse()}
+                disabled={!targetBranchId || !targetLevelId || transferCourseMutation.loading}
+              >
+                {transferCourseMutation.loading ? 'Переносим...' : 'Перевести курс'}
+              </Button>
+            </>
+          )}
+        >
+          <div className="space-y-4">
+            <p className="rounded-xl border border-[#dbe7ff] bg-[#f5f8ff] px-3 py-2.5 text-sm leading-5 text-[#526173]">
+              Вместе с курсом будут перенесены его ученики, расписание, уроки, посещения, абонементы, оплаты и долги.
+              История старых кассовых смен остаётся в исходном филиале.
+            </p>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-[#273142]">Новый филиал *</label>
+              <select
+                value={targetBranchId}
+                onChange={(event) => {
+                  const nextBranchId = event.target.value;
+                  setTargetBranchId(nextBranchId);
+                  setTargetLevelId('');
+                  setTargetRoomId('');
+                }}
+                className="crm-input"
+              >
+                <option value="">Выберите филиал</option>
+                {transferBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-[#273142]">Уровень курса в новом филиале *</label>
+              <select
+                value={targetLevelId}
+                onChange={(event) => setTargetLevelId(event.target.value)}
+                disabled={!targetBranchId}
+                className="crm-input disabled:cursor-not-allowed disabled:bg-[#f3f5f7]"
+              >
+                <option value="">Выберите уровень</option>
+                {targetLevels.filter((level) => level.active).map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-[#273142]">Кабинет в новом филиале</label>
+              <select
+                value={targetRoomId}
+                onChange={(event) => setTargetRoomId(event.target.value)}
+                disabled={!targetBranchId}
+                className="crm-input disabled:cursor-not-allowed disabled:bg-[#f3f5f7]"
+              >
+                <option value="">Не назначать кабинет</option>
+                {targetRooms.map((targetRoom) => <option key={targetRoom.id} value={targetRoom.id}>{targetRoom.name}</option>)}
+              </select>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {!isTeacher ? <Modal
         isOpen={addModalOpen}
         onClose={() => {
           setAddModalOpen(false);
@@ -710,8 +939,85 @@ export default function ClassDetailsPage() {
               </div>
             )}
           </div>
+
+          {selectedStudentId ? (
+            <div className="space-y-3 rounded-xl border border-[#dbe2e8] bg-[#f8fbfd] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-sm font-medium text-[#273142]">Начало действия:</label>
+                <input
+                  type="date"
+                  value={enrollmentStartDate}
+                  onChange={(event) => setEnrollmentStartDate(event.target.value)}
+                  className="rounded-lg border border-[#cfd8e1] bg-white px-2.5 py-1.5 text-sm text-[#273142] focus:border-[#467aff] focus:outline-none"
+                />
+              </div>
+              <p className="text-xs text-[#8a93a3]">Можно выбрать прошедшую или будущую дату. До неё посещаемость недоступна.</p>
+              <div className="flex items-center justify-between gap-3 border-t border-[#e3e9ef] pt-3">
+                <label className="text-sm font-medium text-[#273142]">Скидка на курс:</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={studentDiscount || ''}
+                    onChange={(event) => {
+                      const val = parseInt(event.target.value, 10);
+                      setStudentDiscount(isNaN(val) ? 0 : Math.min(100, Math.max(0, val)));
+                    }}
+                    placeholder="0"
+                    className="w-16 rounded-lg border border-[#cfd8e1] bg-white px-2 py-1 text-center text-sm font-semibold text-[#273142] focus:border-[#467aff] focus:outline-none"
+                  />
+                  <span className="text-sm font-medium text-[#8a93a3]">%</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
-      </Modal>
+      </Modal> : null}
+
+      {!isTeacher ? (
+        <Modal
+          isOpen={Boolean(enrollmentDateModal)}
+          onClose={() => setEnrollmentDateModal(null)}
+          title={`Начало действия: ${enrollmentDateModal ? getStudentFullName(enrollmentDateModal.student) : ''}`}
+          footer={
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => setEnrollmentDateModal(null)}
+                disabled={updateEnrollmentDateMutation.loading}
+              >
+                Отмена
+              </Button>
+              <Button
+                onClick={() => void handleSaveEnrollmentDate()}
+                disabled={!enrollmentDateModal?.startDate || updateEnrollmentDateMutation.loading}
+              >
+                {updateEnrollmentDateMutation.loading ? 'Сохраняем...' : 'Сохранить'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[#5d6676]">
+                Дата начала действия в курсе *
+              </label>
+              <input
+                type="date"
+                value={enrollmentDateModal?.startDate || ''}
+                onChange={(e) =>
+                  setEnrollmentDateModal((prev) => (prev ? { ...prev, startDate: e.target.value } : prev))
+                }
+                className="crm-input"
+              />
+              <p className="mt-1.5 text-xs text-[#8a93a3]">
+                Дата будет синхронизирована с абонементом и членством в группе.
+              </p>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

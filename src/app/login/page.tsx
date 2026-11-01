@@ -4,9 +4,10 @@ import { FullScreenSignup } from '@/components/ui/full-screen-signup';
 import { useAuthStore } from '@/store/authStore';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { getDefaultAuthenticatedPath } from '@/lib/rbac';
 
 export default function LoginPage() {
-  const { isAuthenticated, loading, error, login, register, hydrate, clearError } = useAuthStore();
+  const { isAuthenticated, loading, error, login, register, hydrate, clearError, roles } = useAuthStore();
   const router = useRouter();
 
   useEffect(() => {
@@ -15,9 +16,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace('/');
+      router.replace(getDefaultAuthenticatedPath(roles));
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, roles, router]);
 
   if (isAuthenticated) {
     return null;
@@ -31,7 +32,7 @@ export default function LoginPage() {
         clearError();
         try {
           await login(username, password);
-          router.replace('/');
+          router.replace(getDefaultAuthenticatedPath(useAuthStore.getState().roles));
         } catch {
           // Error is stored in the auth store
         }
@@ -49,7 +50,7 @@ export default function LoginPage() {
             password,
             confirmPassword,
           });
-          router.replace('/');
+          router.replace(getDefaultAuthenticatedPath(useAuthStore.getState().roles));
         } catch {
           // Error is stored in the auth store
         }

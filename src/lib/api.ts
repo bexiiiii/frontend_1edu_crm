@@ -75,10 +75,15 @@ api.interceptors.request.use((config) => {
 
     if (branchId && config.headers) {
       const headers = config.headers as { set?: (name: string, value: string) => void } & Record<string, unknown>;
-      if (typeof headers.set === 'function') {
-        headers.set('X-Branch-ID', branchId);
-      } else {
-        headers['X-Branch-ID'] = branchId;
+      const explicitBranchId = typeof (headers as { get?: (name: string) => unknown }).get === 'function'
+        ? (headers as { get: (name: string) => unknown }).get('X-Branch-ID')
+        : headers['X-Branch-ID'] ?? headers['x-branch-id'];
+      if (!explicitBranchId) {
+        if (typeof headers.set === 'function') {
+          headers.set('X-Branch-ID', branchId);
+        } else {
+          headers['X-Branch-ID'] = branchId;
+        }
       }
     }
   }
@@ -443,7 +448,8 @@ export { lessonsService } from './api/lessons';
 export { attendanceService } from './api/attendance';
 export { leadsService } from './api/leads';
 export { tasksService } from './api/tasks';
-export { financeService, studentPaymentsService, salaryService, kpayInvoicesService, apiPayInvoicesService } from './api/finance';
+export { financeService, cashierService, studentPaymentsService, salaryService, kpayInvoicesService, apiPayInvoicesService } from './api/finance';
+export type { CashDailyReportDto, CashierPolicyDto, CashOperationDto, CashShiftDto } from './api/finance';
 export { filesService } from './api/files';
 export { subscriptionsService, priceListService } from './api/subscriptions';
 export { notificationsService } from './api/notifications';

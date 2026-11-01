@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Calendar, Edit, Trash2, User } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -96,7 +97,16 @@ export const TaskDetailModal = ({
             <label className="mb-1 block text-xs font-medium text-gray-500">Исполнитель</label>
             <div className="flex items-center gap-2 text-base text-gray-900">
               <User className="h-4 w-4 text-gray-400" />
-              <span>{task.assigneeName || 'Не назначен'}</span>
+              {task.assignedTo ? (
+                <Link
+                  href={`/staff/${task.assignedTo}`}
+                  className="text-[#467aff] hover:underline"
+                >
+                  {task.assigneeName || 'Не назначен'}
+                </Link>
+              ) : (
+                <span>{task.assigneeName || 'Не назначен'}</span>
+              )}
             </div>
           </div>
           <div>

@@ -110,6 +110,10 @@ export interface TenantDto {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
 }
 
 export interface UpdateTenantRequest {
@@ -143,6 +147,7 @@ export interface StudentDto {
   phone: string | null;
   birthDate: string | null;
   status: StudentStatus;
+  statusChangedAt: string | null;
   parentName: string | null;
   parentPhone: string | null;
   studentPhone: string | null;
@@ -155,6 +160,7 @@ export interface StudentDto {
   contract: string | null;
   discount: string | null;
   discountPercent: number | null;
+  discountAmount?: number | null;
   comment: string | null;
   stateOrderParticipant: boolean | null;
   loyalty: string | null;
@@ -225,8 +231,12 @@ export interface StaffDto {
   salary: number | null;
   salaryType: SalaryType;
   salaryPercentage: number | null;
+  individualSalaryPercentage?: number | null;
+  birthdate: string | null;
   hireDate: string | null;
   notes: string | null;
+  branchIds?: string[];
+  scheduleColor?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -243,8 +253,12 @@ export interface CreateStaffRequest {
   salary?: number;
   salaryType: SalaryType;
   salaryPercentage?: number | null;
+  individualSalaryPercentage?: number | null;
+  birthdate?: string;
   hireDate?: string;
   notes?: string;
+  branchIds?: string[];
+  scheduleColor?: string;
 }
 
 export interface UpdateStaffRequest extends Partial<CreateStaffRequest> {
@@ -260,19 +274,28 @@ export type CourseEnrollmentStatus = 'ACTIVE' | 'REMOVED';
 
 export interface CourseDto {
   id: string;
+  branchId?: string | null;
   type: CourseType;
   format: CourseFormat;
   name: string;
   description: string | null;
   basePrice: number | null;
+  totalLessons: number | null;
+  levelId: string;
+  levelName: string;
   enrollmentLimit: number | null;
   color: string | null;
   teacherId: string | null;
+  teacherIds: string[];
   roomId: string | null;
   studentIds: string[];
   status: CourseStatus;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
 }
 
 export interface CreateCourseRequest {
@@ -281,9 +304,12 @@ export interface CreateCourseRequest {
   name: string;
   description?: string;
   basePrice: number;
+  totalLessons?: number;
+  levelId: string;
   enrollmentLimit?: number;
   color?: string;
   teacherId?: string;
+  teacherIds?: string[];
   roomId?: string;
   studentIds?: string[];
 }
@@ -293,7 +319,9 @@ export interface UpdateCourseRequest extends Partial<CreateCourseRequest> {
 }
 
 export interface CourseEnrollmentDto {
+  enrollmentId: string;
   courseId: string;
+  studentId?: string;
   courseName: string | null;
   courseType: CourseType | null;
   courseStatus: CourseStatus | null;
@@ -302,6 +330,12 @@ export interface CourseEnrollmentDto {
   enrolledAt: string;
   removedAt: string | null;
   enrollmentStatus: CourseEnrollmentStatus;
+  createdAt: string;
+  createdBy: string | null;
+  createdByName: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+  updatedByName: string | null;
 }
 
 // ─── Schedule / Group ───────────────────────────────────────────
@@ -324,6 +358,10 @@ export interface ScheduleDto {
   status: ScheduleStatus;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
 }
 
 export interface CreateScheduleRequest {
@@ -384,6 +422,7 @@ export interface LessonDto {
   topic: string | null;
   homework: string | null;
   notes: string | null;
+  bonus: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -400,6 +439,8 @@ export interface CreateLessonRequest {
   topic?: string;
   homework?: string;
   notes?: string;
+  bonus?: boolean;
+  substituteTeacherId?: string | null;
 }
 
 // ─── Attendance ─────────────────────────────────────────────────
@@ -412,6 +453,7 @@ export type AttendanceStatus =
   | 'VACATION'
   | 'AUTO_ATTENDED'
   | 'ONE_TIME_VISIT'
+  | 'WITHDRAWN'
   | 'NOT_MARKED'
   | 'TRIAL';
 
@@ -427,18 +469,24 @@ export interface AttendanceDto {
 
 // ─── Lead ───────────────────────────────────────────────────────
 
-export type LeadStage = 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'TRIAL' | 'NEGOTIATION' | 'WON' | 'LOST';
+export type LeadStage = 'TESTS' | 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'TRIAL' | 'NEGOTIATION' | 'WON' | 'LOST';
 
 export interface LeadDto {
   id: string;
   firstName: string;
   lastName: string;
+  middleName: string | null;
   fullName: string;
   phone: string | null;
   email: string | null;
   stage: LeadStage;
   source: string | null;
   courseInterest: string | null;
+  formTitle: string | null;
+  testScore: number | null;
+  testMaxScore: number | null;
+  testLevel: string | null;
+  formData: string | null;
   notes: string | null;
   assignedTo: string | null;
   createdAt: string;
@@ -448,10 +496,16 @@ export interface LeadDto {
 export interface CreateLeadRequest {
   firstName: string;
   lastName: string;
+  middleName?: string;
   phone?: string;
   email?: string;
   source?: string;
   courseInterest?: string;
+  formTitle?: string;
+  testScore?: number;
+  testMaxScore?: number;
+  testLevel?: string;
+  formData?: string;
   notes?: string;
   assignedTo?: string;
 }
@@ -459,6 +513,7 @@ export interface CreateLeadRequest {
 export interface UpdateLeadRequest {
   firstName?: string;
   lastName?: string;
+  middleName?: string | null;
   phone?: string | null;
   email?: string | null;
   source?: string | null;
@@ -543,6 +598,13 @@ export interface CreateTransactionRequest {
 // ─── Subscription ───────────────────────────────────────────────
 
 export type SubscriptionStatus = 'ACTIVE' | 'EXPIRED' | 'CANCELLED' | 'FROZEN';
+export type SalaryDiscountMode = 'FULL_PRICE' | 'DISCOUNTED_PRICE';
+
+/** Период действия скидки по месяцам (YYYY-MM, включительно). Пусто — без ограничения. */
+export interface DiscountPeriod {
+  fromMonth?: string | null;
+  toMonth?: string | null;
+}
 
 export interface SubscriptionDto {
   id: string;
@@ -558,7 +620,13 @@ export interface SubscriptionDto {
   amount: number;
   currency: string;
   status: SubscriptionStatus;
+  cancelledAt: string | null;
   discountPercent: number | null;
+  discountAmount?: number | null;
+  /** Период действия скидки, YYYY-MM (включительно); null — без ограничения */
+  discountFromMonth?: string | null;
+  discountToMonth?: string | null;
+  salaryDiscountMode: SalaryDiscountMode;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -673,6 +741,18 @@ export interface StaffStatusConfigDto {
   active: boolean;
   createdAt: string;
   updatedAt: string | null;
+}
+
+export interface CourseLevelConfigDto {
+  id: string;
+  name: string;
+  color: string | null;
+  sortOrder: number;
+  active: boolean;
+  systemLevel: boolean;
+  branchId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface FinanceCategoryConfigDto {
@@ -1219,16 +1299,53 @@ export interface SubscriptionPaymentSummaryDto {
   endDate: string | null;
   subscriptionStatus: SubscriptionStatus;
   discountPercent?: number | null;
+  discountFromMonth?: string | null;
+  discountToMonth?: string | null;
   totalPaid: number;
+  /** Долг после зачёта аванса */
   totalDebt: number;
+  /** Долг до зачёта аванса */
+  grossDebt?: number;
+  /** Сколько аванса зачтено в счёт этой подписки */
+  advanceApplied?: number;
+  /** Цена занятия для индивидуальных курсов (до деления между учениками) */
+  lessonPrice?: number | null;
   months: MonthlyBreakdownDto[];
 }
 
 export interface StudentPaymentHistoryResponse {
   studentId: string;
+  /** Долг после зачёта аванса */
   totalDebt: number;
+  /** Долг до зачёта аванса */
+  grossDebt?: number;
+  /** Сколько аванса зачтено в счёт долга */
+  advanceApplied?: number;
   totalPaid: number;
+  /** Остаток аванса после зачёта долга */
+  studentBalance?: number;
+  balancePayments?: StudentPaymentDto[];
   subscriptions: SubscriptionPaymentSummaryDto[];
+  /** Удалённые платежи — не влияют на суммы выше, показываются как "Удалено" в истории */
+  deletedPayments?: StudentPaymentDto[];
+}
+
+/** Начисление за конкретное занятие: за какой урок берётся оплата и сколько. */
+export interface StudentAttendanceChargeDto {
+  lessonId: string | null;
+  subscriptionId: string;
+  lessonDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  groupName: string;
+  courseName: string;
+  status: string;
+  paymentMonth: string;
+  billable: boolean;
+  chargedAmount: number;
+  splitCount: number | null;
+  lessonPrice: number;
+  note: string | null;
 }
 
 export interface MonthlyOverviewResponse {
@@ -1247,8 +1364,14 @@ export interface MonthlyStudentDto {
   studentId: string;
   subscriptionId: string;
   expected: number;
+  /** Оплачено, включая зачтённый аванс */
   paid: number;
+  /** Остаток к оплате после зачёта аванса */
   debt: number;
+  /** Долг до зачёта аванса */
+  grossDebt?: number;
+  /** Сколько аванса зачтено */
+  advanceApplied?: number;
   status: StudentPaymentMonthStatus;
   discountPercent?: number | null;
 }
@@ -1260,6 +1383,9 @@ export interface StudentDebtDto {
   debtMonths: number;
   monthlyExpected: number;
   discountPercent?: number | null;
+  fullName?: string | null;
+  grossDebt?: number | null;
+  advanceApplied?: number | null;
 }
 
 export interface SalaryPaymentDto {
@@ -1310,6 +1436,32 @@ export interface SalaryMonthBreakdownDto {
   dueAmount: number;
   paidAmount: number;
   outstandingAmount: number;
+  lessons: SalaryLessonBreakdownDto[];
+}
+
+export interface SalaryLessonBreakdownDto {
+  lessonId: string;
+  lessonDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  branchId: string | null;
+  courseId: string | null;
+  courseName: string | null;
+  scheduleName: string | null;
+  actualTeacherId: string | null;
+  actualTeacherName: string | null;
+  plannedTeacherId: string | null;
+  plannedTeacherName: string | null;
+  substitution: boolean;
+  courseType: string | null;
+  coursePrice: number;
+  lessonQuota: number;
+  payableStudentCount: number;
+  dailyBaseAmount: number;
+  dueAmount: number;
+  excludedFromSalary: boolean;
+  exclusionReason: string | null;
+  excludedAt: string | null;
 }
 
 export interface StaffSalaryHistoryDto {
@@ -1425,6 +1577,9 @@ export interface StudentPaymentDto {
   id: string;
   studentId: string;
   subscriptionId: string;
+  paymentScope?: 'SUBSCRIPTION_PAYMENT' | 'BALANCE_TOP_UP' | 'BALANCE_ALLOCATION' | 'BALANCE_REFUND';
+  fromBalance?: boolean;
+  paymentSource?: string | null;
   amount: number;
   paidAt: string;
   paymentMonth: string;
@@ -1433,6 +1588,18 @@ export interface StudentPaymentDto {
   amountChangeReasonOther: string | null;
   notes: string | null;
   createdAt: string;
+  createdBy?: string | null;
+  cashierName?: string | null;
+  deleted?: boolean;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+}
+
+export interface RefundStudentBalanceRequest {
+  amount: number;
+  refundDate?: string;
+  method?: PaymentMethod;
+  notes?: string;
 }
 
 export interface CreateStudentPaymentRequest {

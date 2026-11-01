@@ -1,17 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Eye, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { Eye, Loader2, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { PhoneInputWithCountry } from '@/components/ui/PhoneInputWithCountry';
 import { Select } from '@/components/ui/Select';
 import {
-  leadsService,
-  staffService,
-  type CreateLeadRequest,
-  type UpdateLeadRequest,
+	leadsService,
+	staffService,
+	studentsService,
+	type CreateLeadRequest,
+	type CreateStudentRequest,
+	type UpdateLeadRequest,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { LeadDto, LeadStage } from '@/lib/api/types';
@@ -20,6 +23,7 @@ import { useAuthStore } from '@/store/authStore';
 type LeadFormValues = {
   firstName: string;
   lastName: string;
+  middleName: string;
   phone: string;
   email: string;
   source: string;
@@ -43,10 +47,27 @@ type LeadColumn = {
   leads: LeadBoardCard[];
 };
 
+type KanbanColumnPreferences = {
+  titles: Partial<Record<LeadStage, string>>;
+  hiddenStages: LeadStage[];
+};
+
+const DEFAULT_COLUMN_PREFERENCES: KanbanColumnPreferences = {
+  titles: {},
+  hiddenStages: [],
+};
+
 const PHONE_WITH_COUNTRY_REGEX = /^\+[1-9]\d{7,14}$/;
 const EMAIL_LATIN_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 const STAGE_COLUMNS: Omit<LeadColumn, 'leads'>[] = [
+  {
+    stage: 'TESTS',
+    title: 'Тесты',
+    titleTone: 'border border-[#cbd5ff] bg-[#eff2ff] text-[#4d5fc0]',
+    accent: 'bg-[#f7f8ff]',
+    emptyLabel: 'Результатов тестов пока нет',
+  },
   {
     stage: 'NEW',
     title: 'Новый лид',
@@ -98,13 +119,76 @@ const STAGE_COLUMNS: Omit<LeadColumn, 'leads'>[] = [
   },
 ];
 
-function getLeadFullName(lead: Pick<LeadDto, 'fullName' | 'firstName' | 'lastName'>): string {
-  if (lead.fullName?.trim()) {
-    return lead.fullName.trim();
+function getLeadFullName(lead: Pick<LeadDto, 'fullName' | 'firstName' | 'lastName' | 'middleName'>): string {
+  const fallback = [lead.lastName, lead.firstName, lead.middleName].filter(Boolean).join(' ').trim();
+  if (fallback) return fallback;
+  if (lead.fullName?.trim()) return lead.fullName.trim();
+  return fallback || 'Без имени';
+}
+
+type FormDataField = { key?: string; label: string; value: string };
+
+function parseFormData(value?: string | null): FormDataField[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is FormDataField =>
+        Boolean(item) && typeof item === 'object' && typeof (item as FormDataField).label === 'string' && typeof (item as FormDataField).value === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function isRegistrationLead(lead: LeadDto) {
+  if (lead.source !== 'WEB_FORM') return false;
+  const formIdentity = `${lead.formTitle || ''} ${lead.courseInterest || ''}`;
+  return /регистрац|тіркеу/i.test(formIdentity);
+}
+
+function findFormValue(fields: FormDataField[], key: string, labelPattern: RegExp) {
+  return fields.find((field) => field.key === key)?.value
+    || fields.find((field) => labelPattern.test(field.label))?.value
+    || '';
+}
+
+function toStudentPayload(lead: LeadBoardCard): CreateStudentRequest {
+  const fields = parseFormData(lead.formData);
+  const parentName = findFormValue(fields, 'parent_name_1', /родитель\s*\(i\)|ата-ана.*\(i\)/i);
+  const parentPhone = findFormValue(fields, 'parent_phone_1', /номер телефона\s*\(i\)|телефон.*\(i\)/i);
+  const secondParentName = findFormValue(fields, 'parent_name_2', /родитель\s*\(ii\)|ата-ана.*\(ii\)/i);
+  const secondParentPhone = findFormValue(fields, 'parent_phone_2', /номер телефона\s*\(ii\)|телефон.*\(ii\)/i);
+  const mappedKeys = new Set(['birth_date', 'address', 'parent_name_1', 'parent_phone_1', 'parent_name_2', 'parent_phone_2', 'school_name', 'grade', 'comments']);
+  const remainingFormData = fields
+    .filter((field) => !field.key || !mappedKeys.has(field.key))
+    .map((field) => `${field.label}: ${field.value}`);
+  if (secondParentName || secondParentPhone) {
+    remainingFormData.push(`Второй родитель: ${[secondParentName, secondParentPhone].filter(Boolean).join(', ')}`);
+  }
+  if (lead.courseInterest) {
+    remainingFormData.unshift(`Интерес к курсу: ${lead.courseInterest}`);
   }
 
-  const fallback = [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim();
-  return fallback || 'Без имени';
+  return {
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    middleName: lead.middleName || undefined,
+    phone: lead.phone || undefined,
+    studentPhone: lead.phone || undefined,
+    email: lead.email || undefined,
+    birthDate: findFormValue(fields, 'birth_date', /туылған күні|день рождения/i) || undefined,
+    address: findFormValue(fields, 'address', /мекен-жайы|адрес/i) || undefined,
+    parentName: parentName || undefined,
+    parentPhone: parentPhone || undefined,
+    school: findFormValue(fields, 'school_name', /мектеп|школа|жұмыс орны/i) || undefined,
+    grade: findFormValue(fields, 'grade', /сынып|класс/i) || undefined,
+    comment: findFormValue(fields, 'comments', /сұрақтар|вопросы.*предложения/i) || undefined,
+    additionalPhones: secondParentPhone ? [secondParentPhone] : undefined,
+    additionalInfo: remainingFormData.join('\n') || undefined,
+    notes: lead.notes || undefined,
+  };
 }
 
 function getStaffFullName(staff: {
@@ -113,11 +197,9 @@ function getStaffFullName(staff: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ');
+  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ').trim()
+    || staff.fullName?.trim()
+    || '';
 }
 
 function formatDateTime(value?: string | null) {
@@ -160,6 +242,7 @@ function getDefaultLeadForm(stage: LeadStage = 'NEW'): LeadFormValues {
   return {
     firstName: '',
     lastName: '',
+    middleName: '',
     phone: '',
     email: '',
     source: '',
@@ -174,6 +257,7 @@ function toFormValues(lead: LeadBoardCard): LeadFormValues {
   return {
     firstName: lead.firstName || '',
     lastName: lead.lastName || '',
+    middleName: lead.middleName || '',
     phone: lead.phone || '',
     email: lead.email || '',
     source: lead.source || '',
@@ -188,6 +272,7 @@ function buildCreatePayload(values: LeadFormValues): CreateLeadRequest {
   return {
     firstName: values.firstName.trim(),
     lastName: values.lastName.trim(),
+    middleName: values.middleName.trim() || undefined,
     phone: values.phone.trim() || undefined,
     email: values.email.trim() || undefined,
     source: values.source.trim() || undefined,
@@ -207,6 +292,7 @@ function buildUpdatePayload(values: LeadFormValues): UpdateLeadRequest {
   return {
     firstName: values.firstName.trim(),
     lastName: values.lastName.trim(),
+    middleName: values.middleName.trim() || null,
     phone: phone || null,
     email: email || null,
     source: source || null,
@@ -222,25 +308,31 @@ function LeadCardItem({
   onOpen,
   onDelete,
   onChangeStage,
+  onConvert,
+  stageOptions,
   isMovingStage,
   isDeleting,
+  isConverting,
 }: {
   lead: LeadBoardCard;
   onOpen: (lead: LeadBoardCard) => void;
   onDelete: (lead: LeadBoardCard) => void;
   onChangeStage: (lead: LeadBoardCard, stage: LeadStage) => void;
+  onConvert: (lead: LeadBoardCard) => void;
+  stageOptions: Array<Pick<LeadColumn, 'stage' | 'title'>>;
   isMovingStage: boolean;
   isDeleting: boolean;
+  isConverting: boolean;
 }) {
   return (
     <article
-      draggable={!isMovingStage && !isDeleting}
+      draggable={!isMovingStage && !isDeleting && !isConverting}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', lead.id);
         e.dataTransfer.effectAllowed = 'move';
       }}
       className={`rounded-xl border border-[#dbe4ec] bg-white p-4 shadow-[0_1px_2px_rgba(14,23,38,0.06)] cursor-grab active:cursor-grabbing ${
-        isMovingStage || isDeleting ? 'opacity-50 pointer-events-none' : ''
+        isMovingStage || isDeleting || isConverting ? 'opacity-50 pointer-events-none' : ''
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -263,9 +355,35 @@ function LeadCardItem({
       </div>
 
       <dl className="mt-4 space-y-2 text-xs text-[#3f4a59]">
+        {lead.formTitle ? (
+          <div className="flex items-start justify-between gap-3">
+            <dt className="text-[#8a93a3]">Форма</dt>
+            <dd className="text-right font-medium">{lead.formTitle}</dd>
+          </div>
+        ) : null}
+        {lead.testLevel || lead.testScore !== null ? (
+          <div className="rounded-lg border border-[#dce4ff] bg-[#f6f8ff] px-3 py-2 text-[#4253af]">
+            <div className="flex items-center justify-between gap-3 font-semibold">
+              <span>{lead.testLevel || 'Результат теста'}</span>
+              <span>{lead.testScore ?? 0}/{lead.testMaxScore ?? 0}</span>
+            </div>
+          </div>
+        ) : null}
         <div className="flex items-start justify-between gap-3">
           <dt className="text-[#8a93a3]">Ответственный</dt>
-          <dd className="text-right font-medium">{lead.assignedToName}</dd>
+          <dd className="text-right font-medium">
+            {lead.assignedTo ? (
+              <Link
+                href={`/staff/${lead.assignedTo}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-[#467aff] hover:underline"
+              >
+                {lead.assignedToName}
+              </Link>
+            ) : (
+              lead.assignedToName
+            )}
+          </dd>
         </div>
         <div className="flex items-start justify-between gap-3">
           <dt className="text-[#8a93a3]">Источник</dt>
@@ -294,7 +412,7 @@ function LeadCardItem({
           disabled={isMovingStage}
           className="h-9 flex-1 rounded-lg border border-[#dbe4ec] bg-white px-3 text-sm text-[#3d4756] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {STAGE_COLUMNS.map((stage) => (
+          {stageOptions.map((stage) => (
             <option key={stage.stage} value={stage.stage}>
               {stage.title}
             </option>
@@ -313,6 +431,18 @@ function LeadCardItem({
         </button>
       </div>
 
+      {isRegistrationLead(lead) ? (
+        <button
+          type="button"
+          onClick={() => onConvert(lead)}
+          disabled={isConverting}
+          className="mt-2 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#a9dfc0] bg-[#f1fbf5] px-3 text-sm font-semibold text-[#187346] transition-colors hover:bg-[#e3f7eb] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isConverting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+          {isConverting ? 'Создаём ученика...' : 'Создать ученика'}
+        </button>
+      ) : null}
+
       <div className="mt-3 border-t border-[#edf1f5] pt-3 text-[11px] text-[#8a93a3]">
         Обновлено {formatDateTime(lead.updatedAt)}
       </div>
@@ -326,34 +456,96 @@ function LeadColumnCard({
   onOpenLead,
   onDeleteLead,
   onChangeStage,
+  onConvertLead,
   onDropLead,
   activeStageId,
   activeDeleteId,
+  activeConvertId,
+  canManageColumns,
+  onRenameColumn,
+  onRemoveColumn,
+  stageOptions,
 }: {
   column: LeadColumn;
   onAddLead: (stage: LeadStage) => void;
   onOpenLead: (lead: LeadBoardCard) => void;
   onDeleteLead: (lead: LeadBoardCard) => void;
   onChangeStage: (lead: LeadBoardCard, stage: LeadStage) => void;
+  onConvertLead: (lead: LeadBoardCard) => void;
   onDropLead: (leadId: string, stage: LeadStage) => void;
   activeStageId: string | null;
   activeDeleteId: string | null;
+  activeConvertId: string | null;
+  canManageColumns: boolean;
+  onRenameColumn: (stage: LeadStage, title: string) => void;
+  onRemoveColumn: (stage: LeadStage) => void;
+  stageOptions: Array<Pick<LeadColumn, 'stage' | 'title'>>;
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(column.title);
+
+  useEffect(() => {
+    setDraftTitle(column.title);
+  }, [column.title]);
+
+  const saveTitle = () => {
+    const nextTitle = draftTitle.trim();
+    if (nextTitle) {
+      onRenameColumn(column.stage, nextTitle);
+    } else {
+      setDraftTitle(column.title);
+    }
+    setIsEditingTitle(false);
+  };
 
   return (
     <section className="flex h-full w-72 shrink-0 flex-col rounded-2xl border border-[#dfe6ed] bg-[#f8fafc] p-3 sm:w-80 lg:w-85">
       <header className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <h2
-            className={`inline-flex min-h-7 items-center rounded-lg px-2.5 text-xs font-semibold ${column.titleTone}`}
-          >
-            {column.title}
-          </h2>
+          {isEditingTitle ? (
+            <input
+              autoFocus
+              value={draftTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') saveTitle();
+                if (event.key === 'Escape') {
+                  setDraftTitle(column.title);
+                  setIsEditingTitle(false);
+                }
+              }}
+              aria-label="Название статуса"
+              className="h-7 w-35 rounded-lg border border-[#86a8ff] bg-white px-2 text-xs font-semibold text-[#2d4e9d] outline-none ring-2 ring-[#dbe7ff]"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => canManageColumns && setIsEditingTitle(true)}
+              disabled={!canManageColumns}
+              title={canManageColumns ? 'Нажмите, чтобы переименовать статус' : column.title}
+              className={`inline-flex min-h-7 items-center gap-1 rounded-lg px-2.5 text-xs font-semibold ${column.titleTone} ${canManageColumns ? 'cursor-text hover:brightness-[0.98]' : ''}`}
+            >
+              {column.title}
+              {canManageColumns ? <Pencil className="h-3 w-3 opacity-65" /> : null}
+            </button>
+          )}
           <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-white px-1.5 text-xs font-semibold text-[#5e6a7a]">
             {column.leads.length}
           </span>
         </div>
+        {canManageColumns && column.stage !== 'NEW' ? (
+          <button
+            type="button"
+            onClick={() => onRemoveColumn(column.stage)}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[#9aa4b2] transition-colors hover:bg-[#fff0f1] hover:text-[#d25563]"
+            aria-label={`Удалить колонку «${column.title}»`}
+            title="Удалить колонку"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
       </header>
 
       <button
@@ -399,8 +591,11 @@ function LeadColumnCard({
                 onOpen={onOpenLead}
                 onDelete={onDeleteLead}
                 onChangeStage={onChangeStage}
+                onConvert={onConvertLead}
+                stageOptions={stageOptions}
                 isMovingStage={activeStageId === lead.id}
                 isDeleting={activeDeleteId === lead.id}
+                isConverting={activeConvertId === lead.id}
               />
             ))
           ) : (
@@ -419,24 +614,33 @@ function LeadFormModal({
   onClose,
   onSave,
   onDelete,
+  onConvert,
   initialValues,
+  formLead,
   assignees,
   isSubmitting,
   isDeleting,
+  isConverting,
   title,
+  stageOptions,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSave: (values: LeadFormValues) => Promise<void>;
   onDelete?: () => Promise<void>;
+  onConvert?: () => Promise<void>;
   initialValues: LeadFormValues;
+  formLead: LeadBoardCard | null;
   assignees: Array<{ id: string; name: string }>;
   isSubmitting: boolean;
   isDeleting: boolean;
+  isConverting: boolean;
   title: string;
+  stageOptions: Array<Pick<LeadColumn, 'stage' | 'title'>>;
 }) {
   const [firstName, setFirstName] = useState(initialValues.firstName);
   const [lastName, setLastName] = useState(initialValues.lastName);
+  const [middleName, setMiddleName] = useState(initialValues.middleName);
   const [phone, setPhone] = useState(initialValues.phone);
   const [email, setEmail] = useState(initialValues.email);
   const [source, setSource] = useState(initialValues.source);
@@ -483,6 +687,7 @@ function LeadFormModal({
       await onSave({
         firstName,
         lastName,
+        middleName,
         phone: normalizedPhone,
         email: normalizedEmail,
         source,
@@ -510,6 +715,18 @@ function LeadFormModal({
     }
   };
 
+  const handleConvert = async () => {
+    if (!onConvert || !confirm('Создать ученика из этой регистрационной заявки? Все данные формы будут перенесены, а лид исчезнет с Kanban.')) {
+      return;
+    }
+    setError(null);
+    try {
+      await onConvert();
+    } catch (submitError) {
+      setError(getErrorMessage(submitError, 'Не удалось создать ученика из лида.'));
+    }
+  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -527,10 +744,21 @@ function LeadFormModal({
               {isDeleting ? 'Удаляем...' : 'Удалить'}
             </button>
           ) : null}
-          <Button variant="ghost" onClick={onClose} disabled={isSubmitting || isDeleting}>
+          {onConvert ? (
+            <button
+              type="button"
+              onClick={handleConvert}
+              disabled={isSubmitting || isDeleting || isConverting}
+              className="mr-auto inline-flex h-10 items-center gap-2 rounded-xl border border-[#a9dfc0] bg-[#f1fbf5] px-4 text-sm font-semibold text-[#187346] transition-colors hover:bg-[#e3f7eb] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isConverting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+              {isConverting ? 'Создаём ученика...' : 'Создать ученика'}
+            </button>
+          ) : null}
+          <Button variant="ghost" onClick={onClose} disabled={isSubmitting || isDeleting || isConverting}>
             Отмена
           </Button>
-          <Button onClick={handleSave} disabled={isSubmitting || isDeleting}>
+          <Button onClick={handleSave} disabled={isSubmitting || isDeleting || isConverting}>
             {isSubmitting ? 'Сохраняем...' : 'Сохранить'}
           </Button>
         </>
@@ -551,6 +779,13 @@ function LeadFormModal({
             placeholder="Например, Иванова"
           />
         </div>
+
+        <Input
+          label="Отчество"
+          value={middleName}
+          onChange={(event) => setMiddleName(event.target.value)}
+          placeholder="Например, Сергеевна"
+        />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <PhoneInputWithCountry
@@ -576,6 +811,30 @@ function LeadFormModal({
           />
         </div>
 
+        {formLead?.source === 'WEB_FORM' ? (
+          <section className="rounded-xl border border-[#dbe4ec] bg-[#f8fbfd] p-4">
+            <h3 className="text-sm font-semibold text-[#263343]">Данные из формы</h3>
+            <p className="mt-1 text-xs text-[#718096]">{formLead.formTitle || formLead.courseInterest || 'Форма с сайта'}</p>
+            {formLead.testLevel || formLead.testScore !== null ? (
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="rounded-lg bg-white px-3 py-2"><p className="text-[11px] text-[#8a93a3]">Уровень</p><p className="mt-0.5 text-sm font-semibold text-[#3647a5]">{formLead.testLevel || '—'}</p></div>
+                <div className="rounded-lg bg-white px-3 py-2"><p className="text-[11px] text-[#8a93a3]">Баллы</p><p className="mt-0.5 text-sm font-semibold text-[#3647a5]">{formLead.testScore ?? 0}</p></div>
+                <div className="rounded-lg bg-white px-3 py-2"><p className="text-[11px] text-[#8a93a3]">Максимум</p><p className="mt-0.5 text-sm font-semibold text-[#3647a5]">{formLead.testMaxScore ?? 0}</p></div>
+              </div>
+            ) : null}
+            {parseFormData(formLead.formData).length > 0 ? (
+              <dl className="mt-3 divide-y divide-[#e6edf3] overflow-hidden rounded-lg border border-[#e1e9f0] bg-white">
+                {parseFormData(formLead.formData).map((field, index) => (
+                  <div key={`${field.label}-${index}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] gap-3 px-3 py-2 text-sm">
+                    <dt className="text-[#718096]">{field.label}</dt>
+                    <dd className="break-words text-right font-medium text-[#2d3748]">{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </section>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
             label="Источник"
@@ -593,7 +852,7 @@ function LeadFormModal({
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Select label="Стадия" value={stage} onChange={(event) => setStage(event.target.value as LeadStage)}>
-            {STAGE_COLUMNS.map((column) => (
+            {stageOptions.map((column) => (
               <option key={column.stage} value={column.stage}>
                 {column.title}
               </option>
@@ -641,17 +900,25 @@ export default function KanbanPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
   const [activeDeleteId, setActiveDeleteId] = useState<string | null>(null);
+  const [activeConvertId, setActiveConvertId] = useState<string | null>(null);
+  const [columnPreferences, setColumnPreferences] = useState<KanbanColumnPreferences>(DEFAULT_COLUMN_PREFERENCES);
+  const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
+  const boardScrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const [boardScrollWidth, setBoardScrollWidth] = useState(0);
   const [modalState, setModalState] = useState<{
     key: number;
     isOpen: boolean;
     leadId: string | null;
     initialValues: LeadFormValues;
+    formLead: LeadBoardCard | null;
     title: string;
   }>({
     key: 0,
     isOpen: false,
     leadId: null,
     initialValues: getDefaultLeadForm(),
+    formLead: null,
     title: 'Добавить лид',
   });
   useEffect(() => {
@@ -671,13 +938,69 @@ export default function KanbanPage() {
     };
   }, [search]);
 
-  const { roles, permissions } = useAuthStore();
-  const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
+  const { roles, permissions, tenantId, user, userEmail } = useAuthStore();
+  const columnStorageKey = `1edu:kanban-columns:${tenantId || 'current-tenant'}`;
+
+  const canViewStaff = roles.includes('TENANT_ADMIN') || roles.includes('SUPER_ADMIN') || roles.includes('MANAGER') || permissions.includes('STAFF_VIEW');
 
   const { data: staffPage } = useApi(
     () => (canViewStaff ? staffService.getAll({ page: 0, size: 500 }) : Promise.resolve({ content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 })),
     [canViewStaff]
   );
+
+  const isManager = useMemo(() => {
+    if (roles.includes('MANAGER') || user?.roles?.includes('MANAGER')) return true;
+    if (roles.some((r) => r.toUpperCase().includes('MANAGER'))) return true;
+
+    const staffList = staffPage?.content ?? [];
+    if (user?.staffId) {
+      const staffMember = staffList.find((s) => s.id === user.staffId);
+      if (staffMember?.role === 'MANAGER') return true;
+    }
+    const emailToMatch = userEmail || user?.email;
+    if (emailToMatch) {
+      const staffMember = staffList.find(
+        (s) => s.email && s.email.trim().toLowerCase() === emailToMatch.trim().toLowerCase()
+      );
+      if (staffMember?.role === 'MANAGER') return true;
+    }
+
+    return false;
+  }, [roles, user, userEmail, staffPage?.content]);
+
+  // Менеджерам запрещено редактировать названия, удалять или добавлять/восстанавливать колонки
+  const canManageColumns = !isManager && (roles.includes('TENANT_ADMIN') || roles.includes('SUPER_ADMIN'));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const rawValue = window.localStorage.getItem(columnStorageKey);
+      if (!rawValue) {
+        setColumnPreferences(DEFAULT_COLUMN_PREFERENCES);
+        return;
+      }
+      const parsed = JSON.parse(rawValue) as Partial<KanbanColumnPreferences>;
+      const validStages = new Set(STAGE_COLUMNS.map((column) => column.stage));
+      setColumnPreferences({
+        titles: Object.fromEntries(
+          Object.entries(parsed.titles || {}).filter(([stage, title]) => validStages.has(stage as LeadStage) && typeof title === 'string')
+        ) as Partial<Record<LeadStage, string>>,
+        hiddenStages: Array.isArray(parsed.hiddenStages)
+          ? parsed.hiddenStages.filter((stage): stage is LeadStage => validStages.has(stage as LeadStage) && stage !== 'NEW')
+          : [],
+      });
+    } catch {
+      setColumnPreferences(DEFAULT_COLUMN_PREFERENCES);
+    }
+  }, [columnStorageKey]);
+
+  const saveColumnPreferences = (next: KanbanColumnPreferences) => {
+    if (!canManageColumns) return;
+    setColumnPreferences(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(columnStorageKey, JSON.stringify(next));
+    }
+  };
 
   const staffOptions = useMemo(
     () =>
@@ -706,6 +1029,7 @@ export default function KanbanPage() {
     leadsService.moveStage(id, stage)
   );
   const deleteMutation = useMutation((id: string) => leadsService.delete(id));
+  const createStudentMutation = useMutation((data: CreateStudentRequest) => studentsService.create(data));
 
   const leads = useMemo<LeadBoardCard[]>(
     () =>
@@ -717,7 +1041,7 @@ export default function KanbanPage() {
     [leadsPage, staffMap]
   );
 
-  const columns = useMemo<LeadColumn[]>(() => {
+  const allColumns = useMemo<LeadColumn[]>(() => {
     const leadsByStage = new Map<LeadStage, LeadBoardCard[]>();
 
     for (const lead of leads) {
@@ -728,9 +1052,46 @@ export default function KanbanPage() {
 
     return STAGE_COLUMNS.map((column) => ({
       ...column,
+      title: columnPreferences.titles[column.stage]?.trim() || column.title,
       leads: leadsByStage.get(column.stage) ?? [],
     }));
-  }, [leads]);
+  }, [columnPreferences.titles, leads]);
+
+  const columns = useMemo(
+    () => allColumns.filter((column) => !columnPreferences.hiddenStages.includes(column.stage)),
+    [allColumns, columnPreferences.hiddenStages]
+  );
+  const hiddenColumns = useMemo(
+    () => allColumns.filter((column) => columnPreferences.hiddenStages.includes(column.stage)),
+    [allColumns, columnPreferences.hiddenStages]
+  );
+
+  const stageOptions = useMemo(
+    () => allColumns.map(({ stage, title }) => ({ stage, title })),
+    [allColumns]
+  );
+
+  useEffect(() => {
+    const board = boardScrollRef.current;
+    if (!board) return;
+    const updateWidth = () => setBoardScrollWidth(board.scrollWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, [columns.length, loading]);
+
+  const syncTopScroll = () => {
+    const top = topScrollRef.current;
+    const board = boardScrollRef.current;
+    if (top && board && board.scrollLeft !== top.scrollLeft) board.scrollLeft = top.scrollLeft;
+  };
+
+  const syncBoardScroll = () => {
+    const top = topScrollRef.current;
+    const board = boardScrollRef.current;
+    if (top && board && top.scrollLeft !== board.scrollLeft) top.scrollLeft = board.scrollLeft;
+  };
 
   const closeModal = () => {
     setModalState((previous) => ({
@@ -747,6 +1108,7 @@ export default function KanbanPage() {
       isOpen: true,
       leadId: null,
       initialValues: getDefaultLeadForm(stage),
+      formLead: null,
       title: 'Добавить лид',
     }));
   };
@@ -758,6 +1120,7 @@ export default function KanbanPage() {
       isOpen: true,
       leadId: lead.id,
       initialValues: toFormValues(lead),
+      formLead: lead,
       title: 'Редактировать лид',
     }));
   };
@@ -840,6 +1203,27 @@ export default function KanbanPage() {
     }
   };
 
+  const handleConvertRegistrationLead = async (lead: LeadBoardCard) => {
+    if (!isRegistrationLead(lead)) return;
+    setPageError(null);
+    setActiveConvertId(lead.id);
+    try {
+      await createStudentMutation.mutate(toStudentPayload(lead));
+      try {
+        await deleteMutation.mutate(lead.id);
+      } catch (deleteError) {
+        throw new Error(`Ученик создан, но лид пока не удалён. Удалите лид вручную, чтобы не создать дубль. ${getErrorMessage(deleteError, '')}`.trim());
+      }
+      if (modalState.leadId === lead.id) closeModal();
+      await refetch();
+    } catch (convertError) {
+      setPageError(getErrorMessage(convertError, 'Не удалось создать ученика из регистрационной заявки.'));
+      throw convertError;
+    } finally {
+      setActiveConvertId(null);
+    }
+  };
+
   const handleDropLead = async (leadId: string, stage: LeadStage) => {
     const lead = leads.find((l) => l.id === leadId);
     if (!lead || lead.stage === stage) return;
@@ -847,9 +1231,50 @@ export default function KanbanPage() {
     await handleMoveLeadStage(lead, stage);
   };
 
+  const handleRenameColumn = (stage: LeadStage, title: string) => {
+    if (!canManageColumns) return;
+    saveColumnPreferences({
+      ...columnPreferences,
+      titles: { ...columnPreferences.titles, [stage]: title },
+    });
+  };
+
+  const handleHideColumn = async (stage: LeadStage) => {
+    if (!canManageColumns || stage === 'NEW') return;
+    const target = allColumns.find((column) => column.stage === stage);
+    const affectedLeads = leads.filter((lead) => lead.stage === stage);
+    const message = affectedLeads.length > 0
+      ? `В колонке «${target?.title || 'Статус'}» ${affectedLeads.length} лид(ов). Они будут переведены в «Новый лид», после чего колонка исчезнет. Продолжить?`
+      : `Удалить колонку «${target?.title || 'Статус'}» с доски?`;
+    if (!confirm(message)) return;
+
+    setPageError(null);
+    try {
+      for (const lead of affectedLeads) {
+        await moveStageMutation.mutate({ id: lead.id, stage: 'NEW' });
+      }
+      saveColumnPreferences({
+        ...columnPreferences,
+        hiddenStages: [...new Set([...columnPreferences.hiddenStages, stage])],
+      });
+      await refetch();
+    } catch (moveError) {
+      setPageError(getErrorMessage(moveError, 'Не удалось перенести лиды и удалить колонку.'));
+    }
+  };
+
+  const handleRestoreColumn = (stage: LeadStage) => {
+    if (!canManageColumns) return;
+    saveColumnPreferences({
+      ...columnPreferences,
+      hiddenStages: columnPreferences.hiddenStages.filter((item) => item !== stage),
+    });
+  };
+
   const totalLeads = leads.length;
   const modalIsSubmitting = createMutation.loading || updateMutation.loading;
   const modalIsDeleting = deleteMutation.loading && activeDeleteId === modalState.leadId;
+  const modalIsConverting = activeConvertId === modalState.leadId;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
@@ -880,6 +1305,11 @@ export default function KanbanPage() {
             <Button variant="secondary" onClick={() => void refetch()} disabled={loading} className="w-full sm:w-auto">
               Обновить
             </Button>
+            {canManageColumns ? (
+              <Button variant="secondary" onClick={() => setIsColumnManagerOpen((value) => !value)} className="w-full sm:w-auto">
+                Колонки
+              </Button>
+            ) : null}
             <Button icon={Plus} onClick={() => openCreateModal()} className="w-full sm:w-auto">
               Добавить лид
             </Button>
@@ -897,6 +1327,29 @@ export default function KanbanPage() {
             {pageError}
           </div>
         ) : null}
+
+        {canManageColumns && isColumnManagerOpen ? (
+          <div className="mt-3 rounded-xl border border-[#dce5ee] bg-[#f8fbff] p-3">
+            <p className="text-xs font-semibold text-[#536174]">Скрытые колонки</p>
+            {hiddenColumns.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {hiddenColumns.map((column) => (
+                  <button
+                    key={column.stage}
+                    type="button"
+                    onClick={() => handleRestoreColumn(column.stage)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-[#cbd9eb] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#44566f] transition-colors hover:bg-[#eef5ff]"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Вернуть «{column.title}»
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-[#8491a1]">Скрытых колонок нет. Название колонки меняется нажатием на него.</p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="crm-surface flex-1 min-h-0 overflow-hidden p-3 sm:p-4">
@@ -905,7 +1358,16 @@ export default function KanbanPage() {
             <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
           </div>
         ) : (
-          <div className="flex h-full min-h-0 items-stretch gap-3 overflow-x-auto overflow-y-hidden pb-2">
+          <>
+            <div
+              ref={topScrollRef}
+              onScroll={syncTopScroll}
+              className="mb-2 h-3 overflow-x-auto overflow-y-hidden rounded-full bg-[#eff3f7]"
+              aria-label="Горизонтальная прокрутка канбана"
+            >
+              <div style={{ width: Math.max(boardScrollWidth, 1), height: 1 }} />
+            </div>
+            <div ref={boardScrollRef} onScroll={syncBoardScroll} className="flex h-full min-h-0 items-stretch gap-3 overflow-x-auto overflow-y-hidden pb-2">
             {columns.map((column) => (
               <LeadColumnCard
                 key={column.stage}
@@ -914,12 +1376,19 @@ export default function KanbanPage() {
                 onOpenLead={openEditModal}
                 onDeleteLead={(lead) => void handleDeleteLead(lead)}
                 onChangeStage={(lead, stage) => void handleMoveLeadStage(lead, stage)}
+                onConvertLead={(lead) => void handleConvertRegistrationLead(lead)}
                 onDropLead={handleDropLead}
                 activeStageId={activeStageId}
                 activeDeleteId={activeDeleteId}
+                activeConvertId={activeConvertId}
+                canManageColumns={canManageColumns}
+                onRenameColumn={handleRenameColumn}
+                onRemoveColumn={(stage) => void handleHideColumn(stage)}
+                stageOptions={stageOptions}
               />
             ))}
           </div>
+          </>
         )}
       </div>
 
@@ -929,11 +1398,15 @@ export default function KanbanPage() {
         onClose={closeModal}
         onSave={handleSaveLead}
         onDelete={modalState.leadId ? () => handleDeleteLead(undefined, true) : undefined}
+        onConvert={modalState.formLead && isRegistrationLead(modalState.formLead) ? () => handleConvertRegistrationLead(modalState.formLead!) : undefined}
         initialValues={modalState.initialValues}
+        formLead={modalState.formLead}
         assignees={staffOptions}
         isSubmitting={modalIsSubmitting}
         isDeleting={Boolean(modalIsDeleting)}
+        isConverting={modalIsConverting}
         title={modalState.title}
+        stageOptions={stageOptions}
       />
     </div>
   );

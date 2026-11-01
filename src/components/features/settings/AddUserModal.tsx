@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { pushToast } from '@/lib/toast';
+import { formatFullName } from '@/lib/utils';
 
 export interface UserFormPayload {
   id?: string;
@@ -23,6 +24,7 @@ interface AvailableStaffOption {
   fullName: string;
   firstName: string;
   lastName: string;
+  middleName?: string | null;
   email: string;
 }
 
@@ -212,7 +214,7 @@ export const AddUserModal = ({
           <option value="">Выберите сотрудника (опционально)</option>
           {availableStaff.map((staff) => (
             <option key={staff.id} value={staff.id}>
-              {staff.fullName}
+              {formatFullName(staff)}
               {staff.email ? ` • ${staff.email}` : ''}
             </option>
           ))}

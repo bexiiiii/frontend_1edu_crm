@@ -3,11 +3,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AddAttendanceModal } from '@/components/features/attendance/AddAttendanceModal';
 import { useApi, useMutation } from '@/hooks/useApi';
 import {
   attendanceService,
+  coursesService,
   lessonsService,
   roomsService,
   schedulesService,
@@ -15,6 +17,7 @@ import {
   studentsService,
 } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
+import { formatFullName } from '@/lib/utils';
 import {
   ATTENDANCE_STATUS_COLORS,
   ATTENDANCE_STATUS_LABELS,
@@ -24,17 +27,20 @@ import {
   isPresentStatus,
   toDateInputValue,
 } from '@/constants/attendance';
-import type { AttendanceDto, AttendanceStatus, LessonStatus, LessonType } from '@/lib/api/types';
+import type { AttendanceDto, AttendanceStatus, CourseDto, LessonStatus, LessonType } from '@/lib/api/types';
 
 type AttendanceLessonRow = {
   id: string;
   title: string;
   subtitle: string;
+  teacherId: string | null;
   teacherName: string;
+  substituteTeacherId: string | null;
   substituteTeacherName: string;
   roomName: string;
   timeRange: string;
   groupId: string | null;
+  courseId: string | null;
   status: LessonStatus;
   lessonType: LessonType;
   markedCount: number;
@@ -70,11 +76,7 @@ function getStaffFullName(staff: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ');
+  return formatFullName(staff);
 }
 
 function getMarkedCount(records: AttendanceDto[]): number {
@@ -96,6 +98,7 @@ function getDominantAttendanceStatus(records: AttendanceDto[]): AttendanceStatus
     'VACATION',
     'AUTO_ATTENDED',
     'ONE_TIME_VISIT',
+    'WITHDRAWN',
     'ATTENDED',
     'PLANNED',
   ];
@@ -126,26 +129,43 @@ export default function AttendancePage() {
       ? staffService.getAll({ page: 0, size: 500 })
       : Promise.resolve({ data: { content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 } });
 
-    const [lessonsResponse, schedulesResponse, staffResponse, roomsResponse] = await Promise.all([
+    const [lessonsResponse, schedulesResponse, coursesResponse, staffResponse, roomsResponse] = await Promise.all([
       lessonsService.getAll({ date: selectedDateKey, page: 0, size: 100 }),
       schedulesService.getAll({ page: 0, size: 1000 }),
+      coursesService.getAll({ page: 0, size: 500 }).catch(() => ({ data: { content: [] } })),
       staffPromise,
       roomsService.getAll({ page: 0, size: 300 }),
     ]);
 
     const lessons = lessonsResponse.data.content ?? [];
+    const schedules = schedulesResponse.data.content ?? [];
+    const scheduleCourseMap = new Map(schedules.map((s) => [s.id, s.courseId]));
+
     const groupIds = Array.from(new Set(lessons.map((lesson) => lesson.groupId).filter((groupId): groupId is string => Boolean(groupId))));
 
     const [groupEntries, attendanceEntries] = await Promise.all([
       Promise.all(
         groupIds.map(async (groupId) => {
           try {
-            const response = await studentsService.getByGroup(groupId, { page: 0, size: 500 });
+            let response = await studentsService.getByGroup(groupId, { page: 0, size: 500 });
+            let content = response.data.content ?? [];
+            let total = response.data.totalElements ?? content.length;
+
+            // If empty, try resolving from courseId
+            const courseId = scheduleCourseMap.get(groupId);
+            if (content.length === 0 && courseId && courseId !== groupId) {
+              const courseStudents = await studentsService.getByGroup(courseId, { page: 0, size: 500 }).catch(() => null);
+              if (courseStudents && (courseStudents.data.content ?? []).length > 0) {
+                content = courseStudents.data.content ?? [];
+                total = courseStudents.data.totalElements ?? content.length;
+              }
+            }
+
             return [
               groupId,
               {
-                count: response.data.totalElements ?? response.data.content.length,
-                students: response.data.content ?? [],
+                count: total,
+                students: content,
               },
             ] as const;
           } catch {
@@ -168,7 +188,8 @@ export default function AttendancePage() {
     return {
       data: {
         lessons,
-        schedules: schedulesResponse.data.content ?? [],
+        schedules,
+        courses: (coursesResponse.data.content ?? []) as CourseDto[],
         staff: staffResponse.data.content ?? [],
         rooms: roomsResponse.data.content ?? [],
         groupSizeById: Object.fromEntries(groupEntries.map(([groupId, value]) => [groupId, value.count])),
@@ -179,35 +200,63 @@ export default function AttendancePage() {
   }, [selectedDateKey, canViewStaff]);
 
   const lessonsForDay = useMemo<AttendanceLessonRow[]>(() => {
-    const schedulesMap = new Map((data?.schedules ?? []).map((schedule) => [schedule.id, schedule.name]));
+    const schedulesMap = new Map((data?.schedules ?? []).map((schedule) => [schedule.id, schedule]));
+    const coursesMap = new Map((data?.courses ?? []).map((course) => [course.id, course]));
     const staffMap = new Map((data?.staff ?? []).map((staff) => [staff.id, getStaffFullName(staff) || 'Без имени']));
     const roomsMap = new Map((data?.rooms ?? []).map((room) => [room.id, room.name]));
     const attendanceByLessonId = data?.attendanceByLessonId ?? {};
     const groupSizeById = data?.groupSizeById ?? {};
 
     return (data?.lessons ?? []).map((lesson) => {
-      const groupName = lesson.groupId ? schedulesMap.get(lesson.groupId) || 'Без названия группы' : '';
-      const title =
-        groupName || lesson.topic?.trim() || LESSON_TYPE_LABELS[lesson.lessonType];
+      const schedule = lesson.groupId ? schedulesMap.get(lesson.groupId) : undefined;
+      const course = schedule?.courseId
+        ? coursesMap.get(schedule.courseId)
+        : (lesson.groupId ? coursesMap.get(lesson.groupId) : undefined);
+
+      const isIndividual = course?.type === 'INDIVIDUAL' || lesson.lessonType === 'INDIVIDUAL';
+      const actualType: LessonType = isIndividual ? 'INDIVIDUAL' : (lesson.lessonType || 'GROUP');
+
+      const courseName = course?.name || '';
+      const scheduleName = schedule?.name || '';
+
+      let title = '';
+      if (courseName && scheduleName && courseName !== scheduleName) {
+        title = `${courseName} (${scheduleName})`;
+      } else if (courseName) {
+        title = courseName;
+      } else if (scheduleName) {
+        title = scheduleName;
+      } else if (lesson.topic?.trim()) {
+        title = lesson.topic.trim();
+      } else {
+        title = LESSON_TYPE_LABELS[actualType];
+      }
+
       const subtitleParts = [
-        groupName && lesson.topic?.trim() ? `Тема: ${lesson.topic.trim()}` : '',
-        !groupName ? LESSON_TYPE_LABELS[lesson.lessonType] : '',
+        isIndividual
+          ? 'Индивидуальное занятие'
+          : (title !== scheduleName && scheduleName ? `Группа: ${scheduleName}` : LESSON_TYPE_LABELS[actualType]),
+        lesson.topic?.trim() ? `Тема: ${lesson.topic.trim()}` : '',
       ].filter(Boolean);
+
       const records = attendanceByLessonId[lesson.id] ?? [];
 
       return {
         id: lesson.id,
         title,
         subtitle: subtitleParts.join(' • '),
+        teacherId: lesson.teacherId || null,
         teacherName: lesson.teacherId ? staffMap.get(lesson.teacherId) || 'Не назначен' : 'Не назначен',
+        substituteTeacherId: lesson.substituteTeacherId || null,
         substituteTeacherName: lesson.substituteTeacherId
           ? staffMap.get(lesson.substituteTeacherId) || 'Не назначен'
           : '',
         roomName: lesson.roomId ? roomsMap.get(lesson.roomId) || 'Не указан' : 'Не указан',
         timeRange: formatTimeRange(lesson.startTime, lesson.endTime),
         groupId: lesson.groupId,
+        courseId: course?.id || schedule?.courseId || null,
         status: lesson.status,
-        lessonType: lesson.lessonType,
+        lessonType: actualType,
         markedCount: getMarkedCount(records),
         totalStudents: lesson.groupId ? groupSizeById[lesson.groupId] ?? records.length : records.length,
         presentCount: getPresentCount(records),
@@ -234,7 +283,7 @@ export default function AttendancePage() {
       studentOptions: lesson.groupId
         ? (groupStudentsById[lesson.groupId] ?? []).map((student) => ({
             id: student.id,
-            name: student.fullName || [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ') || student.id,
+            name: [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ') || student.fullName || student.id,
           }))
         : [],
     }));
@@ -384,16 +433,53 @@ export default function AttendancePage() {
                         </div>
                       </td>
                       <td className="crm-table-cell">
-                        <p className="font-semibold text-[#273142]">{lesson.title}</p>
+                        <Link
+                          href={`/attendance/${lesson.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
+                        >
+                          {lesson.title}
+                        </Link>
                         <p className="mt-1 text-xs text-[#667084]">
-                          {lesson.subtitle || LESSON_TYPE_LABELS[lesson.lessonType]}
+                          {lesson.courseId ? (
+                            <Link
+                              href={`/classes/${lesson.courseId}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="transition-colors hover:text-[#467aff] hover:underline"
+                            >
+                              {lesson.subtitle || LESSON_TYPE_LABELS[lesson.lessonType]}
+                            </Link>
+                          ) : (
+                            lesson.subtitle || LESSON_TYPE_LABELS[lesson.lessonType]
+                          )}
                         </p>
                       </td>
                       <td className="crm-table-cell">
-                        <p className="font-medium text-[#273142]">{lesson.teacherName}</p>
+                        {lesson.teacherId ? (
+                          <Link
+                            href={`/staff/${lesson.teacherId}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
+                          >
+                            {lesson.teacherName}
+                          </Link>
+                        ) : (
+                          <p className="font-medium text-[#273142]">{lesson.teacherName}</p>
+                        )}
                         {lesson.substituteTeacherName ? (
                           <p className="mt-1 text-xs text-[#667084]">
-                            Замена: {lesson.substituteTeacherName}
+                            Замена:{' '}
+                            {lesson.substituteTeacherId ? (
+                              <Link
+                                href={`/staff/${lesson.substituteTeacherId}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="transition-colors hover:text-[#467aff] hover:underline"
+                              >
+                                {lesson.substituteTeacherName}
+                              </Link>
+                            ) : (
+                              lesson.substituteTeacherName
+                            )}
                           </p>
                         ) : null}
                       </td>

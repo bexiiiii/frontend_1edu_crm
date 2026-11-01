@@ -23,7 +23,7 @@ const RECIPIENT_FIELD_OPTIONS: Array<{ value: ContactRecipientField; label: stri
 ];
 
 function getStudentDisplayName(student: StudentDto): string {
-  return student.fullName || [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ') || student.email || student.phone || student.id;
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ') || student.fullName || student.email || student.phone || student.id;
 }
 
 function getPhoneValue(student: StudentDto, field: ContactRecipientField): string {
@@ -200,7 +200,7 @@ export const ApiPayInvoiceModal = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Создать ApiPay счет">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Создать счёт Kaspi POS">
       <div className="space-y-4">
         {/* Student selection */}
         <div>

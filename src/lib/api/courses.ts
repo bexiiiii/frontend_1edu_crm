@@ -45,6 +45,15 @@ export const coursesService = {
     return response.data;
   },
 
+  /** Move a course and all of its branch-bound learning and billing data. */
+  async transferToBranch(
+    id: string,
+    data: { targetBranchId: string; targetLevelId: string; targetRoomId?: string | null }
+  ) {
+    const response = await api.post<ApiResponse<CourseDto>>(`/api/v1/courses/${id}/transfer-branch`, data);
+    return response.data;
+  },
+
   /** Search courses */
   async search(query: string, params?: PaginationParams) {
     const response = await api.get<ApiResponse<PageResponse<CourseDto>>>('/api/v1/courses/search', {
@@ -62,8 +71,22 @@ export const coursesService = {
   },
 
   /** Enroll a student into a course */
-  async enrollStudent(courseId: string, studentId: string) {
-    const response = await api.post<ApiResponse<CourseDto>>(`/api/v1/courses/${courseId}/students/${studentId}`);
+  async enrollStudent(courseId: string, studentId: string, discountPercent?: number, startDate?: string) {
+    const response = await api.post<ApiResponse<CourseDto>>(
+      `/api/v1/courses/${courseId}/students/${studentId}`,
+      null,
+      { params: { ...(discountPercent != null ? { discountPercent } : {}), ...(startDate ? { startDate } : {}) } }
+    );
+    return response.data;
+  },
+
+  /** Change the effective start date without losing enrollment history. */
+  async updateEnrollmentDate(courseId: string, studentId: string, startDate: string) {
+    const response = await api.patch<ApiResponse<CourseEnrollmentDto>>(
+      `/api/v1/courses/${courseId}/students/${studentId}/enrollment-date`,
+      null,
+      { params: { startDate } }
+    );
     return response.data;
   },
 
@@ -76,6 +99,12 @@ export const coursesService = {
   /** Get enrollment history for a student */
   async getStudentEnrollments(studentId: string) {
     const response = await api.get<ApiResponse<CourseEnrollmentDto[]>>(`/api/v1/courses/student/${studentId}/enrollments`);
+    return response.data;
+  },
+
+  /** Get enrollments for all students in a course */
+  async getCourseEnrollments(courseId: string) {
+    const response = await api.get<ApiResponse<CourseEnrollmentDto[]>>(`/api/v1/courses/${courseId}/enrollments`);
     return response.data;
   },
 };

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
@@ -41,6 +42,7 @@ export default function SubscriptionsReportPage() {
     if (!subsData?.rows) return [];
     return subsData.rows.map((s, i) => ({
       id: s.subscriptionId || String(i + 1),
+      studentId: s.studentId || null,
       client: s.studentName || s.studentId || '—',
       service: s.serviceName || '—',
       amount: s.amount ?? 0,
@@ -170,7 +172,15 @@ export default function SubscriptionsReportPage() {
             <tbody className="crm-table-body">
               {subscriptions.map((row) => (
                 <tr key={row.id} className="crm-table-row">
-                  <td className="crm-table-cell font-medium text-[#273142]">{row.client}</td>
+                  <td className="crm-table-cell font-medium text-[#273142]">
+                    {row.studentId ? (
+                      <Link href={`/students/${row.studentId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                        {row.client}
+                      </Link>
+                    ) : (
+                      row.client
+                    )}
+                  </td>
                   <td className="crm-table-cell">{row.service}</td>
                   <td className="crm-table-cell font-semibold text-[#273142]">{toMoney(row.amount)}</td>
                   <td className="crm-table-cell">

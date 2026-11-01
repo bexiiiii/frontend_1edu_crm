@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { AttendanceTotals } from './AttendanceTotals';
 import { useState } from 'react';
 import {
   ATTENDANCE_STATUS_COLORS,
@@ -16,13 +18,15 @@ export type AttendanceMonthlyLessonColumn = {
   weekdayLabel: string;
   timeLabel: string;
   isCurrentDate: boolean;
+  substituteTeacherName?: string | null;
 };
 
 export type AttendanceMonthlyStudentCell = {
   lessonId: string;
-  status: AttendanceStatus;
+  status: AttendanceStatus | null;
   timeLabel: string;
   isCurrentLesson: boolean;
+  isEligible?: boolean;
 };
 
 export type AttendanceMonthlyStudentRow = {
@@ -64,17 +68,18 @@ function AttendanceStatusDropdown({
   lessonId: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const currentOption = ATTENDANCE_STATUS_OPTIONS.find(o => o.value === status);
+  const normalizedStatus = (status === 'NOT_MARKED' ? 'PLANNED' : status) as AttendanceStatus;
+  const currentOption = ATTENDANCE_STATUS_OPTIONS.find(o => o.value === normalizedStatus);
 
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full rounded-lg border px-2 py-1.5 text-left text-[11px] font-semibold transition-all hover:brightness-95 ${ATTENDANCE_STATUS_COLORS[status]}`}
+        className={`w-full rounded-lg border px-2 py-1.5 text-left text-[11px] font-semibold transition-all hover:brightness-95 ${ATTENDANCE_STATUS_COLORS[normalizedStatus] || ATTENDANCE_STATUS_COLORS.PLANNED}`}
       >
         <span className="block leading-3">
-          {currentOption?.label || status}
+          {currentOption?.label || normalizedStatus}
         </span>
       </button>
 
@@ -130,15 +135,29 @@ export function AttendanceMonthlyTable({
                 <th
                   key={col.lessonId}
                   className={`crm-table-th min-w-[80px] text-center border border-[#e4eaf0] ${
-                    col.isCurrentDate ? 'bg-[#eef4ff] text-[#315fd0]' : ''
+                    col.substituteTeacherName
+                      ? 'bg-amber-100 text-amber-900'
+                      : col.isCurrentDate
+                        ? 'bg-[#eef4ff] text-[#315fd0]'
+                        : ''
                   }`}
+                  title={col.substituteTeacherName ? `Замена: ${col.substituteTeacherName}` : undefined}
                 >
-                  <div className="flex flex-col items-center gap-1">
+                  <Link
+                    href={`/attendance/${col.lessonId}`}
+                    className="flex flex-col items-center gap-1 transition-colors hover:text-[#467aff]"
+                    title="Перейти к уроку"
+                  >
                     <span className="text-sm font-semibold">{col.dayNumber}</span>
                     <span className="text-[10px] uppercase tracking-[0.08em]">
                       {col.weekdayLabel}
                     </span>
-                  </div>
+                    {col.substituteTeacherName ? (
+                      <span className="max-w-[76px] truncate text-[9px] font-semibold text-amber-800">
+                        {col.substituteTeacherName}
+                      </span>
+                    ) : null}
+                  </Link>
                 </th>
               ))}
               <th className="crm-table-th min-w-[70px] bg-[#f6f8fa] border border-[#e4eaf0]">
@@ -159,7 +178,12 @@ export function AttendanceMonthlyTable({
                 <tr key={row.studentId} className="crm-table-row">
                   <td className="crm-table-cell sticky left-0 z-10 bg-[#fbfcfd] border border-[#e4eaf0]">
                     <div>
-                      <p className="font-semibold text-[#273142]">{row.fullName}</p>
+                      <Link
+                        href={`/students/${row.studentId}`}
+                        className="font-semibold text-[#467aff] hover:underline"
+                      >
+                        {row.fullName}
+                      </Link>
                       <span
                         className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${STUDENT_STATUS_COLORS[row.studentStatus]}`}
                       >
@@ -171,15 +195,19 @@ export function AttendanceMonthlyTable({
                   {row.cells.map((cell) => (
                     <td
                       key={`${row.studentId}-${cell.lessonId}`}
-                      className="crm-table-cell border border-[#e4eaf0] p-1"
+                      className="crm-table-cell border border-[#e4eaf0] p-1 text-center"
                     >
-                      <AttendanceStatusDropdown
-                        status={cell.status}
-                        lessonId={cell.lessonId}
-                        onChange={(newStatus) =>
-                          onStatusChange(row.studentId, cell.lessonId, newStatus)
-                        }
-                      />
+                      {cell.status && cell.isEligible !== false ? (
+                        <AttendanceStatusDropdown
+                          status={cell.status}
+                          lessonId={cell.lessonId}
+                          onChange={(newStatus) =>
+                            onStatusChange(row.studentId, cell.lessonId, newStatus)
+                          }
+                        />
+                      ) : (
+                        <span className="text-slate-300 font-bold block py-1.5 select-none" title="Ученик не был зачислен на дату урока">—</span>
+                      )}
                     </td>
                   ))}
 
@@ -213,6 +241,7 @@ export function AttendanceMonthlyTable({
           </tbody>
         </table>
       </div>
+      <AttendanceTotals monthly statuses={rows.flatMap((row) => row.cells.filter((cell) => cell.isEligible !== false).map((cell) => cell.status))} />
     </div>
   );
 }

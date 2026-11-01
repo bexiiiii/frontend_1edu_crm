@@ -30,6 +30,10 @@ import {
   type StaffStatusFormPayload,
 } from '@/components/features/settings/AddStaffStatusModal';
 import {
+  AddCourseLevelModal,
+  type CourseLevelFormPayload,
+} from '@/components/features/settings/AddCourseLevelModal';
+import {
   AddIncomeCategoryModal,
   type IncomeCategoryFormPayload,
 } from '@/components/features/settings/AddIncomeCategoryModal';
@@ -483,6 +487,8 @@ export default function Settings() {
   const [isTariffModalOpen, setIsTariffModalOpen] = useState(false);
   const [isAddStaffStatusModalOpen, setIsAddStaffStatusModalOpen] = useState(false);
   const [selectedStaffStatus, setSelectedStaffStatus] = useState<StaffStatusFormPayload | null>(null);
+  const [isAddCourseLevelModalOpen, setIsAddCourseLevelModalOpen] = useState(false);
+  const [selectedCourseLevel, setSelectedCourseLevel] = useState<CourseLevelFormPayload | null>(null);
   const [isAddIncomeCategoryModalOpen, setIsAddIncomeCategoryModalOpen] = useState(false);
   const [selectedIncomeCategory, setSelectedIncomeCategory] = useState<IncomeCategoryFormPayload | null>(null);
   const [isAddExpenseCategoryModalOpen, setIsAddExpenseCategoryModalOpen] = useState(false);
@@ -507,6 +513,11 @@ export default function Settings() {
   const authRoles = useAuthStore((state) => state.roles);
   const authPermissions = useAuthStore((state) => state.permissions);
   const refreshAuthProfile = useAuthStore((state) => state.fetchProfile);
+  const canViewAccessSettings = canAccessSettingsTab('access', authRoles, authPermissions);
+  const canViewRolesSettings = canAccessSettingsTab('roles', authRoles, authPermissions);
+  const canViewFinanceSettings = canAccessSettingsTab('finance', authRoles, authPermissions);
+  const canViewIntegrationSettings = canAccessSettingsTab('integrations', authRoles, authPermissions);
+  const canLoadIdentityAdministration = canViewAccessSettings || canViewRolesSettings;
 
   const visibleSettingsTabs = useMemo(
     () => SETTINGS_TABS.filter((tab) => canAccessSettingsTab(tab.value, authRoles, authPermissions)),
@@ -568,7 +579,7 @@ export default function Settings() {
     refetch: refetchUsers,
   } = useApi(
     () => (
-      tenantId
+      tenantId && canViewAccessSettings
         ? getUsers({
             page: 0,
             size: 200,
@@ -576,10 +587,16 @@ export default function Settings() {
           })
         : Promise.resolve({ data: [] as UserDto[] })
     ),
-    [tenantId, usersSearch]
+    [canViewAccessSettings, tenantId, usersSearch]
   );
-  const { data: rolesData, loading: rolesLoading, error: rolesError, refetch: refetchRoles } = useApi(() => settingsService.getRoles(), []);
-  const { data: permissionsData, loading: permissionsLoading, error: permissionsError } = useApi(() => settingsService.getPermissions(), []);
+  const { data: rolesData, loading: rolesLoading, error: rolesError, refetch: refetchRoles } = useApi(
+    () => canLoadIdentityAdministration ? settingsService.getRoles() : Promise.resolve({ data: [] }),
+    [canLoadIdentityAdministration]
+  );
+  const { data: permissionsData, loading: permissionsLoading, error: permissionsError } = useApi(
+    () => canLoadIdentityAdministration ? settingsService.getPermissions() : Promise.resolve({ data: [] }),
+    [canLoadIdentityAdministration]
+  );
   const {
     data: tenantData,
     loading: tenantLoading,
@@ -595,7 +612,12 @@ export default function Settings() {
     error: roomsError,
     refetch: refetchRooms,
   } = useApi(() => roomsService.getAll({ page: 0, size: 200 }), []);
-  const { data: staffData } = useApi(() => staffService.getAll({ page: 0, size: 500 }), []);
+  const { data: staffData } = useApi(
+    () => canViewAccessSettings
+      ? staffService.getAll({ page: 0, size: 500 })
+      : Promise.resolve({ data: { content: [] } }),
+    [canViewAccessSettings]
+  );
   const {
     data: attendanceStatusesData,
     loading: attendanceStatusesLoading,
@@ -607,7 +629,10 @@ export default function Settings() {
     loading: paymentSourcesLoading,
     error: paymentSourcesError,
     refetch: refetchPaySources,
-  } = useApi(() => settingsService.getPaymentSources(), []);
+  } = useApi(
+    () => canViewFinanceSettings ? settingsService.getPaymentSources() : Promise.resolve({ data: [] }),
+    [canViewFinanceSettings]
+  );
   const {
     data: staffStatusesData,
     loading: staffStatusesLoading,
@@ -615,23 +640,39 @@ export default function Settings() {
     refetch: refetchStaffStatuses,
   } = useApi(() => settingsService.getStaffStatuses(), []);
   const {
+    data: courseLevelsData,
+    loading: courseLevelsLoading,
+    error: courseLevelsError,
+    refetch: refetchCourseLevels,
+  } = useApi(() => settingsService.getCourseLevels(), []);
+  const {
     data: incomeCategoriesData,
     loading: incomeCategoriesLoading,
     error: incomeCategoriesError,
     refetch: refetchIncomeCategories,
-  } = useApi(() => settingsService.getIncomeCategories(), []);
+  } = useApi(
+    () => canViewFinanceSettings ? settingsService.getIncomeCategories() : Promise.resolve({ data: [] }),
+    [canViewFinanceSettings]
+  );
   const {
     data: expenseCategoriesData,
     loading: expenseCategoriesLoading,
     error: expenseCategoriesError,
     refetch: refetchExpenseCategories,
-  } = useApi(() => settingsService.getExpenseCategories(), []);
+  } = useApi(
+    () => canViewFinanceSettings ? settingsService.getExpenseCategories() : Promise.resolve({ data: [] }),
+    [canViewFinanceSettings]
+  );
   const { data: branchesData } = useApi<BranchDto[]>(() => settingsService.getBranches(), []);
   const {
     data: integrationEnabledMap,
     refetch: refetchIntegrationEnabledMap,
   } = useApi<Record<string, boolean>>(
     async () => {
+      if (!canViewIntegrationSettings) {
+        return { data: {} };
+      }
+
       const [kpay, apipay, ftelecom, zadarma, googleDriveBackup, yandexDiskBackup] = await Promise.allSettled([
         settingsService.getKpaySettings(),
         settingsService.getApiPaySettings(),
@@ -652,7 +693,7 @@ export default function Settings() {
         },
       };
     },
-    []
+    [canViewIntegrationSettings]
   );
 
   const effectiveIntegrationEnabledMap = useMemo(
@@ -683,22 +724,26 @@ export default function Settings() {
   // Map API users → access tab
   const users = useMemo(() => {
     const userList = usersData || [];
-    return userList.map((user) => ({
-      id: user.id,
-      username: user.username,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      name: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username,
-      email: user.email || '',
-      staffId: user.staffId ?? null,
-      role: getPrimaryRole(user.roles) || 'TEACHER',
-      displayRole: getDisplayRole(user.roles),
-      branchIds: user.branchIds ?? [],
-      permissions: user.permissions || [],
-      permissionsSource: user.permissionsSource ?? null,
-      permissionsLoaded: Array.isArray(user.permissions),
-      isDeletable: !user.roles.includes('TENANT_ADMIN'),
-    }));
+    return userList.map((user) => {
+      const primaryRole = getPrimaryRole(user.roles) || 'TEACHER';
+
+      return {
+        id: user.id,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        name: [user.lastName, user.firstName].filter(Boolean).join(' ').trim() || user.username,
+        email: user.email || '',
+        staffId: user.staffId ?? null,
+        role: primaryRole,
+        displayRole: getDisplayRole(user.roles),
+        branchIds: user.branchIds ?? [],
+        permissions: user.permissions || [],
+        permissionsSource: user.permissionsSource ?? null,
+        permissionsLoaded: Array.isArray(user.permissions),
+        isDeletable: primaryRole !== 'TENANT_ADMIN',
+      };
+    });
   }, [usersData]);
 
   const availablePermissions = useMemo(() => permissionsData || [], [permissionsData]);
@@ -728,16 +773,13 @@ export default function Settings() {
     return list
       .map((staff) => ({
         id: staff.id,
-        fullName:
-          staff.fullName ||
-          [staff.lastName, staff.firstName, staff.middleName]
-            .filter(Boolean)
-            .join(' ')
-            .trim() ||
-          staff.email ||
-          'Без имени',
+        fullName: [staff.lastName, staff.firstName, staff.middleName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || staff.fullName || staff.email || 'Без имени',
         firstName: staff.firstName,
         lastName: staff.lastName,
+        middleName: staff.middleName,
         email: staff.email || '',
       }))
       .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU'));
@@ -798,6 +840,17 @@ export default function Settings() {
       active: s.active,
     }));
   }, [staffStatusesData]);
+
+  const courseLevels = useMemo(() => {
+    return (courseLevelsData || []).map((level) => ({
+      id: level.id,
+      name: level.name,
+      color: level.color || '#467aff',
+      sortOrder: level.sortOrder,
+      active: level.active,
+      systemLevel: level.systemLevel,
+    }));
+  }, [courseLevelsData]);
 
   // Map API payment sources
   const paymentSources = useMemo(() => {
@@ -927,6 +980,18 @@ export default function Settings() {
     })
   );
   const deleteStaffStatusMutation = useMutation((id: string) => settingsService.deleteStaffStatus(id));
+  const createCourseLevelMutation = useMutation((data: Omit<CourseLevelFormPayload, 'id' | 'systemLevel'>) =>
+    settingsService.createCourseLevel(data)
+  );
+  const updateCourseLevelMutation = useMutation((data: CourseLevelFormPayload) =>
+    settingsService.updateCourseLevel(data.id!, {
+      name: data.name,
+      color: data.color,
+      sortOrder: data.sortOrder,
+      active: data.active,
+    })
+  );
+  const deleteCourseLevelMutation = useMutation((id: string) => settingsService.deleteCourseLevel(id));
   const createIncomeCategoryMutation = useMutation((data: Omit<IncomeCategoryFormPayload, 'id'>) =>
     settingsService.createIncomeCategory(data)
   );
@@ -970,7 +1035,7 @@ export default function Settings() {
         username: freshUser.username || user.username,
         firstName: freshUser.firstName || user.firstName,
         lastName: freshUser.lastName || user.lastName,
-        name: [freshUser.firstName, freshUser.lastName].filter(Boolean).join(' ').trim() || freshUser.username || user.name,
+        name: [freshUser.lastName, freshUser.firstName].filter(Boolean).join(' ').trim() || freshUser.username || user.name,
         email: freshUser.email || user.email,
         staffId: freshUser.staffId ?? user.staffId,
         role: getPrimaryRole(freshRoles) || user.role,
@@ -1015,6 +1080,9 @@ export default function Settings() {
           branchIds: fallbackBranchIds,
         },
       });
+      if (data.staffId && fallbackBranchIds) {
+        await staffService.update(data.staffId, { branchIds: fallbackBranchIds });
+      }
       pushToast({ message: 'Пользователь обновлён. Для применения прав выполните refresh токена или повторный вход.', tone: 'success' });
     } else {
       if (!tenantId) {
@@ -1031,6 +1099,9 @@ export default function Settings() {
         branchIds: fallbackBranchIds,
         tenantId,
       });
+      if (data.staffId && fallbackBranchIds) {
+        await staffService.update(data.staffId, { branchIds: fallbackBranchIds });
+      }
       pushToast({ message: `Пользователь создан. Данные для входа отправлены на ${data.email.trim()}.`, tone: 'success' });
     }
 
@@ -1209,6 +1280,35 @@ export default function Settings() {
     await refetchStaffStatuses();
     pushToast({ message: 'Статус сотрудника удалён.', tone: 'success' });
   }, [deleteStaffStatusMutation, refetchStaffStatuses]);
+
+  const handleSaveCourseLevel = useCallback(async (level: CourseLevelFormPayload) => {
+    if (level.id) {
+      await updateCourseLevelMutation.mutate(level);
+      pushToast({ message: 'Уровень обновлён.', tone: 'success' });
+    } else {
+      await createCourseLevelMutation.mutate({
+        name: level.name,
+        color: level.color,
+        sortOrder: level.sortOrder,
+        active: level.active,
+      });
+      pushToast({ message: 'Уровень создан.', tone: 'success' });
+    }
+    await refetchCourseLevels();
+    setIsAddCourseLevelModalOpen(false);
+    setSelectedCourseLevel(null);
+  }, [createCourseLevelMutation, refetchCourseLevels, updateCourseLevelMutation]);
+
+  const handleDeleteCourseLevel = useCallback(async (id: string, systemLevel: boolean) => {
+    if (systemLevel) {
+      pushToast({ message: 'Системный уровень нельзя удалить.', tone: 'info' });
+      return;
+    }
+    if (!confirm('Удалить уровень? Уровень, назначенный курсу, удалить нельзя.')) return;
+    await deleteCourseLevelMutation.mutate(id);
+    await refetchCourseLevels();
+    pushToast({ message: 'Уровень удалён.', tone: 'success' });
+  }, [deleteCourseLevelMutation, refetchCourseLevels]);
 
   const handleSaveIncomeCategory = useCallback(async (category: IncomeCategoryFormPayload) => {
     if (category.id) {
@@ -1805,6 +1905,7 @@ export default function Settings() {
               />
             </div>
           </div>
+
         </div>
       )}
 
@@ -2308,7 +2409,50 @@ export default function Settings() {
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">{getRoleLabel(role.name)}</td>
                       <td className="px-6 py-4 text-sm text-gray-700">{role.description || '—'}</td>
                       <td className="px-6 py-4 text-sm text-gray-700">
-                        {role.permissions.length > 0 ? `${role.permissions.length} шт.` : '—'}
+                        {role.permissions.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5 max-w-sm">
+                            <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-[#3b66f5] border border-blue-200/70">
+                              {role.permissions.length} прав
+                            </span>
+                            {role.permissions.some((p) => p.startsWith('STUDENTS_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Ученики
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('GROUPS_') || p.startsWith('COURSES_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Курсы
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('LESSONS_') || p.startsWith('ATTENDANCE_') || p.startsWith('SCHEDULE_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Расписание
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('CASHIER_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Касса
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('FINANCE_') || p.startsWith('PAYMENTS_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Финансы
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('LEADS_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Лиды
+                              </span>
+                            )}
+                            {role.permissions.some((p) => p.startsWith('FILES_')) && (
+                              <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                Файлы
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
@@ -2464,7 +2608,9 @@ export default function Settings() {
                         <td className="flex items-center gap-2 px-6 py-4">
                           <button
                             type="button"
+                            disabled={status.systemStatus}
                             onClick={() => {
+                              if (status.systemStatus) return;
                               setSelectedAttendanceStatus({
                                 id: status.id,
                                 name: status.name,
@@ -2477,8 +2623,8 @@ export default function Settings() {
                               });
                               setIsAddAttendanceStatusModalOpen(true);
                             }}
-                            className="text-[#3568eb] hover:text-[#2f5fd0]"
-                            title="Редактировать статус"
+                            className={status.systemStatus ? 'cursor-not-allowed text-gray-300' : 'text-[#3568eb] hover:text-[#2f5fd0]'}
+                            title={status.systemStatus ? 'Системный статус нельзя редактировать' : 'Редактировать статус'}
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
@@ -2584,6 +2730,57 @@ export default function Settings() {
                       </tr>
                     ))
                   )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Course Levels */}
+          <div className="crm-table-wrap overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Уровни курсов</h2>
+                <p className="mt-1 text-sm text-[#7f8794]">Обязательный справочник для создания и редактирования курсов</p>
+              </div>
+              <Button icon={Plus} onClick={() => { setSelectedCourseLevel(null); setIsAddCourseLevelModalOpen(true); }}>
+                Добавить уровень
+              </Button>
+            </div>
+            {courseLevelsError ? (
+              <div className="border-b border-red-100 bg-red-50 px-6 py-3 text-sm text-red-700">{courseLevelsError}</div>
+            ) : null}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="crm-table-head">
+                  <tr>
+                    <th className="crm-table-th">#</th><th className="crm-table-th">Название</th>
+                    <th className="crm-table-th">Цвет</th><th className="crm-table-th">Порядок</th>
+                    <th className="crm-table-th">Активен</th><th className="crm-table-th">Тип</th>
+                    <th className="crm-table-th">Действия</th>
+                  </tr>
+                </thead>
+                <tbody className="crm-table-body">
+                  {courseLevelsLoading ? (
+                    <tr className="crm-table-row"><td colSpan={7} className="px-6 py-6 text-sm text-[#556070]">Загружаем уровни...</td></tr>
+                  ) : courseLevels.length === 0 ? (
+                    <tr className="crm-table-row"><td colSpan={7} className="px-6 py-6 text-sm text-[#556070]">Уровни пока не настроены.</td></tr>
+                  ) : courseLevels.map((level, index) => (
+                    <tr key={level.id} className="crm-table-row">
+                      <td className="px-6 py-4 text-sm text-gray-700">{index + 1}</td>
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{level.name}</td>
+                      <td className="px-6 py-4"><span className="inline-block h-5 w-5 rounded" style={{ backgroundColor: level.color }} /></td>
+                      <td className="px-6 py-4 text-sm text-gray-700">{level.sortOrder}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700">{level.active ? 'Да' : 'Нет'}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700">{level.systemLevel ? 'Системный' : 'Пользовательский'}</td>
+                      <td className="flex items-center gap-2 px-6 py-4">
+                        <button type="button" onClick={() => { setSelectedCourseLevel(level); setIsAddCourseLevelModalOpen(true); }}
+                          className="text-[#3568eb] hover:text-[#2f5fd0]" title="Редактировать уровень"><Edit2 className="h-4 w-4" /></button>
+                        <button type="button" onClick={() => void handleDeleteCourseLevel(level.id, level.systemLevel)}
+                          className={level.systemLevel ? 'cursor-not-allowed text-gray-300' : 'text-red-600 hover:text-red-700'}
+                          title={level.systemLevel ? 'Системный уровень нельзя удалить' : 'Удалить уровень'}><Trash2 className="h-4 w-4" /></button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -3104,6 +3301,15 @@ export default function Settings() {
         onSave={handleSaveStaffStatus}
         initialValue={selectedStaffStatus}
         isSubmitting={createStaffStatusMutation.loading || updateStaffStatusMutation.loading}
+      />
+
+      <AddCourseLevelModal
+        key={`course-level-${selectedCourseLevel?.id ?? 'new'}-${isAddCourseLevelModalOpen ? 'open' : 'closed'}`}
+        isOpen={isAddCourseLevelModalOpen}
+        onClose={() => { setIsAddCourseLevelModalOpen(false); setSelectedCourseLevel(null); }}
+        onSave={handleSaveCourseLevel}
+        initialValue={selectedCourseLevel}
+        isSubmitting={createCourseLevelMutation.loading || updateCourseLevelMutation.loading}
       />
 
       <AddIncomeCategoryModal

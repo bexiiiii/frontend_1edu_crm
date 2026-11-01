@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Crown, Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -42,6 +43,7 @@ export default function TeachersAnalyticsPage() {
   const teacherRows = useMemo(() => {
     if (!teacherData?.rows) return [];
     return teacherData.rows.map((r) => ({
+      staffId: r.staffId,
       name: r.fullName,
       activeStudents: r.activeStudents,
       soldSubscriptions: r.subscriptionsSold,
@@ -61,7 +63,7 @@ export default function TeachersAnalyticsPage() {
     if (teacherData?.topEmployee) {
       const top = teacherData.topEmployee;
       const matchRow = teacherRows.find((r) => r.name === top.fullName);
-      return { name: top.fullName, revenue: top.revenue, index: matchRow?.index ?? 0, groupLoadRate: matchRow?.groupLoadRate ?? 0, avgTenure: matchRow?.avgTenure ?? 0, activeStudents: matchRow?.activeStudents ?? top.activeStudents };
+      return { staffId: matchRow?.staffId ?? top.staffId ?? '', name: top.fullName, revenue: top.revenue, index: matchRow?.index ?? 0, groupLoadRate: matchRow?.groupLoadRate ?? 0, avgTenure: matchRow?.avgTenure ?? 0, activeStudents: matchRow?.activeStudents ?? top.activeStudents };
     }
     return teacherRows.reduce((best, current) => (current.revenue > best.revenue ? current : best), teacherRows[0]);
   }, [teacherRows, teacherData]);
@@ -169,7 +171,13 @@ export default function TeachersAnalyticsPage() {
                 <Crown className="h-4 w-4" />
               </span>
               <div>
-                <p className="text-base font-semibold text-[#202938]">{bestTeacher.name}</p>
+                {bestTeacher.staffId ? (
+                  <Link href={`/staff/${bestTeacher.staffId}`} className="text-base font-semibold text-[#202938] hover:text-[#467aff] hover:underline">
+                    {bestTeacher.name}
+                  </Link>
+                ) : (
+                  <p className="text-base font-semibold text-[#202938]">{bestTeacher.name}</p>
+                )}
                 <p className="text-sm text-[#7f8794]">Индекс: {bestTeacher.index}/100</p>
               </div>
             </div>
@@ -242,7 +250,15 @@ export default function TeachersAnalyticsPage() {
             <tbody className="crm-table-body">
               {teacherRows.map((row) => (
                 <tr key={row.name} className="crm-table-row">
-                  <td className="crm-table-cell font-medium text-[#273142]">{row.name}</td>
+                  <td className="crm-table-cell font-medium text-[#273142]">
+                    {row.staffId ? (
+                      <Link href={`/staff/${row.staffId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                        {row.name}
+                      </Link>
+                    ) : (
+                      row.name
+                    )}
+                  </td>
                   <td className="crm-table-cell">{row.activeStudents}</td>
                   <td className="crm-table-cell">{row.soldSubscriptions}</td>
                   <td className="crm-table-cell">{row.studentsInPeriod}</td>

@@ -101,11 +101,16 @@ export interface CourseListItem {
   name: string;
   description: string;
   basePrice: number | null;
+  totalLessons: number | null;
+  levelId: string;
+  levelName: string;
   enrollmentLimit: number | null;
   color: string;
   status: CourseStatus;
   teacherId: string | null;
   teacherName: string;
+  teacherIds: string[];
+  teacherNames: string[];
   roomId: string | null;
   roomName: string;
   studentIds: string[];
@@ -128,10 +133,13 @@ export interface CourseFormValues {
   name: string;
   description: string;
   basePrice: string;
+  totalLessons: string;
+  levelId: string;
   enrollmentLimit: string;
   color: string;
   status: CourseStatus;
   teacherId: string;
+  teacherIds: string[];
   roomId: string;
   studentIds: string[];
 }

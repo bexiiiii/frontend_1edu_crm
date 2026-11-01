@@ -42,6 +42,24 @@ export const lessonsService = {
     return response.data;
   },
 
+  /** Assign or clear the substitute teacher for a single lesson (null reliably clears it, unlike update()) */
+  async assignSubstitute(id: string, substituteTeacherId: string | null) {
+    const response = await api.put<ApiResponse<LessonDto>>(`/api/v1/lessons/${id}/substitute`, { substituteTeacherId });
+    return response.data;
+  },
+
+  /** Assign (or clear) a substitute teacher for every lesson of one group/teacher within a date range */
+  async bulkAssignSubstitute(data: {
+    groupId: string;
+    teacherId: string;
+    substituteTeacherId: string | null;
+    fromDate: string;
+    toDate: string;
+  }) {
+    const response = await api.post<ApiResponse<number>>('/api/v1/lessons/substitute/bulk', data);
+    return response.data;
+  },
+
   /** Delete lesson */
   async delete(id: string) {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/lessons/${id}`);

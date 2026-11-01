@@ -7,6 +7,7 @@ type AccessRule = {
 };
 
 const ADMIN_ROLES = new Set(['SUPER_ADMIN', 'TENANT_ADMIN']);
+const TEACHER_ALLOWED_PREFIXES = ['/schedule', '/attendance', '/classes'] as const;
 
 const ALWAYS_ALLOWED_PREFIXES = [
   '/system',
@@ -20,13 +21,15 @@ const ALWAYS_ALLOWED_PREFIXES = [
 const ROUTE_RULES: AccessRule[] = [
   { prefix: '/logs', rolesAny: ['SUPER_ADMIN', 'TENANT_ADMIN'] },
   // Settings: all roles access their own profile tab; tab-level RBAC is handled inside the page
-  { prefix: '/settings', rolesAny: ['TENANT_ADMIN', 'RECEPTIONIST', 'ACCOUNTANT'], permissionsAny: ['SETTINGS_VIEW'] },
+  { prefix: '/settings', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'ACCOUNTANT'], permissionsAny: ['SETTINGS_VIEW'] },
   // Notifications: all operational roles
   { prefix: '/notifications', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'TEACHER', 'ACCOUNTANT'] },
   // Analytics: teacher/accountant get limited analytics; teacher sees own group attendance
-  { prefix: '/analytics/group-attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'TEACHER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW', 'LESSONS_VIEW'] },
-  { prefix: '/analytics/teacher-course-attendance', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'TEACHER', 'ACCOUNTANT'] },
-  { prefix: '/analytics', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW'] },
+  { prefix: '/analytics/group-attendance', rolesAny: ['TENANT_ADMIN', 'TEACHER', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW', 'LESSONS_VIEW'] },
+  { prefix: '/analytics/teacher-course-attendance', rolesAny: ['TENANT_ADMIN', 'TEACHER', 'ACCOUNTANT'] },
+  { prefix: '/analytics', rolesAny: ['TENANT_ADMIN', 'ACCOUNTANT'], permissionsAny: ['ANALYTICS_VIEW'] },
+  { prefix: '/finance/cashier', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'RECEPTIONIST', 'ACCOUNTANT'], permissionsAny: ['CASHIER_VIEW', 'CASHIER_MANAGE'] },
+  { prefix: '/finance/student-payments', rolesAny: ['TENANT_ADMIN', 'MANAGER', 'ACCOUNTANT'], permissionsAny: ['FINANCE_VIEW', 'FINANCE_CREATE'] },
   // Finance: ACCOUNTANT has full finance access
   { prefix: '/finance', rolesAny: ['TENANT_ADMIN', 'ACCOUNTANT'], permissionsAny: ['FINANCE_VIEW', 'FINANCE_CREATE'] },
   // Students: MANAGER, RECEPTIONIST, TEACHER can view
@@ -87,8 +90,26 @@ export function canAccessPath(pathname: string, roles: string[], permissions: st
     return true;
   }
 
+  if (roles.includes('TEACHER')) {
+    return TEACHER_ALLOWED_PREFIXES.some((prefix) => matchesPrefix(normalizedPath, prefix));
+  }
+
   if (roles.some((role) => ADMIN_ROLES.has(role))) {
     return true;
+  }
+
+  if (roles.includes('MANAGER')) {
+    if (matchesPrefix(normalizedPath, '/analytics')) {
+      return false;
+    }
+
+    if (
+      matchesPrefix(normalizedPath, '/finance')
+      && !matchesPrefix(normalizedPath, '/finance/cashier')
+      && !matchesPrefix(normalizedPath, '/finance/student-payments')
+    ) {
+      return false;
+    }
   }
 
   const matchedRule = ROUTE_RULES.find((rule) => matchesPrefix(normalizedPath, rule.prefix));
@@ -108,9 +129,17 @@ export function canAccessPath(pathname: string, roles: string[], permissions: st
   return roleAllowed || permissionAllowed;
 }
 
+export function getDefaultAuthenticatedPath(roles: string[]): string {
+  return roles.includes('TEACHER') ? '/schedule' : '/';
+}
+
 export function canAccessSettingsTab(tab: SettingsTab, roles: string[], permissions: string[]): boolean {
   if (roles.some((role) => ADMIN_ROLES.has(role))) {
     return true;
+  }
+
+  if (roles.includes('MANAGER')) {
+    return ['user', 'rooms'].includes(tab);
   }
 
   switch (tab) {

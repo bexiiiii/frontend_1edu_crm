@@ -107,7 +107,6 @@ export const AddStudentModal = ({
   const [discountPercent, setDiscountPercent] = useState<number | ''>(defaults.discountPercent ?? '');
   const [comment, setComment] = useState(defaults.comment);
   const [stateOrderParticipant, setStateOrderParticipant] = useState(defaults.stateOrderParticipant);
-  const [additionalPhones, setAdditionalPhones] = useState(defaults.additionalPhones);
   const [notes, setNotes] = useState(defaults.notes);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -164,7 +163,7 @@ export const AddStudentModal = ({
       customer: customer.trim() || undefined,
       studentPhoto: uploadedPhotoUrl,
       email: email.trim() || undefined,
-      phone: phone.trim() || undefined,
+      studentPhone: phone.trim() || undefined,
       birthDate: birthDate || undefined,
       gender: gender || undefined,
       parentName: parentName.trim() || undefined,
@@ -178,10 +177,6 @@ export const AddStudentModal = ({
       discountPercent: discountPercent !== '' ? Number(discountPercent) : undefined,
       comment: comment.trim() || undefined,
       stateOrderParticipant,
-      additionalPhones: additionalPhones
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean),
       notes: notes.trim() || undefined,
     };
   };
@@ -316,18 +311,12 @@ export const AddStudentModal = ({
           </label>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <PhoneInputWithCountry
-            label="Телефон"
+            label="Телефон ученика"
             value={phone}
             onChange={setPhone}
             placeholder="+7 777 000 00 00"
-          />
-          <PhoneInputWithCountry
-            label="Доп. телефон"
-            value={additionalPhones}
-            onChange={setAdditionalPhones}
-            placeholder="+7 777 111 11 11"
           />
         </div>
 

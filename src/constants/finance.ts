@@ -17,7 +17,7 @@ export const PAYMENT_SOURCES = [
 
 export const INCOME_CATEGORIES = [
   'Пополнение средств',
-  'Оплата за обучение',
+  'Продажа товаров',
   'Дополнительные услуги',
   'Прочие доходы',
 ];

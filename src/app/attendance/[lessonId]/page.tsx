@@ -1,10 +1,14 @@
 'use client';
+import { AttendanceTotals } from '@/components/features/attendance/AttendanceTotals';
+
+import Link from 'next/link';
 
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, Save, UserPlus, Users } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { AttendanceMonthlyTable } from '@/components/features/attendance/AttendanceMonthlyTable';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
+import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
@@ -12,11 +16,13 @@ import { Tabs } from '@/components/ui/vercel-tabs';
 import { useApi, useMutation } from '@/hooks/useApi';
 import {
   attendanceService,
+  coursesService,
   lessonsService,
   roomsService,
   schedulesService,
   staffService,
   studentsService,
+  subscriptionsService,
   type CreateStudentRequest,
 } from '@/lib/api';
 import {
@@ -28,15 +34,18 @@ import {
 } from '@/constants/attendance';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
 import type { AttendanceDto, AttendanceStatus, LessonDto, StudentDto } from '@/lib/api/types';
+import { formatFullName } from '@/lib/utils';
 
 type AttendanceViewMode = 'lesson' | 'month';
 
 type LessonAttendanceData = {
   lesson: Awaited<ReturnType<typeof lessonsService.getById>>['data'];
+  courseId?: string | null;
   groupName: string;
   roomName: string;
   teacherName: string;
   substituteTeacherName: string;
+  staffOptions: { id: string; name: string }[];
   students: StudentDto[];
   attendanceRecords: Awaited<ReturnType<typeof attendanceService.getByLesson>>['data'];
   availableStudents: StudentDto[];
@@ -44,6 +53,8 @@ type LessonAttendanceData = {
   monthlyLessons: LessonDto[];
   monthlyAttendanceByLessonId: Record<string, AttendanceDto[]>;
   monthlyError: string | null;
+  /** studentId → ISO date/instant when their subscription for this course was cancelled. */
+  cancelledAtByStudentId: Record<string, string>;
 };
 
 type LessonDraftState = {
@@ -66,11 +77,9 @@ function getStudentFullName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ')
+    || student.fullName?.trim()
+    || '';
 }
 
 function getStaffFullName(staff: {
@@ -79,11 +88,7 @@ function getStaffFullName(staff: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ');
+  return formatFullName(staff);
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -188,6 +193,7 @@ export default function AttendanceLessonPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [isStudentPickerOpen, setIsStudentPickerOpen] = useState(false);
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
   const [attendanceViewState, setAttendanceViewState] = useState<{
     lessonId: string | undefined;
     mode: AttendanceViewMode;
@@ -198,6 +204,9 @@ export default function AttendanceLessonPage() {
   const [draftState, setDraftState] = useState<LessonDraftState>(() =>
     createDraftState(lessonId ? `pending:${lessonId}` : 'empty', null)
   );
+  const [monthlyAttendanceOverrides, setMonthlyAttendanceOverrides] = useState<
+    Record<string, Record<string, AttendanceStatus>>
+  >({});
 
   const { data, loading, error, refetch } = useApi<LessonAttendanceData | null>(async () => {
     if (!lessonId) {
@@ -214,6 +223,11 @@ export default function AttendanceLessonPage() {
       lesson.roomId ? roomsService.getById(lesson.roomId).catch(() => null) : Promise.resolve(null),
     ]);
 
+    const schedule = scheduleResponse?.data;
+    const courseId = schedule?.courseId || lesson.serviceId || undefined;
+    const courseResponse = courseId ? await coursesService.getById(courseId).catch(() => null) : null;
+    const course = courseResponse?.data;
+
     let students: StudentDto[] = [];
     let availableStudents: StudentDto[] = [];
 
@@ -229,6 +243,13 @@ export default function AttendanceLessonPage() {
 
       students = groupStudentsResponse.data.content ?? [];
       availableStudents = allStudentsResponse.data.content ?? [];
+
+      if (students.length === 0 && courseId && courseId !== lesson.groupId) {
+        const courseStudents = await studentsService.getByGroup(courseId, { page: 0, size: 500 }).catch(() => null);
+        if (courseStudents && (courseStudents.data.content ?? []).length > 0) {
+          students = courseStudents.data.content ?? [];
+        }
+      }
     }
 
     const knownCurrentStudentIds = new Set(students.map((student) => student.id));
@@ -250,6 +271,8 @@ export default function AttendanceLessonPage() {
       ]);
     }
 
+    const eligibleCurrentStudentIds = new Set((attendanceResponse.data ?? []).map((record) => record.studentId));
+    students = students.filter((student) => eligibleCurrentStudentIds.has(student.id));
     const currentLessonStudentIds = new Set(students.map((student) => student.id));
     availableStudents = availableStudents.filter((student) => !currentLessonStudentIds.has(student.id));
 
@@ -314,6 +337,43 @@ export default function AttendanceLessonPage() {
       }
     }
 
+    // Дата отмены абонемента по ученику — для обрезки сетки расписания после дня отмены.
+    // Важно: при повторном зачислении остаётся исторический CANCELLED-абонемент.
+    // Он не должен скрывать новые уроки, пока есть действующий абонемент по этому курсу.
+    const cancelledAtByStudentId: Record<string, string> = {};
+    if (courseId) {
+      try {
+        const [cancelledSubs, activeSubs] = await Promise.all([
+          subscriptionsService.getAll({
+            courseId,
+            status: 'CANCELLED',
+            page: 0,
+            size: 500,
+          }),
+          subscriptionsService.getAll({
+            courseId,
+            status: 'ACTIVE',
+            page: 0,
+            size: 500,
+          }),
+        ]);
+        const activeStudentIds = new Set(
+          (activeSubs.data.content ?? [])
+            .map((sub) => sub.studentId)
+            .filter((studentId): studentId is string => Boolean(studentId))
+        );
+        for (const sub of cancelledSubs.data.content ?? []) {
+          if (!sub.studentId || !sub.cancelledAt || activeStudentIds.has(sub.studentId)) continue;
+          const existing = cancelledAtByStudentId[sub.studentId];
+          if (!existing || sub.cancelledAt > existing) {
+            cancelledAtByStudentId[sub.studentId] = sub.cancelledAt;
+          }
+        }
+      } catch {
+        // Best-effort: if this fails we just don't trim the grid by cancellation date.
+      }
+    }
+
     const staffMap = new Map(
       (staffResponse.data.content ?? []).map((staff) => [
         staff.id,
@@ -321,10 +381,26 @@ export default function AttendanceLessonPage() {
       ])
     );
 
+    const isIndividual = course?.type === 'INDIVIDUAL' || lesson.lessonType === 'INDIVIDUAL';
+    const courseName = course?.name || '';
+    const scheduleName = schedule?.name || '';
+    let resolvedGroupName = 'Без группы';
+    if (courseName && scheduleName && courseName !== scheduleName) {
+      resolvedGroupName = `${courseName} (${scheduleName})`;
+    } else if (courseName) {
+      resolvedGroupName = courseName;
+    } else if (scheduleName) {
+      resolvedGroupName = scheduleName;
+    }
+
     return {
       data: {
-        lesson,
-        groupName: scheduleResponse?.data.name ?? 'Без группы',
+        lesson: {
+          ...lesson,
+          lessonType: isIndividual ? 'INDIVIDUAL' : (lesson.lessonType || 'GROUP'),
+        },
+        courseId: course?.id || null,
+        groupName: resolvedGroupName,
         roomName: roomResponse?.data.name ?? 'Не указан',
         teacherName: lesson.teacherId
           ? staffMap.get(lesson.teacherId) || 'Не назначен'
@@ -332,6 +408,9 @@ export default function AttendanceLessonPage() {
         substituteTeacherName: lesson.substituteTeacherId
           ? staffMap.get(lesson.substituteTeacherId) || 'Не назначен'
           : '',
+        staffOptions: (staffResponse.data.content ?? [])
+          .map((staff) => ({ id: staff.id, name: getStaffFullName(staff) || 'Без имени' }))
+          .sort((left, right) => left.name.localeCompare(right.name, 'ru')),
         students,
         attendanceRecords: attendanceResponse.data ?? [],
         availableStudents,
@@ -339,13 +418,16 @@ export default function AttendanceLessonPage() {
         monthlyLessons,
         monthlyAttendanceByLessonId,
         monthlyError,
+        cancelledAtByStudentId,
       },
     };
   }, [lessonId]);
 
   const saveLessonMutation = useMutation(
-    ({ id, payload }: { id: string; payload: { topic: string; homework: string; notes: string } }) =>
-      lessonsService.update(id, payload)
+    ({ id, payload }: {
+      id: string;
+      payload: { topic?: string; homework?: string; notes?: string; substituteTeacherId?: string | null };
+    }) => lessonsService.update(id, payload)
   );
   const saveAttendanceMutation = useMutation(
     ({ id, attendances }: { id: string; attendances: Array<{ studentId: string; status: AttendanceStatus }> }) =>
@@ -468,37 +550,70 @@ export default function AttendanceLessonPage() {
         };
       });
 
-    const monthlyStudents = [...data.monthlyStudents].sort((left, right) =>
-      (getStudentFullName(left) || 'Без имени').localeCompare(
-        getStudentFullName(right) || 'Без имени',
-        'ru-RU'
-      )
-    );
+    const viewedMonthPrefix = monthRange.from.slice(0, 7);
+
+    // Ученик со статусом "Выбыл" виден в сетке до конца месяца, в котором выбыл, дальше — нет.
+    // Ученик, чей абонемент на этот курс отменён, виден по день отмены включительно —
+    // после этого дня его ячейки в сетке не показываются (cancelCutoffByStudentId).
+    const cancelCutoffByStudentId = new Map<string, string>();
+    const monthlyStudents = [...data.monthlyStudents]
+      .filter((student) => {
+        if (student.status === 'DROPPED' && student.statusChangedAt) {
+          const droppedMonthPrefix = student.statusChangedAt.slice(0, 7);
+          if (droppedMonthPrefix < viewedMonthPrefix) {
+            return false;
+          }
+        }
+
+        const cancelledAt = data.cancelledAtByStudentId[student.id];
+        if (cancelledAt) {
+          const cancelledDate = cancelledAt.slice(0, 10);
+          if (cancelledDate < monthRange.from) {
+            return false;
+          }
+          cancelCutoffByStudentId.set(student.id, cancelledDate);
+        }
+
+        return true;
+      })
+      .sort((left, right) =>
+        (getStudentFullName(left) || 'Без имени').localeCompare(
+          getStudentFullName(right) || 'Без имени',
+          'ru-RU'
+        )
+      );
 
     const rows = monthlyStudents.map((student) => {
       let presentCount = 0;
       let markedCount = 0;
-      let totalLessons = 0;
+      const cutoffDate = cancelCutoffByStudentId.get(student.id);
 
       const cells = days.map((day) => {
+        if (cutoffDate && day.date > cutoffDate) {
+          return { date: day.date, entries: [] };
+        }
+
         const lessonsForDay = lessonsByDate.get(day.date) ?? [];
-        totalLessons += lessonsForDay.length;
 
         const entries = lessonsForDay.map((monthlyLesson) => {
-          const status =
-            statusMapByLessonId.get(monthlyLesson.id)?.get(student.id) ?? 'PLANNED';
+          const overrideStatus = monthlyAttendanceOverrides[monthlyLesson.id]?.[student.id];
+          const hasRecord = statusMapByLessonId.get(monthlyLesson.id)?.has(student.id);
+          const rawStatus = statusMapByLessonId.get(monthlyLesson.id)?.get(student.id);
+          const isEligible = hasRecord || (overrideStatus !== undefined);
+          const status = overrideStatus ?? rawStatus ?? (isEligible ? 'PLANNED' : null);
 
-          if (status !== 'PLANNED') {
+          if (status && status !== 'PLANNED') {
             markedCount += 1;
           }
 
-          if (isPresentStatus(status)) {
+          if (status && isPresentStatus(status)) {
             presentCount += 1;
           }
 
           return {
             lessonId: monthlyLesson.id,
             status,
+            isEligible,
             timeLabel: formatTimeRange(monthlyLesson.startTime, monthlyLesson.endTime),
             isCurrentLesson: monthlyLesson.id === lessonId,
           };
@@ -516,11 +631,13 @@ export default function AttendanceLessonPage() {
         studentStatus: student.status,
         presentCount,
         markedCount,
-        totalLessons,
+        totalLessons: 0,
         attendanceRate: markedCount > 0 ? Math.round((presentCount / markedCount) * 100) : 0,
         cells,
       };
     });
+
+    const substituteNameById = new Map(data.staffOptions.map((staff) => [staff.id, staff.name]));
 
     // Flatten cells: each lesson becomes a separate column
     const lessonColumns = days.flatMap((day) =>
@@ -531,29 +648,42 @@ export default function AttendanceLessonPage() {
         isCurrentDate: day.isCurrentDate,
         lessonId: lesson.id,
         timeLabel: formatTimeRange(lesson.startTime, lesson.endTime),
+        substituteTeacherName: lesson.substituteTeacherId
+          ? substituteNameById.get(lesson.substituteTeacherId) || 'Замена'
+          : null,
       }))
     );
 
     const studentRows = monthlyStudents.map((student) => {
-      const lessonStatuses = new Map<string, AttendanceStatus>();
-      
+      const lessonEntries = new Map<string, { status: AttendanceStatus | null; isEligible: boolean }>();
+
       // Build status map for this student
       for (const cell of (rows.find(r => r.studentId === student.id)?.cells ?? [])) {
         for (const entry of cell.entries) {
-          lessonStatuses.set(entry.lessonId, entry.status);
+          lessonEntries.set(entry.lessonId, {
+            status: entry.status,
+            isEligible: entry.isEligible,
+          });
         }
       }
 
       let presentCount = 0;
       let markedCount = 0;
+      let totalLessons = 0;
 
       const cells = lessonColumns.map((col) => {
-        const status = lessonStatuses.get(col.lessonId) ?? 'PLANNED';
-        
-        if (status !== 'PLANNED') {
+        const entry = lessonEntries.get(col.lessonId);
+        const isEligible = entry?.isEligible === true;
+        const status = entry?.status ?? null;
+
+        if (isEligible) {
+          totalLessons += 1;
+        }
+
+        if (isEligible && status && status !== 'PLANNED') {
           markedCount += 1;
         }
-        if (isPresentStatus(status)) {
+        if (isEligible && status && isPresentStatus(status)) {
           presentCount += 1;
         }
 
@@ -562,6 +692,7 @@ export default function AttendanceLessonPage() {
           status,
           timeLabel: col.timeLabel,
           isCurrentLesson: col.lessonId === lessonId,
+          isEligible,
         };
       });
 
@@ -571,7 +702,7 @@ export default function AttendanceLessonPage() {
         studentStatus: student.status,
         presentCount,
         markedCount,
-        totalLessons: lessonColumns.length,
+        totalLessons,
         attendanceRate: markedCount > 0 ? Math.round((presentCount / markedCount) * 100) : 0,
         cells,
       };
@@ -585,7 +716,7 @@ export default function AttendanceLessonPage() {
       lessonColumns,
       rows: studentRows,
     };
-  }, [data, lessonId]);
+  }, [data, lessonId, monthlyAttendanceOverrides]);
 
   const originalStatusMap = useMemo(
     () => new Map((data?.attendanceRecords ?? []).map((record) => [record.studentId, record.status])),
@@ -630,6 +761,40 @@ export default function AttendanceLessonPage() {
         [studentId]: status,
       },
     }));
+  };
+
+  const handleAssignSubstitute = async (substituteTeacherId: string | null) => {
+    if (!lessonId) return;
+    setPageError(null);
+    try {
+      await lessonsService.assignSubstitute(lessonId, substituteTeacherId);
+      await refetch();
+    } catch (saveError) {
+      setPageError(getErrorMessage(saveError, 'Не удалось назначить замену.'));
+      throw saveError;
+    }
+  };
+
+  const handleAssignSubstituteRange = async (params: {
+    substituteTeacherId: string | null;
+    fromDate: string;
+    toDate: string;
+  }) => {
+    if (!data?.lesson.groupId || !data.lesson.teacherId) return;
+    setPageError(null);
+    try {
+      await lessonsService.bulkAssignSubstitute({
+        groupId: data.lesson.groupId,
+        teacherId: data.lesson.teacherId,
+        substituteTeacherId: params.substituteTeacherId,
+        fromDate: params.fromDate,
+        toDate: params.toDate,
+      });
+      await refetch();
+    } catch (saveError) {
+      setPageError(getErrorMessage(saveError, 'Не удалось назначить замену на период.'));
+      throw saveError;
+    }
   };
 
   const handleSaveLesson = async () => {
@@ -754,13 +919,41 @@ export default function AttendanceLessonPage() {
   ) => {
     setPageError(null);
 
+    // Optimistically update the UI immediately without full page reloading / spinner
+    setMonthlyAttendanceOverrides((prev) => ({
+      ...prev,
+      [targetLessonId]: {
+        ...(prev[targetLessonId] || {}),
+        [studentId]: status,
+      },
+    }));
+
+    if (targetLessonId === lessonId) {
+      updateDraftState((prev) => ({
+        ...prev,
+        statusDrafts: {
+          ...prev.statusDrafts,
+          [studentId]: status,
+        },
+      }));
+    }
+
     try {
       await saveAttendanceMutation.mutate({
         id: targetLessonId,
         attendances: [{ studentId, status }],
       });
-      await refetch();
     } catch (saveError) {
+      // Revert optimistic update on error
+      setMonthlyAttendanceOverrides((prev) => {
+        const next = { ...prev };
+        if (next[targetLessonId]) {
+          const lessonOverrides = { ...next[targetLessonId] };
+          delete lessonOverrides[studentId];
+          next[targetLessonId] = lessonOverrides;
+        }
+        return next;
+      });
       setPageError(getErrorMessage(saveError, 'Не удалось сохранить посещаемость.'));
     }
   };
@@ -848,16 +1041,51 @@ export default function AttendanceLessonPage() {
             <p className="text-xs font-semibold uppercase tracking-wide text-[#8a93a3]">
               Преподаватель
             </p>
-            <p className="mt-1 text-sm font-semibold text-[#273142]">{data.teacherName}</p>
+            {data.lesson.teacherId ? (
+              <Link
+                href={`/staff/${data.lesson.teacherId}`}
+                className="mt-1 block text-sm font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
+              >
+                {data.teacherName}
+              </Link>
+            ) : (
+              <p className="mt-1 text-sm font-semibold text-[#273142]">{data.teacherName}</p>
+            )}
             {data.substituteTeacherName ? (
               <p className="mt-1 text-xs text-[#7f8794]">
-                Замена: {data.substituteTeacherName}
+                Замена:{' '}
+                {data.lesson.substituteTeacherId ? (
+                  <Link
+                    href={`/staff/${data.lesson.substituteTeacherId}`}
+                    className="text-[#467aff] hover:underline"
+                  >
+                    {data.substituteTeacherName}
+                  </Link>
+                ) : (
+                  data.substituteTeacherName
+                )}
               </p>
             ) : null}
+            <button
+              type="button"
+              className="mt-2 rounded-lg border border-[#dbe2e8] bg-white px-2 py-1 text-xs font-semibold text-[#467aff] transition-colors hover:bg-[#f0f5ff]"
+              onClick={() => setIsSubstituteModalOpen(true)}
+            >
+              {data.lesson.substituteTeacherId ? 'Изменить замену' : 'Замена'}
+            </button>
           </div>
           <div className="crm-surface-soft p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-[#8a93a3]">Группа</p>
-            <p className="mt-1 text-sm font-semibold text-[#273142]">{data.groupName}</p>
+            {data.courseId || data.lesson.groupId ? (
+              <Link
+                href={`/classes/${data.courseId || data.lesson.groupId}`}
+                className="mt-1 block text-sm font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
+              >
+                {data.groupName}
+              </Link>
+            ) : (
+              <p className="mt-1 text-sm font-semibold text-[#273142]">{data.groupName}</p>
+            )}
           </div>
         </div>
 
@@ -1016,7 +1244,12 @@ export default function AttendanceLessonPage() {
                         {index + 1}
                       </td>
                       <td className="crm-table-cell">
-                        <p className="font-semibold text-[#273142]">{student.fullName}</p>
+                        <Link
+                          href={`/students/${student.id}`}
+                          className="font-semibold text-[#467aff] hover:underline"
+                        >
+                          {student.fullName}
+                        </Link>
                       </td>
                       <td className="crm-table-cell">
                         <p className="text-sm text-[#273142]">
@@ -1068,6 +1301,7 @@ export default function AttendanceLessonPage() {
                 )}
               </tbody>
             </table>
+            <AttendanceTotals statuses={attendanceRows.map((student) => student.status)} />
           </div>
         ) : !data.lesson.groupId ? (
           <div className="crm-surface-soft p-6 text-sm text-[#7f8794]">
@@ -1143,6 +1377,18 @@ export default function AttendanceLessonPage() {
         onSave={(payload) => handleCreateStudent(payload as CreateStudentRequest)}
         isSubmitting={isAddingStudent}
         title="Создать ученика и добавить в группу"
+      />
+
+      <AssignSubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        teacherName={data.teacherName}
+        lessonDate={data.lesson.lessonDate}
+        currentSubstituteId={data.lesson.substituteTeacherId}
+        staffOptions={data.staffOptions}
+        saving={isSavingLesson}
+        onSave={handleAssignSubstitute}
+        onSaveRange={data.lesson.groupId && data.lesson.teacherId ? handleAssignSubstituteRange : undefined}
       />
     </div>
   );

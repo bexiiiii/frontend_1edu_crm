@@ -9,6 +9,7 @@ import type {
   StudentPaymentDto,
   CreateStudentPaymentRequest,
   UpdateStudentPaymentRequest,
+  StudentAttendanceChargeDto,
   StudentPaymentHistoryResponse,
   MonthlyOverviewResponse,
   StudentDebtDto,
@@ -24,6 +25,80 @@ import type {
   ApiPayInvoiceDto,
   ApiPayInvoiceStatus,
 } from './types';
+
+export type CashShiftStatus = 'OPEN' | 'CLOSED';
+
+export interface CashShiftDto {
+  id: string;
+  branchId: string;
+  cashierUserId: string;
+  cashierName?: string | null;
+  status: CashShiftStatus;
+  openedAt: string;
+  closedAt?: string | null;
+  openingFloat: number;
+  expectedCash?: number | null;
+  actualCash?: number | null;
+  differenceAmount?: number | null;
+  closingNote?: string | null;
+  recipientUserId?: string | null;
+  recipientName?: string | null;
+  recipientEmail?: string | null;
+  handoverAccepted?: boolean;
+  handoverAcceptedAt?: string | null;
+  handoverAcceptedBy?: string | null;
+}
+
+export interface CashOperationDto {
+  id: string;
+  shiftId: string;
+  branchId: string;
+  type: 'PAYMENT' | 'DEPOSIT' | 'WITHDRAWAL' | 'EXPENSE' | 'SALARY';
+  amount: number;
+  category?: string | null;
+  reason?: string | null;
+  paymentMethod?: string | null;
+  studentId?: string | null;
+  studentName?: string | null;
+  paymentMonth?: string | null;
+  courseNames?: string | null;
+  receiptNumber?: string | null;
+  cashierUserId: string;
+  cashierName?: string | null;
+  occurredAt: string;
+  deleted: boolean;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+}
+
+export interface CashierPolicyDto {
+  id: string;
+  cashierUserId: string;
+  branchId?: string | null;
+  canOpenShift: boolean;
+  canAcceptPayment: boolean;
+  canDeletePayment: boolean;
+  canMakeExpense: boolean;
+  canPaySalary: boolean;
+  canCloseShift: boolean;
+  canViewReports: boolean;
+  expenseLimit: number;
+  active: boolean;
+}
+
+export interface CashDailyReportDto {
+  date: string;
+  branchId: string;
+  cashIncome: number;
+  nonCashIncome: number;
+  expenses: number;
+  salaries: number;
+  deposits: number;
+  withdrawals: number;
+  expectedCash: number;
+  receiptsCount: number;
+  operationsCount: number;
+}
 
 // ─── Finance Service (Transactions) ────────────────────────────
 
@@ -73,6 +148,96 @@ export const financeService = {
   },
 };
 
+export const cashierService = {
+  async getActiveShift() {
+    const response = await api.get<ApiResponse<CashShiftDto | null>>('/api/v1/finance/cashier/shift/active');
+    return response.data;
+  },
+
+  async getShifts(params?: { from?: string; to?: string }) {
+    const response = await api.get<ApiResponse<CashShiftDto[]>>('/api/v1/finance/cashier/shifts', { params });
+    return response.data;
+  },
+
+  async getShiftOperationsById(shiftId: string) {
+    const response = await api.get<ApiResponse<CashOperationDto[]>>(`/api/v1/finance/cashier/shifts/${shiftId}/operations`);
+    return response.data;
+  },
+
+  async getHistory(params?: { from?: string; to?: string }) {
+    const response = await api.get<ApiResponse<CashOperationDto[]>>('/api/v1/finance/cashier/history', { params });
+    return response.data;
+  },
+
+  async openShift(data: { openingFloat: number; cashierName?: string }) {
+    const response = await api.post<ApiResponse<CashShiftDto>>('/api/v1/finance/cashier/shift/open', data);
+    return response.data;
+  },
+
+  async closeShift(data: { actualCash: number; recipientUserId: string; closingNote?: string }) {
+    const response = await api.post<ApiResponse<CashShiftDto>>('/api/v1/finance/cashier/shift/close', data);
+    return response.data;
+  },
+
+  async createOperation(data: {
+    type: 'EXPENSE' | 'SALARY' | 'DEPOSIT' | 'WITHDRAWAL';
+    amount: number;
+    category?: string;
+    reason: string;
+    staffId?: string;
+    salaryMonth?: string;
+  }) {
+    const response = await api.post<ApiResponse<CashOperationDto>>('/api/v1/finance/cashier/operations', data);
+    return response.data;
+  },
+
+  async recordPayment(data: {
+    receiptNumber: string;
+    studentId: string;
+    studentName: string;
+    paymentMonth: string;
+    paymentMethod: string;
+    courseNames: string;
+    amount: number;
+    transferPhone?: string;
+  }) {
+    const response = await api.post<ApiResponse<CashOperationDto>>('/api/v1/finance/cashier/payments', data);
+    return response.data;
+  },
+
+  async getDailyReport(date?: string) {
+    const response = await api.get<ApiResponse<CashDailyReportDto>>('/api/v1/finance/cashier/reports/daily', {
+      params: date ? { date } : undefined,
+    });
+    return response.data;
+  },
+
+  async getShiftOperations() {
+    const response = await api.get<ApiResponse<CashOperationDto[]>>('/api/v1/finance/cashier/operations');
+    return response.data;
+  },
+
+  async deletePayment(id: string) {
+    const response = await api.delete<ApiResponse<CashOperationDto>>(`/api/v1/finance/cashier/payments/${id}`);
+    return response.data;
+  },
+
+  async getPolicies() {
+    const response = await api.get<ApiResponse<CashierPolicyDto[]>>('/api/v1/finance/cashier/policies');
+    return response.data;
+  },
+
+  async createPolicy(data: Omit<CashierPolicyDto, 'id'>) {
+    const response = await api.post<ApiResponse<CashierPolicyDto>>('/api/v1/finance/cashier/policies', data);
+    return response.data;
+  },
+
+  async updatePolicy(id: string, data: Omit<CashierPolicyDto, 'id'>) {
+    const response = await api.put<ApiResponse<CashierPolicyDto>>(`/api/v1/finance/cashier/policies/${id}`, data);
+    return response.data;
+  },
+};
+
 // ─── Student Payments Service ───────────────────────────────────
 
 export const studentPaymentsService = {
@@ -84,9 +249,27 @@ export const studentPaymentsService = {
     return response.data;
   },
 
+  /** Начисления по занятиям: за какой урок сколько списано, а какой не тарифицируется */
+  async getAttendanceCharges(studentId: string, params?: { fromMonth?: string; toMonth?: string }) {
+    const response = await api.get<ApiResponse<StudentAttendanceChargeDto[]>>(
+      `/api/v1/payments/student-payments/student/${studentId}/attendance-charges`,
+      { params }
+    );
+    return response.data;
+  },
+
   /** Create student payment */
   async create(data: CreateStudentPaymentRequest) {
     const response = await api.post<ApiResponse<StudentPaymentDto>>('/api/v1/payments/student-payments', data);
+    return response.data;
+  },
+
+  /** Return available advance to the student and keep an auditable ledger entry. */
+  async refundBalance(studentId: string, data: import('./types').RefundStudentBalanceRequest) {
+    const response = await api.post<ApiResponse<StudentPaymentDto>>(
+      `/api/v1/payments/student-payments/student/${studentId}/refunds`,
+      data
+    );
     return response.data;
   },
 
@@ -100,6 +283,34 @@ export const studentPaymentsService = {
   async delete(id: string) {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/payments/student-payments/${id}`);
     return response.data;
+  },
+
+  /** Update course subscription discount percent */
+  async updateSubscriptionDiscount(
+    studentId: string,
+    courseId: string,
+    discountPercent: number,
+    salaryDiscountMode: 'FULL_PRICE' | 'DISCOUNTED_PRICE' = 'FULL_PRICE',
+    discountAmount?: number,
+    period?: { fromMonth?: string | null; toMonth?: string | null }
+  ) {
+    const discountFromMonth = period ? period.fromMonth || '' : undefined;
+    const discountToMonth = period ? period.toMonth || '' : undefined;
+    try {
+      const response = await api.put<ApiResponse<any>>(
+        `/api/v1/subscriptions/student/${studentId}/course/${courseId}/discount`,
+        null,
+        { params: { discountPercent, salaryDiscountMode, discountAmount, discountFromMonth, discountToMonth } }
+      );
+      return response.data;
+    } catch {
+      const response = await api.put<ApiResponse<any>>(
+        `/api/v1/payments/subscriptions/student/${studentId}/course/${courseId}/discount`,
+        null,
+        { params: { discountPercent, salaryDiscountMode, discountAmount, discountFromMonth, discountToMonth } }
+      );
+      return response.data;
+    }
   },
 
   /** Get monthly overview */
@@ -134,16 +345,39 @@ export const salaryService = {
   },
 
   /** Get history for a staff member */
-  async getStaffHistory(staffId: string, params?: { from?: string; to?: string }) {
+  async getStaffHistory(staffId: string, params?: { from?: string; to?: string; branchId?: string }) {
     const response = await api.get<ApiResponse<StaffSalaryHistoryDto>>(`/api/v1/finance/salary/staff/${staffId}`, {
       params,
     });
     return response.data;
   },
 
+  /** Exclude one lesson from payroll without changing the lesson or attendance. */
+  async excludeLesson(staffId: string, lessonId: string, reason?: string) {
+    const response = await api.put<ApiResponse<void>>(
+      `/api/v1/finance/salary/staff/${staffId}/lessons/${lessonId}/exclusion`,
+      { reason: reason || undefined }
+    );
+    return response.data;
+  },
+
+  /** Return an excluded lesson to payroll calculation. */
+  async restoreLesson(staffId: string, lessonId: string) {
+    const response = await api.delete<ApiResponse<void>>(
+      `/api/v1/finance/salary/staff/${staffId}/lessons/${lessonId}/exclusion`
+    );
+    return response.data;
+  },
+
   /** Record a salary payment */
   async createPayment(data: CreateSalaryPaymentRequest) {
     const response = await api.post<ApiResponse<SalaryPaymentDto>>('/api/v1/finance/salary/payments', data);
+    return response.data;
+  },
+
+  /** Update salary payment */
+  async cancelPayment(id: string) {
+    const response = await api.delete<ApiResponse<SalaryPaymentDto>>(`/api/v1/finance/salary/payments/${id}`);
     return response.data;
   },
 

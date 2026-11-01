@@ -7,14 +7,15 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  maxWidth?: string;
 }
 
-export const Modal = ({ isOpen, onClose, title, children, footer }: ModalProps) => {
+export const Modal = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-2xl' }: ModalProps) => {
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-[1px] sm:p-6">
-      <div className="max-h-[92svh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#e2e8ee] bg-[#fbfcfd] shadow-[0_24px_50px_rgba(15,23,42,0.16)]">
+      <div className={`max-h-[92svh] w-full ${maxWidth} overflow-y-auto rounded-2xl border border-[#e2e8ee] bg-[#fbfcfd] shadow-[0_24px_50px_rgba(15,23,42,0.16)]`}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#e6ebf0] p-4 sm:p-6">
           <h2 className="text-lg font-bold text-[#1f2530] sm:text-xl">{title}</h2>

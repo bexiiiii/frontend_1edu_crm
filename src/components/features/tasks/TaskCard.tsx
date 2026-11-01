@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Calendar, Check, Edit2, Trash2, User } from 'lucide-react';
 import {
   TASK_PRIORITY_COLORS,
@@ -46,7 +47,17 @@ export const TaskCard = ({ task, onClick, onComplete, onEdit, onDelete }: TaskCa
       <div className="mt-4 space-y-2 text-sm text-[#4f5b6b]">
         <div className="flex items-center gap-2">
           <User className="h-4 w-4 text-[#8a93a3]" />
-          <span>{task.assigneeName || 'Не назначен'}</span>
+          {task.assignedTo ? (
+            <Link
+              href={`/staff/${task.assignedTo}`}
+              onClick={(e) => e.stopPropagation()}
+              className="text-[#4f5b6b] hover:text-[#467aff] hover:underline"
+            >
+              {task.assigneeName || 'Не назначен'}
+            </Link>
+          ) : (
+            <span>{task.assigneeName || 'Не назначен'}</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-[#8a93a3]" />

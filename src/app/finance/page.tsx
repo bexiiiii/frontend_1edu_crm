@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { CalendarDays, Edit2, Loader2, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
@@ -29,11 +30,9 @@ function getStudentFullName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ')
+    || student.fullName?.trim()
+    || '';
 }
 
 function toFormValues(transaction: FinanceTransactionItem): TransactionFormValues {
@@ -165,7 +164,17 @@ export default function Finance() {
   const transactions = useMemo<FinanceTransactionItem[]>(
     () =>
       (transactionsPage?.content ?? [])
-        .filter((transaction) => transaction.type === activeTab)
+        .filter((transaction) => {
+          if (transaction.type !== activeTab) return false;
+          if (activeTab === 'INCOME') {
+            const desc = (transaction.description || '').toLowerCase();
+            const cat = (transaction.category || '').toLowerCase();
+            if (desc.startsWith('оплата обучения') || cat === 'education_payment' || cat === 'оплата за обучение') {
+              return false;
+            }
+          }
+          return true;
+        })
         .map((transaction) => toListItem(transaction, studentMap)),
     [activeTab, studentMap, transactionsPage]
   );
@@ -572,7 +581,18 @@ export default function Finance() {
                           {TRANSACTION_STATUS_LABELS[transaction.status]}
                         </span>
                       </td>
-                      <td className="crm-table-cell">{transaction.studentName || '—'}</td>
+                      <td className="crm-table-cell">
+                        {transaction.studentId && transaction.studentName ? (
+                          <Link
+                            href={`/students/${transaction.studentId}`}
+                            className="font-medium text-[#467aff] hover:underline"
+                          >
+                            {transaction.studentName}
+                          </Link>
+                        ) : (
+                          transaction.studentName || '—'
+                        )}
+                      </td>
                       <td className="crm-table-cell">{transaction.description || '—'}</td>
                       <td className="crm-table-cell">
                         {transaction.amountChangeReasonCode

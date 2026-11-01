@@ -7,8 +7,8 @@ import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import { Toaster } from '@/components/ui/Toaster';
 import TrialExpiredBlockingModal from '@/components/TrialExpiredBlockingModal';
-import { tenantsService, type TenantDto } from '@/lib/api';
-import { canAccessPath } from '@/lib/rbac';
+import { decodeJwt, refreshAccessToken, tenantsService, type TenantDto } from '@/lib/api';
+import { canAccessPath, getDefaultAuthenticatedPath } from '@/lib/rbac';
 
 function isSubscriptionExpired(tenant: TenantDto | null): boolean {
   if (!tenant?.status) {
@@ -44,15 +44,52 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [hydrate]);
 
+  // Продлеваем сессию заранее, а не после отказа запроса: пользователь работает
+  // без выкидываний, пока жива серверная сессия.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const keepAlive = () => {
+      const token = localStorage.getItem('access_token');
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (!token || !refreshToken) return;
+      try {
+        const claims = decodeJwt(token);
+        const exp = typeof claims.exp === 'number' ? claims.exp : 0;
+        const secondsLeft = exp ? exp - Date.now() / 1000 : Number.MAX_SAFE_INTEGER;
+        if (secondsLeft > 300) return;
+      } catch {
+        return;
+      }
+      void refreshAccessToken(refreshToken)
+        .then((tokenData) => {
+          localStorage.setItem('access_token', tokenData.access_token);
+          localStorage.setItem('refresh_token', tokenData.refresh_token);
+        })
+        .catch(() => {
+          // Не разлогиниваем здесь: обработчик 401 сделает это, если сессия мертва.
+        });
+    };
+
+    window.addEventListener('focus', keepAlive);
+    const timer = window.setInterval(keepAlive, 120_000);
+    keepAlive();
+
+    return () => {
+      window.removeEventListener('focus', keepAlive);
+      window.clearInterval(timer);
+    };
+  }, [isAuthenticated]);
+
   useEffect(() => {
     if (!hydrated || isLoginPage || !isAuthenticated) {
       return;
     }
 
     if (!hasRouteAccess) {
-      router.replace('/system/403');
+      router.replace(pathname === '/' ? getDefaultAuthenticatedPath(roles) : '/system/403');
     }
-  }, [hasRouteAccess, hydrated, isAuthenticated, isLoginPage, router]);
+  }, [hasRouteAccess, hydrated, isAuthenticated, isLoginPage, pathname, roles, router]);
 
   useEffect(() => {
     if (!isAuthenticated || !tenantId || isLoginPage) {

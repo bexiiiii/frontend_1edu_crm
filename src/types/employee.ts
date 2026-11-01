@@ -15,8 +15,11 @@ export interface StaffListItem {
   salary: number | null;
   salaryType: SalaryType;
   salaryPercentage: number | null;
+  individualSalaryPercentage: number | null;
+  birthdate: string;
   hireDate: string;
   notes: string;
+  scheduleColor: string;
 }
 
 export interface StaffFilters {
@@ -38,6 +41,8 @@ export interface StaffFormValues {
   salary: string;
   salaryType: SalaryType;
   salaryPercentage: string;
+  individualSalaryPercentage: string;
   hireDate: string;
   notes: string;
+  scheduleColor: string;
 }

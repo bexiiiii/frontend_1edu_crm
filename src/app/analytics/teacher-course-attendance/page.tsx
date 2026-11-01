@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { useApi } from '@/hooks/useApi';
 import { analyticsService, staffService } from '@/lib/api';
+import { formatFullName } from '@/lib/utils';
 import { ATTENDANCE_STATUS_COLORS, ATTENDANCE_STATUS_LABELS } from '@/constants/attendance';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
 import type {
@@ -70,7 +72,7 @@ export default function TeacherCourseAttendancePage() {
   const teachers = useMemo(
     () =>
       (teachersPage?.content || [])
-        .map((teacher) => ({ id: teacher.id, name: teacher.fullName }))
+        .map((teacher) => ({ id: teacher.id, name: formatFullName(teacher) || 'Без имени' }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ru-RU')),
     [teachersPage]
   );
@@ -200,7 +202,7 @@ export default function TeacherCourseAttendancePage() {
                   {lessonDays.map((lessonDay) => (
                     <th key={lessonDay.lessonId} className="crm-table-th min-w-24 border border-[#e4eaf0] text-center">
                       <div className="flex flex-col items-center gap-0.5 px-1">
-                        <span className="text-xs font-bold text-[#657287]">{formatLessonDay(lessonDay.date)}</span>
+                        <Link href={`/attendance/${lessonDay.lessonId}`} className="text-xs font-bold text-[#657287] hover:text-[#467aff] transition-colors">{formatLessonDay(lessonDay.date)}</Link>
                         <span className="text-[10px] uppercase tracking-[0.06em] text-[#627084]">
                           {formatLessonWeekday(lessonDay.date)}
                         </span>
@@ -218,7 +220,7 @@ export default function TeacherCourseAttendancePage() {
                     <tr key={row.studentId} className="crm-table-row">
                       <td className="crm-table-cell sticky left-0 z-10 border border-[#e4eaf0] bg-[#fbfcfd]">
                         <div>
-                          <p className="font-semibold text-[#273142]">{row.studentName}</p>
+                          <Link href={`/students/${row.studentId}`} className="font-semibold text-[#273142] hover:text-[#467aff] hover:underline transition-colors">{row.studentName}</Link>
                           <span
                             className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${STUDENT_STATUS_COLORS[row.studentStatus as StudentStatus]}`}
                           >

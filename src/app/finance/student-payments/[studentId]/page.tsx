@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Edit2, Loader2, MessageCircle, Phone, Plus, Send, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
@@ -48,6 +49,7 @@ interface PaymentRow {
   amountChangeReasonOther: StudentPaymentDto['amountChangeReasonOther'];
   notes: string | null;
   subscriptionId: string;
+  courseId?: string | null;
   courseName: string;
 }
 
@@ -90,11 +92,9 @@ function getStudentFullName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ')
+    || student.fullName?.trim()
+    || '';
 }
 
 function normalizePhoneForMessenger(phone: string): string {
@@ -316,6 +316,7 @@ export default function StudentPaymentHistoryPage() {
 
     return historyData.subscriptions.map((subscription) => ({
       subscriptionId: subscription.subscriptionId,
+      courseId: subscription.courseId || null,
       courseName: courseMap.get(subscription.courseId || '') || subscription.courseId || 'Без курса',
       startDate: subscription.startDate,
       endDate: subscription.endDate,
@@ -350,6 +351,7 @@ export default function StudentPaymentHistoryPage() {
             amountChangeReasonOther: payment.amountChangeReasonOther,
             notes: payment.notes,
             subscriptionId: payment.subscriptionId,
+            courseId: subscription.courseId || null,
             courseName,
           });
         });
@@ -366,6 +368,7 @@ export default function StudentPaymentHistoryPage() {
 
     const rows: Array<{
       key: string;
+      courseId?: string | null;
       courseName: string;
       month: string;
       expected: number;
@@ -375,11 +378,13 @@ export default function StudentPaymentHistoryPage() {
     }> = [];
 
     historyData.subscriptions.forEach((subscription) => {
+      const courseId = subscription.courseId || null;
       const courseName = courseMap.get(subscription.courseId || '') || subscription.courseId || 'Без курса';
 
       subscription.months.forEach((month) => {
         rows.push({
           key: `${subscription.subscriptionId}-${month.month}`,
+          courseId,
           courseName,
           month: month.month,
           expected: month.expected,
@@ -564,7 +569,15 @@ export default function StudentPaymentHistoryPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-semibold text-[#1f2530]">История платежей: {studentName}</h2>
+              <h2 className="text-xl font-semibold text-[#1f2530]">
+                История платежей:{' '}
+                <Link
+                  href={`/students/${studentId}`}
+                  className="text-[#467aff] transition-colors hover:underline"
+                >
+                  {studentName}
+                </Link>
+              </h2>
 
               {(() => {
                 const primaryPhone = studentData ? getPrimaryPhone(studentData) : null;
@@ -688,7 +701,16 @@ export default function StudentPaymentHistoryPage() {
                         <tr key={row.subscriptionId} className="crm-table-row">
                           <td className="crm-table-cell">{index + 1}</td>
                           <td className="crm-table-cell">
-                            <div className="text-sm font-semibold text-[#202938]">{row.courseName}</div>
+                            {row.courseId ? (
+                              <Link
+                                href={`/classes/${row.courseId}`}
+                                className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#467aff] hover:underline"
+                              >
+                                {row.courseName}
+                              </Link>
+                            ) : (
+                              <div className="text-sm font-semibold text-[#202938]">{row.courseName}</div>
+                            )}
                             <div className="mt-0.5 text-xs text-[#8690a0]">Абонемент: {row.subscriptionId}</div>
                           </td>
                           <td className="crm-table-cell">{formatDate(row.startDate)} - {formatDate(row.endDate)}</td>
@@ -748,7 +770,16 @@ export default function StudentPaymentHistoryPage() {
                           <td className="crm-table-cell">{formatDate(payment.paidAt)}</td>
                           <td className="crm-table-cell">{payment.paymentMonth || '—'}</td>
                           <td className="crm-table-cell">
-                            <div className="text-sm font-semibold text-[#202938]">{payment.courseName}</div>
+                            {payment.courseId ? (
+                              <Link
+                                href={`/classes/${payment.courseId}`}
+                                className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#467aff] hover:underline"
+                              >
+                                {payment.courseName}
+                              </Link>
+                            ) : (
+                              <div className="text-sm font-semibold text-[#202938]">{payment.courseName}</div>
+                            )}
                             <div className="mt-0.5 text-xs text-[#8690a0]">{payment.subscriptionId}</div>
                           </td>
                           <td className="crm-table-cell">{formatMoney(payment.amount)}</td>
@@ -821,7 +852,18 @@ export default function StudentPaymentHistoryPage() {
                     {monthlyRows.length > 0 ? (
                       monthlyRows.map((row) => (
                         <tr key={row.key} className="crm-table-row">
-                          <td className="crm-table-cell">{row.courseName}</td>
+                          <td className="crm-table-cell">
+                            {row.courseId ? (
+                              <Link
+                                href={`/classes/${row.courseId}`}
+                                className="font-semibold text-[#202938] transition-colors hover:text-[#467aff] hover:underline"
+                              >
+                                {row.courseName}
+                              </Link>
+                            ) : (
+                              row.courseName
+                            )}
+                          </td>
                           <td className="crm-table-cell">{formatMonth(row.month)}</td>
                           <td className="crm-table-cell">{formatMoney(row.expected)}</td>
                           <td className="crm-table-cell text-emerald-700">{formatMoney(row.paid)}</td>
@@ -893,7 +935,7 @@ export default function StudentPaymentHistoryPage() {
                                 <div className="text-sm font-semibold text-[#202938]">
                                   {log.callerName || log.createdByName || (
                                     currentUser && log.createdBy === currentUser.id
-                                      ? `${currentUser.firstName} ${currentUser.lastName}`.trim() || currentUser.email
+                                      ? `${currentUser.lastName || ''} ${currentUser.firstName || ''}`.trim() || currentUser.email
                                       : '—'
                                   )}
                                 </div>

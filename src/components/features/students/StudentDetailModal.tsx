@@ -31,6 +31,11 @@ function formatDate(value: string): string {
   });
 }
 
+function getStudentDisplayName(student: StudentListItem): string {
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim()
+    || student.fullName;
+}
+
 export const StudentDetailModal = ({
   isOpen,
   onClose,
@@ -44,6 +49,8 @@ export const StudentDetailModal = ({
   if (!student) {
     return null;
   }
+
+  const displayName = getStudentDisplayName(student);
 
   return (
     <Modal
@@ -65,14 +72,14 @@ export const StudentDetailModal = ({
         <div className="flex items-start justify-between gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">ФИО</label>
-            <p className="text-base font-semibold text-gray-900">{student.fullName}</p>
+            <p className="text-base font-semibold text-gray-900">{displayName}</p>
             <p className="mt-1 text-sm text-gray-500">{student.customer || 'Без заказчика'}</p>
           </div>
 
           {studentPhotoUrl ? (
             <img
               src={studentPhotoUrl}
-              alt={student.fullName}
+              alt={displayName}
               className="h-20 w-20 rounded-2xl object-cover"
             />
           ) : null}
@@ -87,26 +94,15 @@ export const StudentDetailModal = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500">Телефон</label>
-            <p className="text-base text-gray-900">{student.phone || '—'}</p>
-          </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">Телефон ученика</label>
-            <p className="text-base text-gray-900">{student.studentPhone || '—'}</p>
+            <p className="text-base text-gray-900">{student.studentPhone || student.phone || '—'}</p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">Email</label>
             <p className="text-base text-gray-900">{student.email || '—'}</p>
           </div>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-500">Дополнительные телефоны</label>
-          <p className="text-base text-gray-900">
-            {student.additionalPhones.length > 0 ? student.additionalPhones.join(', ') : '—'}
-          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

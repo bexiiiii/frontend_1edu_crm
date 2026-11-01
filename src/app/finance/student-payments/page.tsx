@@ -3,9 +3,12 @@
 import { BadgeAlert, Calendar, CalendarDays, ChevronLeft, ChevronRight, Eye, Loader2, Plus, RotateCcw, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
+import { ApiPayInvoiceModal } from '@/components/features/settings/ApiPayInvoiceModal';
 import {
   STUDENT_PAYMENT_STATUS_COLORS,
   STUDENT_PAYMENT_STATUS_LABELS,
@@ -20,6 +23,7 @@ import {
   type SubscriptionStatus,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { pushToast } from '@/lib/toast';
 
 type StudentPaymentsTab = 'OVERVIEW' | 'DEBTORS';
 type DebtorStageFilter = 'all' | 'two_plus' | 'three_plus';
@@ -30,6 +34,12 @@ interface PaymentModalState {
   studentId: string;
   lockStudent?: boolean;
   subscriptionId?: string;
+}
+
+interface KaspiInvoiceModalState {
+  isOpen: boolean;
+  studentId: string;
+  subscriptionId: string;
 }
 
 const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionStatus, string> = {
@@ -58,11 +68,57 @@ function getStudentFullName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ')
+    || student.fullName?.trim()
+    || '';
+}
+
+function normalizePhoneForWhatsApp(value: string | null | undefined): string {
+  const digits = value?.replace(/\D/g, '') || '';
+  if (!digits) return '';
+  if (digits.startsWith('00')) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('8')) return `7${digits.slice(1)}`;
+  if (digits.length === 10) return `7${digits}`;
+  return digits;
+}
+
+function getStudentWhatsAppPhone(student: {
+  phone?: string | null;
+  studentPhone?: string | null;
+  parentPhone?: string | null;
+  additionalPhones?: string[] | null;
+}): string {
+  const candidates = [student.phone, student.studentPhone, student.parentPhone, ...(student.additionalPhones ?? [])];
+  return candidates.map(normalizePhoneForWhatsApp).find(Boolean) || '';
+}
+
+function WhatsAppAction({ phone, studentName }: { phone: string; studentName: string }) {
+  if (!phone) {
+    return (
+      <button
+        type="button"
+        disabled
+        className="inline-flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-lg opacity-40"
+        title="У ученика не указан номер WhatsApp"
+        aria-label={`Номер WhatsApp для ${studentName} не указан`}
+      >
+        <Image src="/logo/whatsapp.svg" alt="" width={18} height={18} />
+      </button>
+    );
   }
 
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+  return (
+    <a
+      href={`https://wa.me/${phone}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-white transition-colors hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+      title="Открыть WhatsApp"
+      aria-label={`Открыть WhatsApp для ${studentName}`}
+    >
+      <Image src="/logo/whatsapp.svg" alt="" width={18} height={18} />
+    </a>
+  );
 }
 
 function formatMoney(value: number): string {
@@ -145,6 +201,7 @@ function getDebtSeverityMeta(debtMonths: number) {
 }
 
 export default function StudentPaymentsPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<StudentPaymentsTab>('OVERVIEW');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StudentPaymentMonthStatus | 'all'>('all');
@@ -156,6 +213,11 @@ export default function StudentPaymentsPage() {
     key: 0,
     isOpen: false,
     studentId: '',
+  });
+  const [kaspiInvoiceModalState, setKaspiInvoiceModalState] = useState<KaspiInvoiceModalState>({
+    isOpen: false,
+    studentId: '',
+    subscriptionId: '',
   });
 
   const { data: studentsPage } = useApi(() => studentsService.getAll({ page: 0, size: 1000 }), []);
@@ -194,6 +256,10 @@ export default function StudentPaymentsPage() {
     () => new Map((studentsPage?.content ?? []).map((student) => [student.id, student.discountPercent ?? null])),
     [studentsPage]
   );
+  const studentWhatsAppMap = useMemo(
+    () => new Map((studentsPage?.content ?? []).map((student) => [student.id, getStudentWhatsAppPhone(student)])),
+    [studentsPage]
+  );
   const courseMap = useMemo(
     () => new Map((coursesPage?.content ?? []).map((course) => [course.id, course.name])),
     [coursesPage]
@@ -204,6 +270,7 @@ export default function StudentPaymentsPage() {
         (subscriptionsPage?.content ?? []).map((subscription) => [
           subscription.id,
           {
+            courseId: subscription.courseId,
             courseName: subscription.courseId ? courseMap.get(subscription.courseId) || 'Без курса' : 'Без курса',
             amount: subscription.amount,
             currency: subscription.currency,
@@ -221,7 +288,7 @@ export default function StudentPaymentsPage() {
 
     return (monthlyOverview?.students ?? [])
       .filter((item) => {
-        const studentName = studentMap.get(item.studentId) || item.studentId;
+        const studentName = (item as any).fullName || studentMap.get(item.studentId) || item.studentId;
         const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
         const haystack = [
           studentName,
@@ -250,7 +317,7 @@ export default function StudentPaymentsPage() {
 
     return (debtorsData ?? [])
       .filter((item) => {
-        const studentName = studentMap.get(item.studentId) || item.studentId;
+        const studentName = item.fullName || studentMap.get(item.studentId) || item.studentId;
         const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
         const haystack = [studentName, subscriptionMeta?.courseName || '', item.subscriptionId].join(' ').toLowerCase();
 
@@ -268,8 +335,108 @@ export default function StudentPaymentsPage() {
 
         return true;
       })
-      .sort((left, right) => right.totalDebt - left.totalDebt || right.debtMonths - left.debtMonths);
+      .sort((left, right) => {
+        const leftName = left.fullName || studentMap.get(left.studentId) || left.studentId;
+        const rightName = right.fullName || studentMap.get(right.studentId) || right.studentId;
+        return leftName.localeCompare(rightName, 'ru');
+      });
   }, [debtorStageFilter, debtorsData, search, studentMap, subscriptionMetaMap]);
+
+  // Карточка студента показывает общий долг по всем курсам одной суммой —
+  // сворачиваем построчные записи (по абонементу) в одну строку на ученика,
+  // чтобы список Должников/Платежей студентов совпадал с тем, что видно в профиле.
+  const groupedOverviewRows = useMemo(() => {
+    const byStudent = new Map<string, {
+      studentId: string;
+      studentName: string;
+      isDeleted: boolean;
+      expected: number;
+      paid: number;
+      debt: number;
+      status: StudentPaymentMonthStatus;
+      courseNames: string[];
+      subscriptionIds: string[];
+    }>();
+
+    for (const item of overviewRows) {
+      const studentName = (item as any).fullName || studentMap.get(item.studentId) || 'Ученик удален';
+      const isDeleted = !studentMap.has(item.studentId) && !(item as any).fullName;
+      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
+      const existing = byStudent.get(item.studentId);
+      const courseName = subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`;
+
+      if (!existing) {
+        byStudent.set(item.studentId, {
+          studentId: item.studentId,
+          studentName,
+          isDeleted,
+          expected: item.expected,
+          paid: item.paid,
+          debt: item.debt,
+          status: item.status,
+          courseNames: [courseName],
+          subscriptionIds: [item.subscriptionId],
+        });
+      } else {
+        existing.expected += item.expected;
+        existing.paid += item.paid;
+        existing.debt += item.debt;
+        existing.courseNames.push(courseName);
+        existing.subscriptionIds.push(item.subscriptionId);
+        // Worst status wins: UNPAID > PARTIAL > PAID
+        if (existing.status !== 'UNPAID') {
+          if (item.status === 'UNPAID') existing.status = 'UNPAID';
+          else if (item.status === 'PARTIAL' && existing.status === 'PAID') existing.status = 'PARTIAL';
+        }
+      }
+    }
+
+    return Array.from(byStudent.values()).sort((left, right) => right.debt - left.debt || left.studentName.localeCompare(right.studentName, 'ru'));
+  }, [overviewRows, studentMap, subscriptionMetaMap]);
+
+  const groupedDebtorRows = useMemo(() => {
+    const byStudent = new Map<string, {
+      studentId: string;
+      studentName: string;
+      isDeleted: boolean;
+      totalDebt: number;
+      debtMonths: number;
+      monthlyExpected: number;
+      discountPercent: number | null;
+      courseNames: string[];
+      subscriptionIds: string[];
+    }>();
+
+    for (const item of debtorRows) {
+      const studentName = item.fullName || studentMap.get(item.studentId) || 'Ученик удален';
+      const isDeleted = !item.fullName && !studentMap.has(item.studentId);
+      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
+      const existing = byStudent.get(item.studentId);
+      const courseName = subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`;
+
+      if (!existing) {
+        byStudent.set(item.studentId, {
+          studentId: item.studentId,
+          studentName,
+          isDeleted,
+          totalDebt: item.totalDebt,
+          debtMonths: item.debtMonths,
+          monthlyExpected: item.monthlyExpected,
+          discountPercent: item.discountPercent ?? null,
+          courseNames: [courseName],
+          subscriptionIds: [item.subscriptionId],
+        });
+      } else {
+        existing.totalDebt += item.totalDebt;
+        existing.monthlyExpected += item.monthlyExpected;
+        existing.debtMonths = Math.max(existing.debtMonths, item.debtMonths);
+        existing.courseNames.push(courseName);
+        existing.subscriptionIds.push(item.subscriptionId);
+      }
+    }
+
+    return Array.from(byStudent.values()).sort((left, right) => left.studentName.localeCompare(right.studentName, 'ru'));
+  }, [debtorRows, studentMap, subscriptionMetaMap]);
 
   const paymentSubscriptionOptions = useMemo(
     () => {
@@ -336,21 +503,21 @@ export default function StudentPaymentsPage() {
     () => [
       {
         label: 'Должников',
-        value: String(debtorRows.length),
+        value: String(groupedDebtorRows.length),
         cardClass: 'border-[#dbe2e8] bg-[#f8fafc]',
         valueClass: 'text-[#1f2530]',
       },
       {
         label: 'Общий долг',
-        value: formatMoney(debtorRows.reduce((sum, item) => sum + item.totalDebt, 0)),
+        value: formatMoney(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0)),
         cardClass: 'border-rose-100 bg-rose-50',
         valueClass: 'text-rose-700',
       },
       {
         label: 'Средний долг',
         value: formatMoney(
-          debtorRows.length > 0
-            ? Math.round(debtorRows.reduce((sum, item) => sum + item.totalDebt, 0) / debtorRows.length)
+          groupedDebtorRows.length > 0
+            ? Math.round(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0) / groupedDebtorRows.length)
             : 0
         ),
         cardClass: 'border-amber-100 bg-amber-50',
@@ -358,12 +525,12 @@ export default function StudentPaymentsPage() {
       },
       {
         label: 'Критичные кейсы',
-        value: String(debtorRows.filter((item) => item.debtMonths >= 3).length),
+        value: String(groupedDebtorRows.filter((item) => item.debtMonths >= 3).length),
         cardClass: 'border-[#dbe2e8] bg-white',
         valueClass: 'text-[#1f2530]',
       },
     ],
-    [debtorRows]
+    [groupedDebtorRows]
   );
 
   const openAddPayment = (options?: { studentId?: string; subscriptionId?: string; lockStudent?: boolean }) => {
@@ -384,6 +551,14 @@ export default function StudentPaymentsPage() {
       lockStudent: false,
       subscriptionId: undefined,
     }));
+  };
+
+  const openKaspiInvoice = (studentId: string, subscriptionId: string) => {
+    setKaspiInvoiceModalState({ isOpen: true, studentId, subscriptionId });
+  };
+
+  const closeKaspiInvoice = () => {
+    setKaspiInvoiceModalState({ isOpen: false, studentId: '', subscriptionId: '' });
   };
 
   const handleCreatePayment = async (data: CreateStudentPaymentRequest) => {
@@ -536,10 +711,10 @@ export default function StudentPaymentsPage() {
           ) : (
             <>
               <p className="text-sm font-medium text-gray-700">
-                Должников: <span className="font-semibold text-gray-900">{debtorRows.length}</span>
+                Должников: <span className="font-semibold text-gray-900">{groupedDebtorRows.length}</span>
               </p>
               <p className="text-sm font-medium text-gray-700">
-                Общий долг: <span className="font-semibold text-rose-700">{formatMoney(debtorRows.reduce((sum, item) => sum + item.totalDebt, 0))}</span>
+                Общий долг: <span className="font-semibold text-rose-700">{formatMoney(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0))}</span>
               </p>
             </>
           )}
@@ -571,21 +746,46 @@ export default function StudentPaymentsPage() {
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
-                  {overviewRows.length > 0 ? (
-                    overviewRows.map((item, index) => {
+                  {groupedOverviewRows.length > 0 ? (
+                    groupedOverviewRows.map((item, index) => {
                       const statusMeta = getOverviewStatusMeta(item.status);
-                      const studentName = studentMap.get(item.studentId) || item.studentId;
-                      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-                      const subscriptionStatusMeta = getSubscriptionStatusMeta(subscriptionMeta?.status);
 
                       return (
-                        <tr key={`${item.studentId}-${item.subscriptionId}`} className="crm-table-row">
+                        <tr
+                          key={item.studentId}
+                          className="crm-table-row cursor-pointer"
+                          onClick={(event) => {
+                            if ((event.target as HTMLElement).closest('a, button, input, select, textarea')) return;
+                            if (item.isDeleted) {
+                              pushToast({
+                                message: 'Карточка ученика удалена или недоступна в текущем филиале',
+                                tone: 'error',
+                              });
+                              return;
+                            }
+                            router.push(`/students/${item.studentId}`);
+                          }}
+                        >
                           <td className="crm-table-cell">{index + 1}</td>
                           <td className="crm-table-cell">
                             <div className="space-y-1.5">
-                              <div className="text-sm font-semibold text-[#202938]">{studentName}</div>
+                              {item.isDeleted ? (
+                                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8690a0]">
+                                  {item.studentName}
+                                  <span className="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-normal text-gray-500">
+                                    Удален
+                                  </span>
+                                </span>
+                              ) : (
+                                <Link
+                                  href={`/students/${item.studentId}`}
+                                  className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#3568eb] hover:underline"
+                                >
+                                  {item.studentName}
+                                </Link>
+                              )}
                               <div className="text-xs text-[#8690a0]">
-                                {subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`}
+                                {item.courseNames.join(', ')}
                               </div>
                             </div>
                           </td>
@@ -607,7 +807,7 @@ export default function StudentPaymentsPage() {
                                   onClick={() =>
                                     openAddPayment({
                                       studentId: item.studentId,
-                                      subscriptionId: item.subscriptionId,
+                                      subscriptionId: item.subscriptionIds.length === 1 ? item.subscriptionIds[0] : undefined,
                                       lockStudent: true,
                                     })
                                   }
@@ -615,6 +815,10 @@ export default function StudentPaymentsPage() {
                                   Платёж
                                 </Button>
                               )}
+                              <WhatsAppAction
+                                phone={studentWhatsAppMap.get(item.studentId) || ''}
+                                studentName={item.studentName}
+                              />
                               <Link
                                 href={`/finance/student-payments/${item.studentId}`}
                                 className="inline-flex rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
@@ -650,24 +854,46 @@ export default function StudentPaymentsPage() {
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
-                  {debtorRows.length > 0 ? (
-                    debtorRows.map((item, index) => {
-                      const studentName = studentMap.get(item.studentId) || item.studentId;
-                      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-                      const subscriptionStatusMeta = getSubscriptionStatusMeta(subscriptionMeta?.status);
+                  {groupedDebtorRows.length > 0 ? (
+                    groupedDebtorRows.map((item, index) => {
                       const debtSeverity = getDebtSeverityMeta(item.debtMonths);
 
                       return (
-                        <tr key={`${item.studentId}-${item.subscriptionId}`} className="crm-table-row">
+                        <tr
+                          key={item.studentId}
+                          className="crm-table-row cursor-pointer"
+                          onClick={(event) => {
+                            if ((event.target as HTMLElement).closest('a, button, input, select, textarea')) return;
+                            if (item.isDeleted) {
+                              pushToast({
+                                message: 'Карточка ученика удалена или недоступна в текущем филиале',
+                                tone: 'error',
+                              });
+                              return;
+                            }
+                            router.push(`/students/${item.studentId}`);
+                          }}
+                        >
                           <td className="crm-table-cell">{index + 1}</td>
                           <td className="crm-table-cell">
                             <div className="space-y-1.5">
-                              <div className="text-sm font-semibold text-[#202938]">{studentName}</div>
+                              {item.isDeleted ? (
+                                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8690a0]">
+                                  {item.studentName}
+                                  <span className="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-normal text-gray-500">
+                                    Удален
+                                  </span>
+                                </span>
+                              ) : (
+                                <Link
+                                  href={`/students/${item.studentId}`}
+                                  className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#3568eb] hover:underline"
+                                >
+                                  {item.studentName}
+                                </Link>
+                              )}
                               <div className="text-xs text-[#8690a0]">
-                                {subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`}
-                              </div>
-                              <div className="text-[11px] text-[#98a2b3]">
-                                Старт: {formatDate(subscriptionMeta?.startDate)}{subscriptionMeta?.endDate ? ` · До: ${formatDate(subscriptionMeta.endDate)}` : ''}
+                                {item.courseNames.join(', ')}
                               </div>
                             </div>
                           </td>
@@ -702,13 +928,28 @@ export default function StudentPaymentsPage() {
                                 onClick={() =>
                                   openAddPayment({
                                     studentId: item.studentId,
-                                    subscriptionId: item.subscriptionId,
+                                    subscriptionId: item.subscriptionIds.length === 1 ? item.subscriptionIds[0] : undefined,
                                     lockStudent: true,
                                   })
                                 }
                               >
                                 Платёж
                               </Button>
+                              {item.subscriptionIds.length === 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openKaspiInvoice(item.studentId, item.subscriptionIds[0])}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#f1c4c8] bg-white transition-colors hover:bg-[#fff4f4] focus:outline-none focus:ring-2 focus:ring-[#ef4444]/25"
+                                  title="Выставить счёт Kaspi POS"
+                                  aria-label={`Выставить счёт Kaspi POS для ${item.studentName}`}
+                                >
+                                  <Image src="/logo/kaspi.svg" alt="" width={22} height={22} />
+                                </button>
+                              ) : null}
+                              <WhatsAppAction
+                                phone={studentWhatsAppMap.get(item.studentId) || ''}
+                                studentName={item.studentName}
+                              />
                               <Link
                                 href={`/finance/student-payments/${item.studentId}`}
                                 className="inline-flex rounded-lg p-2 text-[#3b82f6] transition-colors hover:bg-[#eef5ff]"
@@ -723,7 +964,7 @@ export default function StudentPaymentsPage() {
                     })
                   ) : (
                     <tr className="crm-table-row">
-                      <td colSpan={6} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                         Должники не найдены
                       </td>
                     </tr>
@@ -746,6 +987,13 @@ export default function StudentPaymentsPage() {
         subscriptions={paymentSubscriptionOptions}
         defaultSubscriptionId={paymentModalState.subscriptionId}
         isSubmitting={createPaymentMutation.loading}
+      />
+      <ApiPayInvoiceModal
+        isOpen={kaspiInvoiceModalState.isOpen}
+        onClose={closeKaspiInvoice}
+        initialStudentId={kaspiInvoiceModalState.studentId}
+        initialSubscriptionId={kaspiInvoiceModalState.subscriptionId}
+        initialMonth={selectedMonth}
       />
     </div>
   );

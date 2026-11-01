@@ -1,12 +1,17 @@
 'use client';
+import { CancelSalaryPaymentButton } from '@/components/features/salary/CancelSalaryPaymentButton';
+import { SalaryBalance } from '@/components/features/salary/SalaryBalance';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ArrowLeft,
+  CalendarDays,
   Edit2,
   GraduationCap,
   Loader2,
   PlusCircle,
+  RotateCcw,
   Trash2,
   User,
   Users,
@@ -29,6 +34,7 @@ import {
   coursesService,
   salaryService,
   schedulesService,
+  settingsService,
   staffService,
   studentsService,
   type CreateSalaryPaymentRequest,
@@ -45,6 +51,7 @@ import {
   formatScheduleTimeRange,
 } from '@/lib/scheduleUtils';
 import type { StaffFormValues } from '@/types/employee';
+import { useAuthStore } from '@/store/authStore';
 
 type StaffProfileTab = 'profile' | 'groups' | 'schedule' | 'students' | 'salary';
 
@@ -53,7 +60,6 @@ type StaffProfileData = {
   schedules: ScheduleDto[];
   coursesById: Record<string, CourseDto>;
   studentsByGroupId: Record<string, StudentDto[]>;
-  salaryHistory: StaffSalaryHistoryDto | null;
 };
 
 const profileTabs: Array<{ id: StaffProfileTab; label: string }> = [
@@ -107,6 +113,10 @@ function formatMonthLabel(month: string): string {
   });
 }
 
+function formatTime(value: string | null | undefined): string {
+  return value ? value.slice(0, 5) : '—';
+}
+
 function formatMoney(amount: number | null | undefined, currency = 'KZT'): string {
   if (typeof amount !== 'number') {
     return '—';
@@ -127,11 +137,9 @@ function getStaffDisplayName(staff: StaffDto): string {
 }
 
 function getStudentDisplayName(student: StudentDto): string {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim() || 'Без имени';
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ').trim()
+    || student.fullName?.trim()
+    || 'Без имени';
 }
 
 function compareIsoDateDesc(left: string, right: string): number {
@@ -152,18 +160,27 @@ function toFormValues(staff: StaffDto): StaffFormValues {
     salary: staff.salary !== null ? String(staff.salary) : '',
     salaryType: staff.salaryType,
     salaryPercentage: staff.salaryPercentage !== null ? String(staff.salaryPercentage) : '',
+    individualSalaryPercentage: staff.individualSalaryPercentage != null ? String(staff.individualSalaryPercentage) : '50',
+    scheduleColor: staff.scheduleColor || '#467aff',
     hireDate: staff.hireDate || '',
     notes: staff.notes || '',
   };
 }
 
 export default function StaffProfilePage() {
+  const roles = useAuthStore((state) => state.roles);
+  const permissions = useAuthStore((state) => state.permissions);
+  const canEditSalary = roles.some((role) => role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN') || permissions.includes('FINANCE_EDIT');
+  const isManager = roles.includes('MANAGER') && !roles.some((role) => role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN');
+  const visibleProfileTabs = isManager ? profileTabs.filter((tab) => tab.id !== 'salary') : profileTabs;
   const router = useRouter();
   const params = useParams();
   const staffIdParam = params.staffId;
   const staffId = Array.isArray(staffIdParam) ? staffIdParam[0] : staffIdParam;
 
   const [activeTab, setActiveTab] = useState<StaffProfileTab>('profile');
+  const [selectedSalaryMonth, setSelectedSalaryMonth] = useState(getCurrentMonth());
+  const [selectedSalaryBranchId, setSelectedSalaryBranchId] = useState('all');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [paymentModalState, setPaymentModalState] = useState<{
     key: number;
@@ -182,13 +199,11 @@ export default function StaffProfilePage() {
 
     const staffResponse = await staffService.getById(staffId);
 
-    const [schedulesResult, salaryHistoryResult] = await Promise.all([
-      schedulesService.getAll({ page: 0, size: 500, teacherId: staffId }).catch(() => null),
-      salaryService.getStaffHistory(staffId).catch(() => null),
-    ]);
+    const schedulesResult = await schedulesService
+      .getAll({ page: 0, size: 500, teacherId: staffId })
+      .catch(() => null);
 
     const schedules = schedulesResult?.data.content ?? [];
-    const salaryHistory = salaryHistoryResult?.data ?? null;
 
     const courseIds = Array.from(new Set(schedules.map((schedule) => schedule.courseId).filter(Boolean)));
 
@@ -232,10 +247,44 @@ export default function StaffProfilePage() {
         schedules,
         coursesById,
         studentsByGroupId,
-        salaryHistory,
       },
     };
   }, [staffId]);
+
+  const { data: branches } = useApi(
+    () => (isManager ? Promise.resolve({ data: [] }) : settingsService.getBranches()),
+    [isManager]
+  );
+
+  const staff = data?.staff ?? null;
+  const staffSalaryBranches = useMemo(() => {
+    if (!staff) return [];
+    const allowedBranchIds = new Set(staff.branchIds ?? []);
+    return (branches ?? []).filter((branch) => branch.active && allowedBranchIds.has(branch.id));
+  }, [branches, staff]);
+
+  const salaryBranchId = selectedSalaryBranchId === 'all' ? undefined : selectedSalaryBranchId;
+  const salaryBranchNames = useMemo(
+    () => new Map((branches ?? []).map((branch) => [branch.id, branch.name])),
+    [branches]
+  );
+
+  const {
+    data: salaryHistory,
+    loading: salaryLoading,
+    error: salaryError,
+    refetch: refetchSalary,
+  } = useApi<StaffSalaryHistoryDto | null>(
+    () =>
+      staffId && !isManager
+        ? salaryService.getStaffHistory(staffId, {
+            from: selectedSalaryMonth,
+            to: selectedSalaryMonth,
+            branchId: salaryBranchId,
+          })
+        : Promise.resolve({ data: null }),
+    [isManager, salaryBranchId, selectedSalaryMonth, staffId]
+  );
 
   const updateStaffMutation = useMutation(({ id, payload }: { id: string; payload: UpdateStaffRequest }) =>
     staffService.update(id, payload)
@@ -244,14 +293,18 @@ export default function StaffProfilePage() {
   const createPaymentMutation = useMutation((payload: CreateSalaryPaymentRequest) =>
     salaryService.createPayment(payload)
   );
-
-  const staff = data?.staff ?? null;
-  const salaryHistory = data?.salaryHistory ?? null;
+  const excludeLessonMutation = useMutation(({ lessonId, reason }: { lessonId: string; reason?: string }) =>
+    salaryService.excludeLesson(staffId as string, lessonId, reason)
+  );
+  const restoreLessonMutation = useMutation((lessonId: string) =>
+    salaryService.restoreLesson(staffId as string, lessonId)
+  );
 
   const groupRows = useMemo(() => {
     if (!data) {
       return [] as Array<{
         id: string;
+        courseId: string | null;
         name: string;
         courseName: string;
         studentsCount: number;
@@ -266,6 +319,7 @@ export default function StaffProfilePage() {
       .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.startTime.localeCompare(right.startTime))
       .map((schedule) => ({
         id: schedule.id,
+        courseId: schedule.courseId || null,
         name: schedule.name,
         courseName: schedule.courseId
           ? (data.coursesById[schedule.courseId]?.name || schedule.courseId)
@@ -281,6 +335,7 @@ export default function StaffProfilePage() {
     () =>
       groupRows.map((group) => ({
         id: group.id,
+        courseId: group.courseId,
         name: group.name,
         courseName: group.courseName,
         scheduleText: group.scheduleText,
@@ -345,15 +400,29 @@ export default function StaffProfilePage() {
       .sort((left, right) => left.fullName.localeCompare(right.fullName, 'ru-RU'));
   }, [data]);
 
-  const salaryMonthRows = useMemo(() => {
+  const salaryLessonRows = useMemo(() => {
     if (!salaryHistory) {
       return [];
     }
 
     return salaryHistory.months
+      .flatMap((month) => month.lessons ?? [])
       .slice()
-      .sort((left, right) => right.month.localeCompare(left.month));
+      .sort((left, right) => {
+        const dateComparison = right.lessonDate.localeCompare(left.lessonDate);
+        return dateComparison || (right.startTime || '').localeCompare(left.startTime || '');
+      });
   }, [salaryHistory]);
+
+  const selectedSalaryBreakdown = useMemo(
+    () => salaryHistory?.months.find((month) => month.month === selectedSalaryMonth) ?? null,
+    [salaryHistory, selectedSalaryMonth]
+  );
+
+  const substitutionCount = useMemo(
+    () => salaryLessonRows.filter((lesson) => lesson.substitution).length,
+    [salaryLessonRows]
+  );
 
   const salaryPaymentRows = useMemo(() => {
     if (!salaryHistory) {
@@ -397,7 +466,7 @@ export default function StaffProfilePage() {
     setPaymentModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
-      defaultMonth: getCurrentMonth(),
+      defaultMonth: selectedSalaryMonth,
     }));
   };
 
@@ -434,7 +503,24 @@ export default function StaffProfilePage() {
   const handleSavePayment = async (payload: CreateSalaryPaymentRequest) => {
     await createPaymentMutation.mutate(payload);
     closePaymentModal();
-    await refetch();
+    await Promise.all([refetch(), refetchSalary()]);
+  };
+
+  const handleExcludeSalaryLesson = async (lessonId: string) => {
+    if (!confirm('Исключить этот урок только из начисления зарплаты? Посещаемость, расписание и оплаты учеников не изменятся.')) {
+      return;
+    }
+    try {
+      await excludeLessonMutation.mutate({ lessonId });
+      await refetchSalary();
+    } catch { /* useMutation displays the API error */ }
+  };
+
+  const handleRestoreSalaryLesson = async (lessonId: string) => {
+    try {
+      await restoreLessonMutation.mutate(lessonId);
+      await refetchSalary();
+    } catch { /* useMutation displays the API error */ }
   };
 
   if (!staffId) {
@@ -519,9 +605,11 @@ export default function StaffProfilePage() {
             <div>
               <span className="text-[#8a93a3]">Дата найма:</span> {formatDate(staff.hireDate)}
             </div>
-            <div>
-              <span className="text-[#8a93a3]">Схема оплаты:</span> {STAFF_SALARY_TYPE_LABELS[staff.salaryType]}
-            </div>
+            {!isManager && (
+              <div>
+                <span className="text-[#8a93a3]">Схема оплаты:</span> {STAFF_SALARY_TYPE_LABELS[staff.salaryType]}
+              </div>
+            )}
           </div>
         </div>
 
@@ -534,16 +622,20 @@ export default function StaffProfilePage() {
             <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Ученики</p>
             <p className="mt-1 text-lg font-semibold text-[#1f2530]">{summary.students}</p>
           </div>
-          <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Начислено / выплачено</p>
-            <p className="mt-1 text-lg font-semibold text-[#1f2530]">
-              {formatMoney(summary.totalDue)} / {formatMoney(summary.totalPaid)}
-            </p>
-          </div>
-          <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Остаток</p>
-            <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(summary.totalOutstanding)}</p>
-          </div>
+          {!isManager && (
+            <>
+              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Начислено / выплачено</p>
+                <p className="mt-1 text-lg font-semibold text-[#1f2530]">
+                  {formatMoney(summary.totalDue)} / {formatMoney(summary.totalPaid)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Остаток</p>
+                <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(summary.totalOutstanding)}</p>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#e6ebf0] pt-4">
@@ -555,14 +647,16 @@ export default function StaffProfilePage() {
           >
             Редактировать
           </Button>
-          <Button
-            variant="secondary"
-            icon={PlusCircle}
-            onClick={openPaymentModal}
-            disabled={createPaymentMutation.loading || salaryStaffOptions.length === 0}
-          >
-            Зафиксировать выплату
-          </Button>
+          {!isManager && (
+            <Button
+              variant="secondary"
+              icon={PlusCircle}
+              onClick={openPaymentModal}
+              disabled={createPaymentMutation.loading || salaryStaffOptions.length === 0}
+            >
+              Зафиксировать выплату
+            </Button>
+          )}
           <Button
             variant="ghost"
             icon={Trash2}
@@ -576,7 +670,7 @@ export default function StaffProfilePage() {
 
       <div className="crm-surface p-4">
         <Tabs
-          tabs={profileTabs}
+          tabs={visibleProfileTabs}
           activeTab={activeTab}
           onTabChange={(tabId) => setActiveTab(tabId as StaffProfileTab)}
           className="w-fit"
@@ -603,16 +697,20 @@ export default function StaffProfilePage() {
               <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Должность</p>
               <p className="mt-1 text-sm font-semibold text-[#273142]">{staff.position || '—'}</p>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Фиксированный оклад</p>
-              <p className="mt-1 text-sm font-semibold text-[#273142]">{formatMoney(staff.salary)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Процент с учеников</p>
-              <p className="mt-1 text-sm font-semibold text-[#273142]">
-                {staff.salaryPercentage !== null ? `${staff.salaryPercentage}%` : '—'}
-              </p>
-            </div>
+            {!isManager && (
+              <>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Фиксированный оклад</p>
+                  <p className="mt-1 text-sm font-semibold text-[#273142]">{formatMoney(staff.salary)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Процент с учеников</p>
+                  <p className="mt-1 text-sm font-semibold text-[#273142]">
+                    {staff.salaryPercentage !== null ? `${staff.salaryPercentage}%` : '—'}
+                  </p>
+                </div>
+              </>
+            )}
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Дата найма</p>
               <p className="mt-1 text-sm font-semibold text-[#273142]">{formatDate(staff.hireDate)}</p>
@@ -652,8 +750,20 @@ export default function StaffProfilePage() {
                   groupRows.map((group, index) => (
                     <tr key={group.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
-                      <td className="crm-table-cell">{group.name}</td>
-                      <td className="crm-table-cell">{group.courseName}</td>
+                      <td className="crm-table-cell">
+                        {group.courseId ? (
+                          <Link href={`/classes/${group.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                            {group.name}
+                          </Link>
+                        ) : group.name}
+                      </td>
+                      <td className="crm-table-cell">
+                        {group.courseId ? (
+                          <Link href={`/classes/${group.courseId}`} className="text-[#467aff] hover:underline">
+                            {group.courseName}
+                          </Link>
+                        ) : group.courseName}
+                      </td>
                       <td className="crm-table-cell">{group.scheduleText}</td>
                       <td className="crm-table-cell">{group.periodText}</td>
                       <td className="crm-table-cell">{group.studentsCount}</td>
@@ -698,8 +808,20 @@ export default function StaffProfilePage() {
                   scheduleRows.map((schedule, index) => (
                     <tr key={schedule.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
-                      <td className="crm-table-cell">{schedule.name}</td>
-                      <td className="crm-table-cell">{schedule.courseName}</td>
+                      <td className="crm-table-cell">
+                        {schedule.courseId ? (
+                          <Link href={`/classes/${schedule.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                            {schedule.name}
+                          </Link>
+                        ) : schedule.name}
+                      </td>
+                      <td className="crm-table-cell">
+                        {schedule.courseId ? (
+                          <Link href={`/classes/${schedule.courseId}`} className="text-[#467aff] hover:underline">
+                            {schedule.courseName}
+                          </Link>
+                        ) : schedule.courseName}
+                      </td>
                       <td className="crm-table-cell">{schedule.scheduleText}</td>
                       <td className="crm-table-cell">{schedule.periodText}</td>
                       <td className="crm-table-cell">{SCHEDULE_STATUS_LABELS[schedule.status]}</td>
@@ -743,7 +865,11 @@ export default function StaffProfilePage() {
                   studentRows.map((student, index) => (
                     <tr key={student.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
-                      <td className="crm-table-cell">{student.fullName}</td>
+                      <td className="crm-table-cell">
+                        <Link href={`/students/${student.id}`} className="font-semibold text-[#467aff] hover:underline">
+                          {student.fullName}
+                        </Link>
+                      </td>
                       <td className="crm-table-cell">{student.phone}</td>
                       <td className="crm-table-cell">{student.parentPhone}</td>
                       <td className="crm-table-cell">
@@ -769,21 +895,22 @@ export default function StaffProfilePage() {
         </div>
       )}
 
-      {activeTab === 'salary' && (
+      {!isManager && activeTab === 'salary' && (
         <div className="space-y-4">
+          <p className="text-sm text-[#8a93a3]">Начислено, выплачено и остаток — по всем филиалам. Фильтр филиала меняет только список уроков ниже.</p>
           <div className="crm-surface p-5">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Начислено всего</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Начислено за месяц</p>
                 <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(summary.totalDue)}</p>
               </div>
               <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Выплачено всего</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Выплачено за месяц</p>
                 <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(summary.totalPaid)}</p>
               </div>
               <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Остаток</p>
-                <p className="mt-1 text-lg font-semibold text-[#1f2530]">{formatMoney(summary.totalOutstanding)}</p>
+                <p className="mt-1 text-lg font-semibold"><SalaryBalance amount={summary.totalOutstanding} /></p>
               </div>
               <div className="rounded-xl border border-[#e7edf3] bg-white px-4 py-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Платежей</p>
@@ -793,48 +920,211 @@ export default function StaffProfilePage() {
           </div>
 
           <div className="crm-table-wrap overflow-hidden">
-            <div className="flex items-center justify-between border-b border-[#e6ebf0] px-6 py-4">
-              <p className="text-sm font-medium text-gray-700">
-                <Wallet className="mr-2 inline h-4 w-4" />
-                История начислений по месяцам
-              </p>
+            <div className="flex flex-col gap-3 border-b border-[#e6ebf0] px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-[#273142]">
+                  <Wallet className="mr-2 inline h-4 w-4 text-[#467aff]" />
+                  Начисления по урокам
+                </p>
+                <p className="mt-1 text-xs text-[#8a93a3]">
+                  {formatMonthLabel(selectedSalaryMonth)} · {salaryLessonRows.length} занятий
+                  {substitutionCount > 0 ? ` · ${substitutionCount} замен` : ''}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+              {staffSalaryBranches.length > 1 ? (
+                <label className="flex items-center gap-2 text-sm text-[#5f6b7b]">
+                  <span className="sr-only">Филиал начислений</span>
+                  <select
+                    value={selectedSalaryBranchId}
+                    onChange={(event) => setSelectedSalaryBranchId(event.target.value)}
+                    className="crm-select min-w-44"
+                    aria-label="Филиал начислений"
+                  >
+                    <option value="all">Все филиалы</option>
+                    {staffSalaryBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>{branch.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <label className="flex items-center gap-2 text-sm text-[#5f6b7b]">
+                <CalendarDays className="h-4 w-4 text-[#8a93a3]" />
+                <span className="sr-only">Месяц начислений</span>
+                <input
+                  type="month"
+                  value={selectedSalaryMonth}
+                  onChange={(event) => setSelectedSalaryMonth(event.target.value || getCurrentMonth())}
+                  className="crm-select min-w-44"
+                  aria-label="Месяц начислений"
+                />
+              </label>
+              </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[1220px]">
                 <thead className="crm-table-head">
                   <tr>
                     <th className="crm-table-th">#</th>
-                    <th className="crm-table-th">Месяц</th>
-                    <th className="crm-table-th">Активных учеников</th>
-                    <th className="crm-table-th">База процента</th>
+                    <th className="crm-table-th">Дата и время</th>
+                    <th className="crm-table-th">Филиал</th>
+                    <th className="crm-table-th">Курс / группа</th>
+                    <th className="crm-table-th">Преподаватель</th>
+                    <th className="crm-table-th">Ученики</th>
+                    <th className="crm-table-th">Расчёт базы</th>
+                    <th className="crm-table-th">База урока</th>
                     <th className="crm-table-th">Начислено</th>
-                    <th className="crm-table-th">Выплачено</th>
-                    <th className="crm-table-th">Остаток</th>
+                    <th className="crm-table-th text-right">Действие</th>
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
-                  {salaryMonthRows.length > 0 ? (
-                    salaryMonthRows.map((row, index) => (
-                      <tr key={row.month} className="crm-table-row">
+                  {salaryLoading ? (
+                    <tr className="crm-table-row">
+                      <td colSpan={10} className="crm-table-cell py-10 text-center">
+                        <Loader2 className="mx-auto h-6 w-6 animate-spin text-[#467aff]" />
+                      </td>
+                    </tr>
+                  ) : salaryError ? (
+                    <tr className="crm-table-row">
+                      <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-red-600">
+                        {salaryError}
+                      </td>
+                    </tr>
+                  ) : salaryLessonRows.length > 0 ? (
+                    salaryLessonRows.map((lesson, index) => (
+                      <tr
+                        key={lesson.lessonId}
+                        className={`crm-table-row ${lesson.excludedFromSalary ? 'bg-[#f8fafc] [&>td:not(:last-child)]:line-through [&>td:not(:last-child)]:text-slate-400 [&>td:not(:last-child)_*]:!text-slate-400' : ''}`}
+                      >
                         <td className="crm-table-cell">{index + 1}</td>
-                        <td className="crm-table-cell">{formatMonthLabel(row.month)}</td>
-                        <td className="crm-table-cell">{row.activeStudentCount}</td>
-                        <td className="crm-table-cell">{formatMoney(row.percentageBaseAmount)}</td>
-                        <td className="crm-table-cell">{formatMoney(row.dueAmount)}</td>
-                        <td className="crm-table-cell text-green-600">{formatMoney(row.paidAmount)}</td>
-                        <td className="crm-table-cell text-red-600">{formatMoney(row.outstandingAmount)}</td>
+                        <td className="crm-table-cell">
+                          {lesson.lessonId ? (
+                            <Link href={`/attendance/${lesson.lessonId}`} className="font-medium text-[#467aff] hover:underline">
+                              {formatDate(lesson.lessonDate)}
+                            </Link>
+                          ) : (
+                            <div className="font-medium text-[#273142]">{formatDate(lesson.lessonDate)}</div>
+                          )}
+                          <div className="mt-0.5 text-xs text-[#8a93a3]">
+                            {formatTime(lesson.startTime)}–{formatTime(lesson.endTime)}
+                          </div>
+                        </td>
+                        <td className="crm-table-cell">
+                          <span className="inline-flex rounded-md border border-[#dbe5f2] bg-[#f7faff] px-2.5 py-1 text-sm font-medium text-[#42526b]">
+                            {lesson.branchId ? salaryBranchNames.get(lesson.branchId) || 'Неизвестный филиал' : 'Не указан'}
+                          </span>
+                        </td>
+                        <td className="crm-table-cell">
+                          {lesson.courseId ? (
+                            <Link href={`/classes/${lesson.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                              {lesson.courseName || 'Без курса'}
+                            </Link>
+                          ) : (
+                            <div className="font-medium text-[#273142]">{lesson.courseName || 'Без курса'}</div>
+                          )}
+                          <div className="mt-0.5 text-xs text-[#8a93a3]">
+                            {lesson.courseId ? (
+                              <Link href={`/classes/${lesson.courseId}`} className="hover:text-[#467aff] hover:underline">
+                                {lesson.scheduleName || 'Без группы'}
+                              </Link>
+                            ) : (
+                              lesson.scheduleName || 'Без группы'
+                            )}
+                          </div>
+                        </td>
+                        <td className="crm-table-cell">
+                          <div className="font-medium text-[#273142]">{lesson.actualTeacherName || staffDisplayName}</div>
+                          {lesson.substitution ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                                Замена
+                              </span>
+                              <span className="text-xs text-[#8a93a3]">
+                                вместо {lesson.plannedTeacherName || 'основного преподавателя'}
+                              </span>
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="crm-table-cell">
+                          <span className="inline-flex min-w-8 justify-center rounded-lg bg-[#eef3ff] px-2.5 py-1 text-sm font-semibold text-[#467aff]">
+                            {lesson.payableStudentCount}
+                          </span>
+                        </td>
+                        <td className="crm-table-cell">
+                          {lesson.courseType === 'GROUP' ? (
+                            <div className="text-sm text-[#5f6b7b]">
+                              {formatMoney(lesson.coursePrice)} / {lesson.lessonQuota || '—'} ур. × {lesson.payableStudentCount} уч.
+                            </div>
+                          ) : (
+                            <div className="text-sm text-[#5f6b7b]">
+                              {formatMoney(lesson.coursePrice)} за занятие
+                            </div>
+                          )}
+                        </td>
+                        <td className="crm-table-cell font-medium text-[#273142]">
+                          {formatMoney(lesson.dailyBaseAmount)}
+                        </td>
+                        <td className="crm-table-cell">
+                          {lesson.excludedFromSalary ? (
+                            <div>
+                              <span className="text-sm font-semibold text-[#98a2b3]">Не начисляется</span>
+                              <div className="mt-0.5 text-xs text-[#98a2b3]">Исключён из зарплаты</div>
+                            </div>
+                          ) : salaryHistory?.salaryType === 'FIXED' ? (
+                            <span className="text-sm font-medium text-[#5f6b7b]">Входит в оклад</span>
+                          ) : (
+                            <span className="text-sm font-semibold text-[#168a4a]">{formatMoney(lesson.dueAmount)}</span>
+                          )}
+                        </td>
+                        <td className="crm-table-cell text-right">
+                          {canEditSalary && salaryHistory?.salaryType !== 'FIXED' ? (
+                            lesson.excludedFromSalary ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleRestoreSalaryLesson(lesson.lessonId)}
+                                disabled={restoreLessonMutation.loading || excludeLessonMutation.loading}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-[#cfe9d8] bg-white px-2.5 py-1.5 text-xs font-medium text-[#168a4a] transition hover:bg-[#f0fbf4] disabled:cursor-not-allowed disabled:opacity-60"
+                                title="Вернуть урок в расчёт зарплаты"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                Вернуть
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleExcludeSalaryLesson(lesson.lessonId)}
+                                disabled={restoreLessonMutation.loading || excludeLessonMutation.loading}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-[#f1d2d2] bg-white px-2.5 py-1.5 text-xs font-medium text-[#bc3a3a] transition hover:bg-[#fff5f5] disabled:cursor-not-allowed disabled:opacity-60"
+                                title="Исключить только из расчёта зарплаты"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Не начислять
+                              </button>
+                            )
+                          ) : <span className="text-xs text-[#98a2b3]">—</span>}
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr className="crm-table-row">
-                      <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
-                        История начислений пока отсутствует
+                    <td colSpan={10} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                        За {formatMonthLabel(selectedSalaryMonth)} начислений по урокам нет
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+            {!salaryLoading && !salaryError && selectedSalaryBreakdown ? (
+              <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 border-t border-[#e6ebf0] bg-[#f8fafc] px-6 py-4 text-sm">
+                <span className="text-[#5f6b7b]">
+                  База показанных уроков: <strong className="text-[#273142]">{formatMoney(salaryLessonRows.filter((lesson) => !lesson.excludedFromSalary).reduce((sum, lesson) => sum + Number(lesson.dailyBaseAmount || 0), 0))}</strong>
+                </span>
+                <span className="text-[#5f6b7b]">
+                  По показанным урокам: <strong className="text-[#168a4a]">{formatMoney(salaryLessonRows.reduce((sum, lesson) => sum + Number(lesson.dueAmount || 0), 0))}</strong>
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <div className="crm-table-wrap overflow-hidden">
@@ -851,6 +1141,7 @@ export default function StaffProfilePage() {
                     <th className="crm-table-th">Сумма</th>
                     <th className="crm-table-th">Статус</th>
                     <th className="crm-table-th">Комментарий</th>
+                    <th className="crm-table-th">Действия</th>
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
@@ -863,11 +1154,12 @@ export default function StaffProfilePage() {
                         <td className="crm-table-cell">{formatMoney(payment.amount, payment.currency)}</td>
                         <td className="crm-table-cell">{PAYMENT_STATUS_LABELS[payment.status] || payment.status}</td>
                         <td className="crm-table-cell">{payment.notes || '—'}</td>
+                        <td className="crm-table-cell"><CancelSalaryPaymentButton id={payment.transactionId} amount={payment.amount} status={payment.status} onCancelled={refetchSalary} /></td>
                       </tr>
                     ))
                   ) : (
                     <tr className="crm-table-row">
-                      <td colSpan={6} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                      <td colSpan={7} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                         Выплаты пока не зафиксированы
                       </td>
                     </tr>
@@ -887,6 +1179,7 @@ export default function StaffProfilePage() {
         isSubmitting={updateStaffMutation.loading}
         title="Редактировать сотрудника"
         includeStatus
+        showSalary={!isManager}
       />
 
       <AddSalaryModal

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   Activity,
   CheckCircle2,
@@ -429,17 +430,30 @@ export default function ExecutiveDashboardPage() {
               ) : joinedStudents.map((student) => (
                 <div
                   key={student.studentId || student.fullName}
-                  className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2"
+                  className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2 transition-colors hover:border-[#467aff]"
                 >
-                  <span className="text-sm text-[#273142]">{student.fullName}</span>
-                  <button
-                    type="button"
-                    onClick={() => openStudentProfile(student.studentId)}
-                    disabled={!student.studentId}
-                    className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0]"
-                  >
-                    Открыть
-                  </button>
+                  {student.studentId ? (
+                    <Link
+                      href={`/students/${student.studentId}`}
+                      className="text-sm font-semibold text-[#273142] hover:text-[#467aff] hover:underline"
+                    >
+                      {student.fullName}
+                    </Link>
+                  ) : (
+                    <span className="text-sm text-[#273142]">{student.fullName}</span>
+                  )}
+                  {student.studentId ? (
+                    <Link
+                      href={`/students/${student.studentId}`}
+                      className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0] hover:text-[#467aff]"
+                    >
+                      Открыть
+                    </Link>
+                  ) : (
+                    <span className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] opacity-50">
+                      Открыть
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -455,17 +469,30 @@ export default function ExecutiveDashboardPage() {
               ) : leftStudents.map((student) => (
                 <div
                   key={student.studentId || student.fullName}
-                  className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2"
+                  className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2 transition-colors hover:border-[#467aff]"
                 >
-                  <span className="text-sm text-[#273142]">{student.fullName}</span>
-                  <button
-                    type="button"
-                    onClick={() => openStudentProfile(student.studentId)}
-                    disabled={!student.studentId}
-                    className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0]"
-                  >
-                    Открыть
-                  </button>
+                  {student.studentId ? (
+                    <Link
+                      href={`/students/${student.studentId}`}
+                      className="text-sm font-semibold text-[#273142] hover:text-[#467aff] hover:underline"
+                    >
+                      {student.fullName}
+                    </Link>
+                  ) : (
+                    <span className="text-sm text-[#273142]">{student.fullName}</span>
+                  )}
+                  {student.studentId ? (
+                    <Link
+                      href={`/students/${student.studentId}`}
+                      className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0] hover:text-[#467aff]"
+                    >
+                      Открыть
+                    </Link>
+                  ) : (
+                    <span className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] opacity-50">
+                      Открыть
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

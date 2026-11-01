@@ -37,6 +37,15 @@ export const studentsService = {
     return response.data;
   },
 
+  /** Move a student profile to another branch. Active source enrolments are closed. */
+  async transferToBranch(id: string, targetBranchId: string) {
+    const response = await api.post<ApiResponse<StudentDto>>(
+      `/api/v1/students/${id}/transfer-branch`,
+      { targetBranchId }
+    );
+    return response.data;
+  },
+
   /** Delete a student */
   async delete(id: string) {
     const response = await api.delete<ApiResponse<void>>(`/api/v1/students/${id}`);

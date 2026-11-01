@@ -8,6 +8,7 @@ export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
   VACATION: 'Отпуск',
   AUTO_ATTENDED: 'Авто',
   ONE_TIME_VISIT: 'Разовый визит',
+  WITHDRAWN: 'Выбыл',
   NOT_MARKED: 'Не отмечено',
   TRIAL: 'Пробный',
 };
@@ -20,20 +21,20 @@ export const ATTENDANCE_STATUS_COLORS: Record<AttendanceStatus, string> = {
   VACATION: 'border-amber-200 bg-amber-100 text-amber-700',
   AUTO_ATTENDED: 'border-cyan-200 bg-cyan-100 text-cyan-700',
   ONE_TIME_VISIT: 'border-violet-200 bg-violet-100 text-violet-700',
+  WITHDRAWN: 'border-slate-300 bg-slate-200 text-slate-800',
   NOT_MARKED: 'border-slate-200 bg-slate-100 text-slate-700',
   TRIAL: 'border-fuchsia-200 bg-fuchsia-100 text-fuchsia-700',
 };
 
 export const ATTENDANCE_STATUS_OPTIONS: Array<{ value: AttendanceStatus; label: string }> = [
   { value: 'PLANNED', label: ATTENDANCE_STATUS_LABELS.PLANNED },
-  { value: 'NOT_MARKED', label: ATTENDANCE_STATUS_LABELS.NOT_MARKED },
   { value: 'ATTENDED', label: ATTENDANCE_STATUS_LABELS.ATTENDED },
   { value: 'ABSENT', label: ATTENDANCE_STATUS_LABELS.ABSENT },
   { value: 'SICK', label: ATTENDANCE_STATUS_LABELS.SICK },
   { value: 'VACATION', label: ATTENDANCE_STATUS_LABELS.VACATION },
   { value: 'AUTO_ATTENDED', label: ATTENDANCE_STATUS_LABELS.AUTO_ATTENDED },
   { value: 'ONE_TIME_VISIT', label: ATTENDANCE_STATUS_LABELS.ONE_TIME_VISIT },
-  { value: 'TRIAL', label: ATTENDANCE_STATUS_LABELS.TRIAL },
+  { value: 'WITHDRAWN', label: ATTENDANCE_STATUS_LABELS.WITHDRAWN },
 ];
 
 export function formatTime(value?: string | null): string {

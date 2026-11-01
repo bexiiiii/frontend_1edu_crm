@@ -93,10 +93,6 @@ function getStudentDisplayName(student: {
   phone?: string | null;
   id: string;
 }): string {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
   const fromParts = [student.lastName, student.firstName, student.middleName]
     .filter((part): part is string => Boolean(part))
     .join(' ')
@@ -106,7 +102,7 @@ function getStudentDisplayName(student: {
     return fromParts;
   }
 
-  return student.email || student.phone || student.id;
+  return student.fullName?.trim() || student.email || student.phone || student.id;
 }
 
 function getInvoicePaymentState(invoice: ApiPayInvoiceDto): { label: string; className: string } {
@@ -213,7 +209,7 @@ export default function ApiPayInvoicesPage() {
       <div className="crm-surface p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-[#1f2530]">ApiPay инвойсы</h1>
+            <h1 className="text-xl font-semibold text-[#1f2530]">Kaspi POS счета</h1>
             <p className="mt-1 text-sm text-[#5f6b7b]">
               Все отправленные инвойсы и результаты оплаты: кому отправили, через какой контакт, когда отправили, когда оплатили и текущий статус.
             </p>
@@ -308,7 +304,7 @@ export default function ApiPayInvoicesPage() {
                   <th className="crm-table-th !px-4 !py-2.5">Отправлено</th>
                   <th className="crm-table-th !px-4 !py-2.5">Оплачено</th>
                   <th className="crm-table-th !px-4 !py-2.5">Статус оплаты</th>
-                  <th className="crm-table-th !px-4 !py-2.5">Статус ApiPay</th>
+                  <th className="crm-table-th !px-4 !py-2.5">Статус Kaspi POS</th>
                   <th className="crm-table-th !px-4 !py-2.5">Результат</th>
                   <th className="crm-table-th !px-4 !py-2.5">Действия</th>
                 </tr>
@@ -449,7 +445,7 @@ export default function ApiPayInvoicesPage() {
           setDetailModalOpen(false);
           setSelectedInvoice(null);
         }}
-        title="Детали ApiPay счета"
+        title="Детали счёта Kaspi POS"
       >
         {selectedInvoice ? (
           <div className="space-y-4">
@@ -511,7 +507,7 @@ export default function ApiPayInvoicesPage() {
               <h3 className="mb-3 text-sm font-semibold text-[#1f2530]">Статус</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-[#5f6b7b]">Статус ApiPay:</span>
+                  <span className="text-[#5f6b7b]">Статус Kaspi POS:</span>
                   <span
                     className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${APIPAY_STATUS_COLORS[selectedInvoice.status]}`}
                   >

@@ -18,6 +18,12 @@ export interface ScheduleCalendarItem {
   maxStudents: number | null;
   status: ScheduleStatus;
   color: string;
+  createdAt: string;
+  createdBy: string | null;
+  createdByName: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+  updatedByName: string | null;
 }
 
 export interface ClassSession {

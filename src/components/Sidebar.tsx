@@ -16,6 +16,7 @@ import {
   Bell,
   ScrollText,
   Settings2,
+  Folder,
   ChevronDown,
   ChevronUp,
   X,
@@ -31,7 +32,7 @@ import { ANALYTICS_SUBMENU_ITEMS } from '@/constants/analytics';
 import { INTEGRATIONS } from '@/constants/settings-data';
 import { useApi } from '@/hooks/useApi';
 import { notificationsService, settingsService } from '@/lib/api';
-import { canAccessPath } from '@/lib/rbac';
+import { canAccessPath, canAccessSettingsTab } from '@/lib/rbac';
 import { useAuthStore } from '@/store/authStore';
 
 const SEEN_NOTIFICATION_IDS_STORAGE_KEY = '1edu_crm_seen_notification_ids';
@@ -82,6 +83,7 @@ const navItems: NavItem[] = [
       { label: 'Доходы и расходы', href: '/finance' },
       { label: 'Платежи студентов', href: '/finance/student-payments' },
       { label: 'Зарплаты', href: '/finance/salary' },
+      { label: 'Касса', href: '/finance/cashier' },
     ],
   },
   {
@@ -101,6 +103,7 @@ const navItems: NavItem[] = [
   },
   { icon: Bell, label: 'Уведомления', href: '/notifications' },
   { icon: ScrollText, label: 'Logs', href: '/logs' },
+  { icon: Folder, label: 'Файлы', href: '/files' },
   { icon: Settings2, label: 'Настройки', href: '/settings' },
 ];
 
@@ -116,9 +119,13 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const { logout, user, userEmail, roles, permissions } = useAuthStore();
+  const isTeacher = roles.includes('TEACHER');
   const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
   const isNotificationsPage = pathname === '/notifications' || pathname.startsWith('/notifications/');
-  const canOpenSettings = useMemo(() => canAccessPath('/settings', roles, permissions), [permissions, roles]);
+  const canViewIntegrations = useMemo(
+    () => canAccessSettingsTab('integrations', roles, permissions),
+    [permissions, roles]
+  );
 
   const { data: notificationsPageData, refetch: refetchNotifications } = useApi(
     () => notificationsService.getAll({ page: 0, size: 50 }),
@@ -129,7 +136,7 @@ export default function Sidebar({
 
   const { data: connectedIntegrationIdsFromApi, refetch: refetchConnectedIntegrationIds } = useApi<string[]>(
     async () => {
-      if (!canOpenSettings) {
+      if (!canViewIntegrations) {
         return { data: [] };
       }
 
@@ -153,7 +160,7 @@ export default function Sidebar({
 
       return { data: nextConnectedIntegrationIds };
     },
-    [canOpenSettings]
+    [canViewIntegrations]
   );
 
   useEffect(() => {
@@ -279,6 +286,7 @@ export default function Sidebar({
   });
 
   const handleOpenProfile = () => {
+    if (isTeacher) return;
     router.push('/settings');
   };
 
@@ -334,8 +342,9 @@ export default function Sidebar({
             <button
               type="button"
               onClick={handleOpenProfile}
-              className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              title="Открыть профиль"
+              disabled={isTeacher}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default"
+              title={isTeacher ? 'Профиль преподавателя' : 'Открыть профиль'}
             >
               <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-linear-to-br from-[#c6efff] to-[#8cbce5]" />
               <div className="min-w-0 flex-1">
@@ -444,7 +453,7 @@ export default function Sidebar({
             );
           })}
 
-          {canOpenSettings ? (
+          {canViewIntegrations ? (
             <div className="mt-3 border-t border-[#e8eaee] pt-3">
               <p className="px-3 text-[11px] font-semibold tracking-[0.12em] text-[#98a1af] uppercase">Интеграции</p>
               <div className="mt-2 space-y-1">

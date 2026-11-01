@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react';
 import { Edit2, FileText, Loader2, Plus, Search, Trash2, User } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
 import {
@@ -40,8 +41,8 @@ function toFormValues(student: StudentListItem): StudentFormValues {
     customer: student.customer,
     studentPhoto: student.studentPhoto,
     email: student.email,
-    phone: student.phone,
-    studentPhone: student.studentPhone,
+    phone: student.studentPhone || student.phone,
+    studentPhone: student.studentPhone || student.phone,
     birthDate: student.birthDate,
     gender: student.gender,
     status: student.status,
@@ -58,7 +59,7 @@ function toFormValues(student: StudentListItem): StudentFormValues {
     comment: student.comment,
     stateOrderParticipant: student.stateOrderParticipant,
     loyalty: student.loyalty,
-    additionalPhones: student.additionalPhones.join(', '),
+    additionalPhones: '',
     notes: student.notes,
   };
 }
@@ -117,8 +118,8 @@ function normalizePhoneForWhatsApp(value: string | null | undefined): string {
   return digits;
 }
 
-function getPrimaryStudentPhone(student: Pick<StudentListItem, 'phone' | 'studentPhone' | 'parentPhone' | 'additionalPhones'>): string {
-  const candidates = [student.phone, student.studentPhone, student.parentPhone, ...student.additionalPhones];
+function getPrimaryStudentPhone(student: Pick<StudentListItem, 'phone' | 'studentPhone' | 'parentPhone'>): string {
+  const candidates = [student.studentPhone, student.phone, student.parentPhone];
 
   for (const candidate of candidates) {
     const normalized = normalizePhoneForWhatsApp(candidate);
@@ -157,6 +158,7 @@ function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullN
 }
 
 export default function Students() {
+  const router = useRouter();
   const [filters, setFilters] = useState<StudentFilters>({
     search: '',
     status: 'all',
@@ -223,7 +225,7 @@ export default function Students() {
           studentPhoto: student.studentPhoto || '',
           email: student.email || '',
           phone: student.phone || '',
-          studentPhone: student.studentPhone || '',
+          studentPhone: student.studentPhone || student.phone || '',
           birthDate: student.birthDate || '',
           gender: student.gender || '',
           status: student.status,
@@ -240,7 +242,7 @@ export default function Students() {
           comment: student.comment || '',
           stateOrderParticipant: Boolean(student.stateOrderParticipant),
           loyalty: student.loyalty || '',
-          additionalPhones: student.additionalPhones || [],
+          additionalPhones: [],
           notes: student.notes || '',
           createdAt: student.createdAt || '',
           updatedAt: student.updatedAt || '',
@@ -395,13 +397,25 @@ export default function Students() {
                     const whatsappUrl = primaryPhone ? `https://wa.me/${primaryPhone}` : null;
 
                     return (
-                    <tr key={student.id} className="crm-table-row">
+                    <tr
+                      key={student.id}
+                      className="crm-table-row cursor-pointer"
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest('a, button, input, select, textarea')) return;
+                        router.push(`/students/${student.id}`);
+                      }}
+                    >
                       <td className="crm-table-cell">{page * 20 + index + 1}</td>
                       <td className="crm-table-cell">
                         <StudentAvatar studentPhoto={student.studentPhoto} fullName={student.fullName} />
                       </td>
                       <td className="crm-table-cell">
-                        <div className="text-sm font-medium text-gray-900">{student.fullName}</div>
+                        <Link
+                          href={`/students/${student.id}`}
+                          className="text-sm font-medium text-gray-900 transition-colors hover:text-[#3568eb] hover:underline"
+                        >
+                          {getDisplayName(student)}
+                        </Link>
                         <div className="text-xs text-gray-500">
                           {student.gender ? STUDENT_GENDER_LABELS[student.gender] : 'Пол не указан'}
                           {student.birthDate ? ` • ${formatDate(student.birthDate)}` : ''}
@@ -409,15 +423,8 @@ export default function Students() {
                         </div>
                       </td>
                       <td className="crm-table-cell">
-                        <div className="text-sm text-gray-900">{student.phone || '—'}</div>
-                        <div className="text-xs text-gray-500">
-                          {student.studentPhone || student.email || 'Контакты не указаны'}
-                        </div>
-                        {student.additionalPhones.length > 0 ? (
-                          <div className="mt-1 text-xs text-gray-500">
-                            {student.additionalPhones.join(', ')}
-                          </div>
-                        ) : null}
+                        <div className="text-sm text-gray-900">{student.studentPhone || student.phone || '—'}</div>
+                        <div className="text-xs text-gray-500">{student.email || '—'}</div>
                       </td>
                       <td className="crm-table-cell">
                         <div className="text-sm text-gray-900">{student.customer || student.parentName || '—'}</div>

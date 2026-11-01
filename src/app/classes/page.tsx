@@ -1,4 +1,5 @@
 'use client';
+import type { DiscountPeriod } from '@/lib/api/types';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Edit2, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
@@ -14,6 +15,7 @@ import {
 import {
   coursesService,
   roomsService,
+  settingsService,
   staffService,
   studentsService,
   type CourseDto,
@@ -21,8 +23,10 @@ import {
   type CreateCourseRequest,
   type UpdateCourseRequest,
 } from '@/lib/api';
+import { studentPaymentsService } from '@/lib/api/finance';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
+import { formatFullName } from '@/lib/utils';
 import type { CourseFilters, CourseFormValues, CourseListItem } from '@/types/class';
 
 type CourseSavePayload = CreateCourseRequest & { status?: CourseStatus };
@@ -34,10 +38,13 @@ function toFormValues(course: CourseListItem): CourseFormValues {
     name: course.name,
     description: course.description,
     basePrice: course.basePrice == null ? '' : String(course.basePrice),
+    totalLessons: course.totalLessons == null ? '' : String(course.totalLessons),
+    levelId: course.levelId || '00000000-0000-0000-0000-000000000101',
     enrollmentLimit: course.enrollmentLimit ? String(course.enrollmentLimit) : '',
     color: course.color,
     status: course.status,
     teacherId: course.teacherId || '',
+    teacherIds: course.teacherIds,
     roomId: course.roomId || '',
     studentIds: course.studentIds,
   };
@@ -49,11 +56,7 @@ function getStaffFullName(staff: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ');
+  return formatFullName(staff);
 }
 
 function formatCurrency(value: number | null): string {
@@ -70,11 +73,9 @@ function getStudentFullName(student: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
-  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ');
+  return [student.lastName, student.firstName, student.middleName].filter(Boolean).join(' ')
+    || student.fullName?.trim()
+    || '';
 }
 
 function toCourseListItem(
@@ -90,11 +91,16 @@ function toCourseListItem(
     name: course.name,
     description: course.description || '',
     basePrice: course.basePrice,
+    totalLessons: course.totalLessons,
+    levelId: course.levelId,
+    levelName: course.levelName,
     enrollmentLimit: course.enrollmentLimit,
     color: course.color || '#ffffff',
     status: course.status,
     teacherId: course.teacherId,
-    teacherName: course.teacherId ? teacherMap.get(course.teacherId) || '—' : '—',
+    teacherName: (course.teacherIds ?? (course.teacherId ? [course.teacherId] : [])).map((id) => teacherMap.get(id) || '—').join(', ') || '—',
+    teacherIds: course.teacherIds ?? (course.teacherId ? [course.teacherId] : []),
+    teacherNames: (course.teacherIds ?? (course.teacherId ? [course.teacherId] : [])).map((id) => teacherMap.get(id) || '—'),
     roomId: course.roomId,
     roomName: course.roomId ? roomMap.get(course.roomId) || '—' : '—',
     studentIds: course.studentIds ?? [],
@@ -112,10 +118,14 @@ function applyCoursePayload(course: CourseDto, payload: CourseSavePayload): Cour
     name: payload.name ?? course.name,
     description: payload.description !== undefined ? payload.description ?? null : course.description,
     basePrice: payload.basePrice ?? course.basePrice,
+    totalLessons: payload.totalLessons !== undefined ? payload.totalLessons : course.totalLessons,
+    levelId: payload.levelId ?? course.levelId,
+    levelName: payload.levelId !== course.levelId ? course.levelName : course.levelName,
     enrollmentLimit:
       payload.enrollmentLimit !== undefined ? payload.enrollmentLimit : course.enrollmentLimit,
     color: payload.color !== undefined ? payload.color ?? null : course.color,
     teacherId: payload.teacherId !== undefined ? payload.teacherId ?? null : course.teacherId,
+    teacherIds: payload.teacherIds ?? course.teacherIds,
     roomId: payload.roomId !== undefined ? payload.roomId ?? null : course.roomId,
     studentIds: payload.studentIds ?? course.studentIds,
     status: payload.status ?? course.status,
@@ -175,7 +185,8 @@ export default function Classes() {
     });
   }, [filters.search, filters.status, filters.teacherId, filters.type]);
 
-  const { roles, permissions } = useAuthStore();
+  const { roles, permissions, user } = useAuthStore();
+  const isTeacher = roles.includes('TEACHER');
   const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
 
   const { data: teachersData, loading: teachersLoading } = useApi(
@@ -187,9 +198,12 @@ export default function Classes() {
     []
   );
   const { data: studentsData, loading: studentsLoading } = useApi(
-    () => studentsService.getAll({ page: 0, size: 1000 }),
-    []
+    () => isTeacher
+      ? Promise.resolve({ data: { content: [], totalElements: 0, totalPages: 0, page: 0, size: 1000 } })
+      : studentsService.getAll({ page: 0, size: 1000 }),
+    [isTeacher]
   );
+  const { data: levelsData, loading: levelsLoading } = useApi(() => settingsService.getCourseLevels(), []);
 
   const createMutation = useMutation((data: CreateCourseRequest) => coursesService.create(data));
   const updateMutation = useMutation(({ id, data }: { id: string; data: UpdateCourseRequest }) =>
@@ -197,13 +211,19 @@ export default function Classes() {
   );
   const deleteMutation = useMutation((id: string) => coursesService.delete(id));
 
-  const isLoading = coursesLoading || teachersLoading || roomsLoading || studentsLoading;
+  const isLoading = coursesLoading || teachersLoading || roomsLoading || studentsLoading || levelsLoading;
   const isSaving = createMutation.loading || updateMutation.loading;
   const isActionMutating = deleteMutation.loading;
 
   const teacherMap = useMemo(
-    () => new Map((teachersData?.content ?? []).map((teacher) => [teacher.id, getStaffFullName(teacher) || '—'])),
-    [teachersData]
+    () => {
+      const map = new Map((teachersData?.content ?? []).map((teacher) => [teacher.id, getStaffFullName(teacher) || '—']));
+      if (isTeacher && user?.staffId) {
+        map.set(user.staffId, [user.lastName, user.firstName].filter(Boolean).join(' ') || user.email);
+      }
+      return map;
+    },
+    [isTeacher, teachersData, user]
   );
   const roomMap = useMemo(
     () => new Map((roomsData?.content ?? []).map((room) => [room.id, room.name])),
@@ -253,7 +273,7 @@ export default function Classes() {
         return false;
       }
 
-      if (filters.teacherId !== 'all' && course.teacherId !== filters.teacherId) {
+      if (filters.teacherId !== 'all' && !course.teacherIds.includes(filters.teacherId)) {
         return false;
       }
 
@@ -262,7 +282,10 @@ export default function Classes() {
   }, [courses, filters.format, filters.search, filters.status, filters.teacherId, filters.type]);
 
   const teacherOptions = useMemo(
-    () => (teachersData?.content ?? []).map((teacher) => ({ id: teacher.id, name: getStaffFullName(teacher) || 'Без имени' })),
+    () =>
+      (teachersData?.content ?? [])
+        .map((teacher) => ({ id: teacher.id, name: getStaffFullName(teacher) || 'Без имени' }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru')),
     [teachersData]
   );
   const roomOptions = useMemo(
@@ -276,6 +299,10 @@ export default function Classes() {
         name: getStudentFullName(student) || student.fullName || 'Без имени',
       })),
     [studentsData]
+  );
+  const levelOptions = useMemo(
+    () => (levelsData ?? []).map((level) => ({ id: level.id, name: level.name, active: level.active })),
+    [levelsData]
   );
 
   const summary = useMemo(
@@ -352,7 +379,11 @@ export default function Classes() {
     router.replace(nextUrl);
   }, [courses, editCourseIdFromQuery, handledEditCourseId, isLoading, pathname, router, searchParams]);
 
-  const handleSaveCourse = async (data: CourseSavePayload) => {
+  const handleSaveCourse = async (
+    data: CourseSavePayload,
+    studentDiscounts?: Record<string, number>,
+    studentDiscountPeriods?: Record<string, DiscountPeriod>
+  ) => {
     let savedCourse: CourseDto;
 
     if (modalState.courseId) {
@@ -367,12 +398,27 @@ export default function Classes() {
         name: data.name,
         description: data.description,
         basePrice: data.basePrice,
+        totalLessons: data.totalLessons,
+        levelId: data.levelId,
         enrollmentLimit: data.enrollmentLimit,
         color: data.color,
         teacherId: data.teacherId,
+        teacherIds: data.teacherIds,
         roomId: data.roomId,
         studentIds: data.studentIds,
       });
+    }
+
+    if (studentDiscounts && Object.keys(studentDiscounts).length > 0) {
+      await Promise.all(
+        Object.entries(studentDiscounts).map(async ([studentId, discount]) => {
+          if (discount > 0) {
+            await studentPaymentsService
+              .updateSubscriptionDiscount(studentId, savedCourse.id, discount, undefined, undefined, studentDiscountPeriods?.[studentId])
+              .catch(() => {});
+          }
+        })
+      );
     }
 
     let nextCourse = applyCoursePayload(savedCourse, data);
@@ -410,14 +456,14 @@ export default function Classes() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      {!isTeacher ? <div className="flex justify-end">
         <Button icon={Plus} onClick={openCreateModal}>
           Добавить курс
         </Button>
-      </div>
+      </div> : null}
 
       <div className="crm-surface p-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${isTeacher ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
@@ -429,7 +475,7 @@ export default function Classes() {
             />
           </div>
 
-          <select
+          {!isTeacher ? <select
             value={filters.type}
             onChange={(event) =>
               setFilters((previous) => ({
@@ -445,7 +491,7 @@ export default function Classes() {
                 {type.label}
               </option>
             ))}
-          </select>
+          </select> : null}
 
           <select
             value={filters.format}
@@ -532,13 +578,14 @@ export default function Classes() {
                   <th className="crm-table-th">Курс</th>
                   <th className="crm-table-th">Тип</th>
                   <th className="crm-table-th">Формат</th>
+                  <th className="crm-table-th">Уровень</th>
                   <th className="crm-table-th">Цена</th>
                   <th className="crm-table-th">Преподаватель</th>
                   <th className="crm-table-th">Кабинет</th>
                   <th className="crm-table-th">Ученики</th>
                   <th className="crm-table-th">Лимит</th>
                   <th className="crm-table-th">Статус</th>
-                  <th className="crm-table-th">Действия</th>
+                  <th className="crm-table-th">{isTeacher ? 'Просмотр' : 'Действия'}</th>
                 </tr>
               </thead>
               <tbody className="crm-table-body">
@@ -552,26 +599,54 @@ export default function Classes() {
                       <tr key={course.id} className="crm-table-row">
                         <td className="crm-table-cell">{index + 1}</td>
                         <td className="crm-table-cell">
-                          <div className="flex items-start gap-3">
+                          <Link
+                            href={`/classes/${course.id}`}
+                            className="group flex items-start gap-3 transition-colors hover:text-[#467aff]"
+                          >
                             <span
                               className="mt-1 h-3 w-3 shrink-0 rounded-full border border-[#dbe2e8]"
                               style={{ backgroundColor: course.color }}
                             />
                             <div>
-                              <div className="text-sm font-semibold text-[#202938]">{course.name}</div>
+                              <div className="text-sm font-semibold text-[#202938] transition-colors group-hover:text-[#467aff] group-hover:underline">
+                                {course.name}
+                              </div>
                               <div className="mt-0.5 text-xs text-[#8690a0]">
                                 {course.description || 'Описание не указано'}
                               </div>
                             </div>
-                          </div>
+                          </Link>
                         </td>
                         <td className="crm-table-cell">{typeConfig?.label ?? course.type}</td>
                         <td className="crm-table-cell">{formatConfig?.label ?? course.format}</td>
+                        <td className="crm-table-cell">{course.levelName || '—'}</td>
                         <td className="crm-table-cell">{formatCurrency(course.basePrice)}</td>
-                        <td className="crm-table-cell">{course.teacherName}</td>
+                        <td className="crm-table-cell">
+                          {course.teacherIds.length ? (
+                            <div className="flex flex-wrap gap-x-1 gap-y-1">
+                              {course.teacherIds.map((teacherId, teacherIndex) => (
+                                <span key={teacherId}>
+                                  {teacherIndex > 0 ? <span className="text-[#8b95a4]">, </span> : null}
+                                  <Link href={`/staff/${teacherId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                                    {course.teacherNames[teacherIndex] || 'Преподаватель'}
+                                  </Link>
+                                </span>
+                              ))}
+                            </div>
+                          ) : '—'}
+                        </td>
                         <td className="crm-table-cell">{course.roomName}</td>
                         <td className="crm-table-cell">
-                          {course.studentIds.length > 0 ? `${course.studentIds.length}` : '—'}
+                          {course.studentIds.length > 0 ? (
+                            <Link
+                              href={`/classes/${course.id}`}
+                              className="font-semibold text-[#467aff] hover:underline"
+                            >
+                              {course.studentIds.length}
+                            </Link>
+                          ) : (
+                            '—'
+                          )}
                         </td>
                         <td className="crm-table-cell">{course.enrollmentLimit ?? '—'}</td>
                         <td className="crm-table-cell">
@@ -588,20 +663,20 @@ export default function Classes() {
                             >
                               <FileText className="h-4 w-4" />
                             </Link>
-                            <button
+                            {!isTeacher ? <button
                               onClick={() => void openEditModal(course)}
                               className="rounded-lg p-2 text-[#12998f] transition-colors hover:bg-[#eaf9f7]"
                               title="Редактировать"
                             >
                               <Edit2 className="h-4 w-4" />
-                            </button>
-                            <button
+                            </button> : null}
+                            {!isTeacher ? <button
                               onClick={() => handleDeleteCourse(course)}
                               className="rounded-lg p-2 text-[#c34c4c] transition-colors hover:bg-[#fff1f1]"
                               title="Удалить"
                             >
                               <Trash2 className="h-4 w-4" />
-                            </button>
+                            </button> : null}
                           </div>
                         </td>
                       </tr>
@@ -609,7 +684,7 @@ export default function Classes() {
                   })
                 ) : (
                   <tr className="crm-table-row">
-                    <td colSpan={11} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
+                    <td colSpan={12} className="crm-table-cell py-10 text-center text-sm text-[#8a93a3]">
                       Курсы не найдены
                     </td>
                   </tr>
@@ -620,7 +695,7 @@ export default function Classes() {
         )}
       </div>
 
-      <AddClassModal
+      {!isTeacher ? <AddClassModal
         key={modalState.key}
         isOpen={modalState.isOpen}
         onClose={closeModal}
@@ -628,11 +703,12 @@ export default function Classes() {
         teachers={teacherOptions}
         rooms={roomOptions}
         students={studentOptions}
+        levels={levelOptions}
         initialValues={modalState.initialValues}
         isSubmitting={isSaving}
         title={modalState.courseId ? 'Редактировать курс' : 'Добавить курс'}
         includeStatus={Boolean(modalState.courseId)}
-      />
+      /> : null}
     </div>
   );
 }

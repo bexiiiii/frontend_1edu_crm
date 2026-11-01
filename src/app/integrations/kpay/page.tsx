@@ -78,10 +78,6 @@ function getStudentDisplayName(student: {
   phone?: string | null;
   id: string;
 }): string {
-  if (student.fullName?.trim()) {
-    return student.fullName.trim();
-  }
-
   const fromParts = [student.lastName, student.firstName, student.middleName]
     .filter((part): part is string => Boolean(part))
     .join(' ')
@@ -91,7 +87,7 @@ function getStudentDisplayName(student: {
     return fromParts;
   }
 
-  return student.email || student.phone || student.id;
+  return student.fullName?.trim() || student.email || student.phone || student.id;
 }
 
 function getInvoicePaymentState(invoice: KpayInvoiceDto): { label: string; className: string } {

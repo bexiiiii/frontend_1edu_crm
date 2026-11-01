@@ -6,6 +6,7 @@ import type {
   PaymentSourceDto,
   AttendanceStatusConfigDto,
   StaffStatusConfigDto,
+  CourseLevelConfigDto,
   FinanceCategoryConfigDto,
   KpaySettingsDto,
   UpdateKpaySettingsRequest,
@@ -195,6 +196,30 @@ export const settingsService = {
     return response.data;
   },
 
+  // ─── Course Levels ──────────────────────────────
+
+  async getCourseLevels(branchId?: string) {
+    const response = await api.get<ApiResponse<CourseLevelConfigDto[]>>('/api/v1/settings/course-levels', {
+      headers: branchId ? { 'X-Branch-ID': branchId } : undefined,
+    });
+    return response.data;
+  },
+
+  async createCourseLevel(data: { name: string; color?: string | null; sortOrder?: number; active?: boolean }) {
+    const response = await api.post<ApiResponse<CourseLevelConfigDto>>('/api/v1/settings/course-levels', data);
+    return response.data;
+  },
+
+  async updateCourseLevel(id: string, data: Partial<{ name: string; color: string | null; sortOrder: number; active: boolean }>) {
+    const response = await api.put<ApiResponse<CourseLevelConfigDto>>(`/api/v1/settings/course-levels/${id}`, data);
+    return response.data;
+  },
+
+  async deleteCourseLevel(id: string) {
+    const response = await api.delete<ApiResponse<void>>(`/api/v1/settings/course-levels/${id}`);
+    return response.data;
+  },
+
   // ─── Income Categories ──────────────────────────
 
   /** Get income categories */
@@ -272,6 +297,25 @@ export const settingsService = {
   /** Update ApiPay settings */
   async updateApiPaySettings(data: UpdateApiPaySettingsRequest) {
     const response = await api.put<ApiResponse<ApiPaySettingsDto>>('/api/v1/settings/apipay', data);
+    return response.data;
+  },
+
+  async initKaspiPosAuth() {
+    const response = await api.post<ApiResponse<{ processId: string }>>('/api/v1/settings/apipay/auth/init');
+    return response.data;
+  },
+
+  async sendKaspiPosPhone(data: { phoneNumber: string; processId: string }) {
+    const response = await api.post<ApiResponse<{ success: boolean; desc?: string }>>(
+      '/api/v1/settings/apipay/auth/send-phone', data
+    );
+    return response.data;
+  },
+
+  async verifyKaspiPosOtp(data: { otp: string; processId: string }) {
+    const response = await api.post<ApiResponse<{ connected: boolean; orgName?: string; phone?: string }>>(
+      '/api/v1/settings/apipay/auth/verify-otp', data
+    );
     return response.data;
   },
 

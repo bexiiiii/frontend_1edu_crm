@@ -100,9 +100,9 @@ export const INTEGRATIONS: Integration[] = [
   },
   {
     id: 'apipay',
-    name: 'ApiPay',
-    description: 'ApiPay.kz — автоматическое выставление счетов в Kaspi Pay с мгновенным подтверждением\nБез переписок с клиентами·Без проверки чеков·Без ручного учёта',
-    icon: '/logo/apipay-logo-color.png',
+    name: 'Kaspi POS',
+    description: 'Автоматическое выставление счетов через Kaspi Pay\nSMS-подключение кассира · Автопроверка оплаты · Без ручной сверки чеков',
+    icon: '/logo/kaspi-logo.png',
     sideIcons: ['/logo/kaspi-logo.png'],
   },
   {

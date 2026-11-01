@@ -1,8 +1,11 @@
 'use client';
+import { CancelSalaryPaymentButton } from '@/components/features/salary/CancelSalaryPaymentButton';
+import { SalaryBalance } from '@/components/features/salary/SalaryBalance';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Edit2, Loader2, Plus } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Edit2, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { AmountChangeReasonModal } from '@/components/features/finance/AmountChangeReasonModal';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
 import { Button } from '@/components/ui/Button';
@@ -35,27 +38,39 @@ function getCurrentMonth(): string {
   return `${year}-${month}`;
 }
 
-function formatMoney(value: number): string {
-  return `${value.toLocaleString('ru-RU')} ₸`;
+function formatMoney(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(Number(value))) {
+    return '0 ₸';
+  }
+  return `${Number(value).toLocaleString('ru-RU')} ₸`;
 }
 
 function formatMonthLabel(month: string): string {
   if (!month) return '—';
 
-  return new Date(`${month}-01T00:00:00`).toLocaleDateString('ru-RU', {
-    month: 'long',
-    year: 'numeric',
-  });
+  try {
+    const parsed = new Date(`${month}-01T00:00:00`);
+    if (isNaN(parsed.getTime())) return month;
+    return parsed.toLocaleDateString('ru-RU', {
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return month;
+  }
 }
 
 function formatDate(value: string): string {
   if (!value) return '—';
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU');
+  try {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU');
+    }
+    return new Date(value).toLocaleDateString('ru-RU');
+  } catch {
+    return value;
   }
-
-  return new Date(value).toLocaleDateString('ru-RU');
 }
 
 export default function StaffSalaryHistoryPage() {
@@ -113,9 +128,9 @@ export default function StaffSalaryHistoryPage() {
             {
               id: historyData.staffId,
               name: historyData.fullName,
-              outstandingAmount: historyData.totalOutstanding,
-              dueAmount: historyData.totalDue,
-              paidAmount: historyData.totalPaid,
+              outstandingAmount: historyData.totalOutstanding ?? 0,
+              dueAmount: historyData.totalDue ?? 0,
+              paidAmount: historyData.totalPaid ?? 0,
             },
           ]
         : [],
@@ -209,7 +224,13 @@ export default function StaffSalaryHistoryPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-[#1f2530]">
-              История зарплаты: {historyData?.fullName || `Сотрудник ${staffId}`}
+              История зарплаты:{' '}
+              <Link
+                href={`/staff/${staffId}`}
+                className="text-[#467aff] transition-colors hover:underline"
+              >
+                {historyData?.fullName || `Сотрудник ${staffId}`}
+              </Link>
             </h2>
             <p className="mt-1 text-sm text-[#7f8897]">{staffData?.position || 'Должность не указана'}</p>
           </div>
@@ -220,51 +241,51 @@ export default function StaffSalaryHistoryPage() {
       </div>
 
       {historyLoading ? (
-        <div className="crm-surface">
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
-          </div>
+        <div className="crm-surface flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-[#467aff]" />
         </div>
       ) : historyError ? (
-        <div className="crm-surface">
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {historyError}
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 sm:p-5 text-sm text-red-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+            <div>
+              <p className="font-semibold text-red-800">Не удалось загрузить историю зарплаты</p>
+              <p className="mt-0.5 text-xs text-red-600">{historyError}</p>
+            </div>
           </div>
+          <Button variant="secondary" icon={RefreshCw} onClick={() => void refetchHistory()} className="shrink-0 bg-white hover:bg-red-100 text-red-700 border-red-200">
+            Повторить попытку
+          </Button>
         </div>
       ) : !historyData ? (
-        <div className="crm-surface">
-          <div className="rounded-xl border border-[#e6ebf0] bg-[#f8fafc] px-4 py-6 text-center text-sm text-[#8a93a3]">
-            История по зарплате не найдена
-          </div>
+        <div className="crm-surface p-8 text-center text-sm text-[#7f8794]">
+          Данные по зарплате сотрудника не найдены.
         </div>
       ) : (
         <>
-          <div className="crm-surface p-5">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="rounded-xl border border-[#e2e8ee] bg-white px-4 py-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Сотрудник</p>
-                <p className="mt-1 text-base font-semibold text-[#1f2530]">{historyData.fullName}</p>
-                <p className="text-sm text-[#5f6b7b]">{staffData?.position || '—'}</p>
-              </div>
-              <div className="rounded-xl border border-[#e2e8ee] bg-white px-4 py-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Роль и статус</p>
-                <p className="mt-1 text-base font-semibold text-[#1f2530]">{STAFF_ROLE_LABELS[historyData.role]}</p>
-                <span className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-xs font-medium ${STAFF_STATUS_COLORS[historyData.status]}`}>
-                  {STAFF_STATUS_LABELS[historyData.status]}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="crm-surface p-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
               <div className="rounded-xl border border-[#e2e8ee] bg-[#f8fbfd] px-4 py-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Схема оплаты</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Сотрудник</p>
+                <Link
+                  href={`/staff/${historyData.staffId}`}
+                  className="mt-1 block text-sm font-semibold text-[#467aff] hover:underline"
+                >
+                  {historyData.fullName}
+                </Link>
+                <p className="mt-1 text-xs text-[#5f6b7b]">
+                  {STAFF_ROLE_LABELS[historyData.role] || historyData.role || '—'}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#e2e8ee] bg-[#f8fbfd] px-4 py-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Условия оплаты</p>
                 <p className="mt-1 text-sm font-semibold text-[#1f2530]">
-                  {STAFF_SALARY_TYPE_LABELS[historyData.salaryType]}
+                  {STAFF_SALARY_TYPE_LABELS[historyData.salaryType] || historyData.salaryType || '—'}
                 </p>
                 <p className="mt-1 text-xs text-[#5f6b7b]">
                   {historyData.salaryType === 'FIXED'
                     ? formatMoney(historyData.fixedSalary)
-                    : historyData.salaryPercentage !== null
+                    : historyData.salaryPercentage !== null && historyData.salaryPercentage !== undefined
                       ? `${historyData.salaryPercentage}%`
                       : '—'}
                 </p>
@@ -279,7 +300,7 @@ export default function StaffSalaryHistoryPage() {
               </div>
               <div className="rounded-xl border border-[#e2e8ee] bg-[#f8fbfd] px-4 py-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Остаток</p>
-                <p className="mt-1 text-sm font-semibold text-[#c24141]">{formatMoney(historyData.totalOutstanding)}</p>
+                <p className="mt-1 text-sm font-semibold"><SalaryBalance amount={historyData.totalOutstanding} /></p>
               </div>
             </div>
           </div>
@@ -301,15 +322,15 @@ export default function StaffSalaryHistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
-                  {historyData.months.length > 0 ? (
+                  {(historyData.months || []).length > 0 ? (
                     historyData.months.map((month) => (
                       <tr key={month.month} className="crm-table-row">
                         <td className="crm-table-cell">{formatMonthLabel(month.month)}</td>
-                        <td className="crm-table-cell">{month.activeStudentCount}</td>
+                        <td className="crm-table-cell">{month.activeStudentCount ?? 0}</td>
                         <td className="crm-table-cell">{formatMoney(month.percentageBaseAmount)}</td>
                         <td className="crm-table-cell">{formatMoney(month.dueAmount)}</td>
                         <td className="crm-table-cell text-green-600">{formatMoney(month.paidAmount)}</td>
-                        <td className="crm-table-cell text-red-600">{formatMoney(month.outstandingAmount)}</td>
+                        <td className="crm-table-cell"><SalaryBalance amount={month.outstandingAmount} /></td>
                       </tr>
                     ))
                   ) : (
@@ -341,15 +362,15 @@ export default function StaffSalaryHistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="crm-table-body">
-                  {historyData.payments.length > 0 ? (
+                  {(historyData.payments || []).length > 0 ? (
                     historyData.payments.map((payment) => (
                       <tr key={payment.transactionId} className="crm-table-row">
                         <td className="crm-table-cell">{formatMonthLabel(payment.salaryMonth)}</td>
                         <td className="crm-table-cell">{formatDate(payment.paymentDate)}</td>
                         <td className="crm-table-cell">{formatMoney(payment.amount)}</td>
                         <td className="crm-table-cell">
-                          <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${TRANSACTION_STATUS_COLORS[payment.status]}`}>
-                            {TRANSACTION_STATUS_LABELS[payment.status]}
+                          <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-medium ${TRANSACTION_STATUS_COLORS[payment.status] || 'bg-gray-100 text-gray-700'}`}>
+                            {TRANSACTION_STATUS_LABELS[payment.status] || payment.status || '—'}
                           </span>
                         </td>
                         <td className="crm-table-cell">{payment.notes || '—'}</td>
@@ -357,12 +378,13 @@ export default function StaffSalaryHistoryPage() {
                           <button
                             type="button"
                             onClick={() => handleOpenPaymentModal(payment)}
-                            disabled={createPaymentMutation.loading || updatePaymentMutation.loading}
+                            disabled={payment.status === 'CANCELLED' || createPaymentMutation.loading || updatePaymentMutation.loading}
                             className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#467aff] transition-colors hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-50"
                             title="Редактировать выплату"
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
+                          <CancelSalaryPaymentButton id={payment.transactionId} amount={payment.amount} status={payment.status} onCancelled={refetchHistory} />
                         </td>
                       </tr>
                     ))

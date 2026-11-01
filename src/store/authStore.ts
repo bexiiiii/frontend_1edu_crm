@@ -4,6 +4,7 @@ import {
   registerTenant,
   getProfile,
   decodeJwt,
+  refreshAccessToken,
   type UserDto,
   type RegisterTenantRequest,
 } from '@/lib/api';
@@ -29,6 +30,27 @@ type AuthState = {
   clearError: () => void;
   setBranchId: (branchId: string) => void;
 };
+
+
+/**
+ * Обновляет сессию по refresh-токену. Вызывается, когда access-токен уже истёк:
+ * пользователь остаётся в аккаунте, пока жива серверная сессия (двое суток).
+ */
+async function renewSessionOrLogout(get: () => AuthState): Promise<void> {
+  const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
+  if (!refreshToken) {
+    get().logout();
+    return;
+  }
+  try {
+    const tokenData = await refreshAccessToken(refreshToken);
+    localStorage.setItem('access_token', tokenData.access_token);
+    localStorage.setItem('refresh_token', tokenData.refresh_token);
+    get().hydrate();
+  } catch {
+    get().logout();
+  }
+}
 
 function extractTenantId(claims: Record<string, unknown>): string | null {
   const tenantId = claims.tenant_id;
@@ -245,12 +267,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             permissions: storedPermissions,
           } = JSON.parse(stored);
 
-          // Check if token is expired
+          // Истёкший access-токен — не повод выкидывать из аккаунта: сессия живёт
+          // на refresh-токене. Пробуем обновить и только при отказе разлогиниваем.
           const claims = decodeJwt(token);
           const exp = claims.exp as number;
           if (exp && Date.now() / 1000 > exp) {
-            // Token expired — try to refresh or logout
-            get().logout();
+            void renewSessionOrLogout(get);
             return;
           }
 

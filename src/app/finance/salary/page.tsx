@@ -1,8 +1,9 @@
 'use client';
+import { SalaryBalance } from '@/components/features/salary/SalaryBalance';
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, Plus, Search } from 'lucide-react';
+import { AlertTriangle, Loader2, Plus, RefreshCw, Search } from 'lucide-react';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
 import { Button } from '@/components/ui/Button';
 import {
@@ -29,15 +30,24 @@ function getCurrentMonth(): string {
 function formatMonthLabel(month: string): string {
   if (!month) return '—';
 
-  return new Date(`${month}-01T00:00:00`).toLocaleDateString('ru-RU', {
-    month: 'long',
-    year: 'numeric',
-  });
+  try {
+    const parsed = new Date(`${month}-01T00:00:00`);
+    if (isNaN(parsed.getTime())) return month;
+    return parsed.toLocaleDateString('ru-RU', {
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return month;
+  }
 }
 
-function formatMoney(value: number, currency = 'KZT'): string {
+function formatMoney(value: number | null | undefined, currency = 'KZT'): string {
+  if (value === null || value === undefined || isNaN(Number(value))) {
+    return `0 ${currency === 'KZT' ? '₸' : currency}`;
+  }
   const suffix = currency === 'KZT' ? '₸' : currency;
-  return `${value.toLocaleString('ru-RU')} ${suffix}`;
+  return `${Number(value).toLocaleString('ru-RU')} ${suffix}`;
 }
 
 export default function SalaryPage() {
@@ -88,19 +98,19 @@ export default function SalaryPage() {
     return (salaryOverview?.entries ?? []).map((entry) => ({
       id: entry.staffId,
       staffId: entry.staffId,
-      employeeName: entry.fullName,
+      employeeName: entry.fullName || 'Без имени',
       position: staffMetaMap.get(entry.staffId)?.position || '—',
       role: entry.role,
       status: entry.status,
-      salaryType: entry.salaryType,
-      fixedSalary: entry.fixedSalary,
-      salaryPercentage: entry.salaryPercentage,
-      activeStudentCount: entry.activeStudentCount,
-      percentageBaseAmount: entry.percentageBaseAmount,
-      dueAmount: entry.dueAmount,
-      paidAmount: entry.paidAmount,
-      outstandingAmount: entry.outstandingAmount,
-      paymentCount: entry.payments.length,
+      salaryType: entry.salaryType || 'FIXED',
+      fixedSalary: entry.fixedSalary ?? 0,
+      salaryPercentage: entry.salaryPercentage ?? null,
+      activeStudentCount: entry.activeStudentCount ?? 0,
+      percentageBaseAmount: entry.percentageBaseAmount ?? 0,
+      dueAmount: entry.dueAmount ?? 0,
+      paidAmount: entry.paidAmount ?? 0,
+      outstandingAmount: entry.outstandingAmount ?? 0,
+      paymentCount: entry.payments?.length ?? 0,
       currency,
       period,
     }));
@@ -111,10 +121,11 @@ export default function SalaryPage() {
 
     return salaries.filter((salary) => {
       if (query) {
+        const roleLabel = STAFF_ROLE_LABELS[salary.role] || salary.role || '';
         const haystack = [
           salary.employeeName,
           salary.position,
-          STAFF_ROLE_LABELS[salary.role],
+          roleLabel,
         ]
           .join(' ')
           .toLowerCase();
@@ -145,9 +156,9 @@ export default function SalaryPage() {
   const summary = useMemo(
     () => ({
       totalStaff: filteredSalaries.length,
-      totalDue: filteredSalaries.reduce((sum, salary) => sum + salary.dueAmount, 0),
-      totalPaid: filteredSalaries.reduce((sum, salary) => sum + salary.paidAmount, 0),
-      totalOutstanding: filteredSalaries.reduce((sum, salary) => sum + salary.outstandingAmount, 0),
+      totalDue: filteredSalaries.reduce((sum, salary) => sum + (salary.dueAmount || 0), 0),
+      totalPaid: filteredSalaries.reduce((sum, salary) => sum + (salary.paidAmount || 0), 0),
+      totalOutstanding: filteredSalaries.reduce((sum, salary) => sum + (salary.outstandingAmount || 0), 0),
     }),
     [filteredSalaries]
   );
@@ -209,10 +220,11 @@ export default function SalaryPage() {
         </div>
         <div className="crm-surface p-6">
           <p className="mb-1 text-sm text-gray-500">Остаток</p>
-          <p className="text-2xl font-bold text-red-600">{formatMoney(summary.totalOutstanding)}</p>
+          <p className="text-2xl font-bold"><SalaryBalance amount={summary.totalOutstanding} /></p>
         </div>
       </div>
 
+      <p className="text-sm text-[#8a93a3]">Сотрудники выбранного филиала. Начисления и выплаты каждого сотрудника учитываются по всем его филиалам.</p>
       <div className="crm-surface p-6">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="relative">
@@ -249,8 +261,17 @@ export default function SalaryPage() {
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 sm:p-5 text-sm text-red-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+            <div>
+              <p className="font-semibold text-red-800">Не удалось загрузить данные по зарплатам</p>
+              <p className="mt-0.5 text-xs text-red-600">{error}</p>
+            </div>
+          </div>
+          <Button variant="secondary" icon={RefreshCw} onClick={() => void refetch()} className="shrink-0 bg-white hover:bg-red-100 text-red-700 border-red-200">
+            Повторить попытку
+          </Button>
         </div>
       ) : null}
 
@@ -281,23 +302,28 @@ export default function SalaryPage() {
                     <tr key={salary.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
-                        <div className="text-sm font-medium text-gray-900">{salary.employeeName}</div>
+                        <Link
+                          href={`/staff/${salary.staffId}`}
+                          className="text-sm font-medium text-[#467aff] hover:underline"
+                        >
+                          {salary.employeeName}
+                        </Link>
                         <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
-                          <span>{STAFF_ROLE_LABELS[salary.role]}</span>
+                          <span>{STAFF_ROLE_LABELS[salary.role] || salary.role || '—'}</span>
                           <span
-                            className={`inline-flex rounded-lg px-2 py-0.5 font-medium ${STAFF_STATUS_COLORS[salary.status]}`}
+                            className={`inline-flex rounded-lg px-2 py-0.5 font-medium ${STAFF_STATUS_COLORS[salary.status] || 'bg-gray-100 text-gray-700'}`}
                           >
-                            {STAFF_STATUS_LABELS[salary.status]}
+                            {STAFF_STATUS_LABELS[salary.status] || salary.status || '—'}
                           </span>
                         </div>
                       </td>
                       <td className="crm-table-cell">{salary.position}</td>
                       <td className="crm-table-cell">
-                        <div className="text-sm text-gray-900">{STAFF_SALARY_TYPE_LABELS[salary.salaryType]}</div>
+                        <div className="text-sm text-gray-900">{STAFF_SALARY_TYPE_LABELS[salary.salaryType] || salary.salaryType || '—'}</div>
                         <div className="text-xs text-gray-500">
                           {salary.salaryType === 'FIXED'
                             ? formatMoney(salary.fixedSalary, salary.currency)
-                            : salary.salaryPercentage !== null
+                            : salary.salaryPercentage !== null && salary.salaryPercentage !== undefined
                               ? `${salary.salaryPercentage}%`
                               : '—'}
                         </div>
@@ -313,7 +339,7 @@ export default function SalaryPage() {
                         {formatMoney(salary.paidAmount, salary.currency)}
                       </td>
                       <td className="crm-table-cell text-red-600">
-                        {formatMoney(salary.outstandingAmount, salary.currency)}
+                        <SalaryBalance amount={salary.outstandingAmount} />
                       </td>
                       <td className="crm-table-cell">
                         <Link

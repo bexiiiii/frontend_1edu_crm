@@ -20,6 +20,7 @@ import {
 } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { formatFullName } from '@/lib/utils';
 
 function getStaffFullName(staff: {
   fullName?: string | null;
@@ -27,11 +28,7 @@ function getStaffFullName(staff: {
   lastName?: string | null;
   middleName?: string | null;
 }) {
-  if (staff.fullName?.trim()) {
-    return staff.fullName.trim();
-  }
-
-  return [staff.lastName, staff.firstName, staff.middleName].filter(Boolean).join(' ');
+  return formatFullName(staff);
 }
 
 function toFormValues(task: TaskListItem): TaskFormValues {
