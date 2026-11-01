@@ -155,7 +155,7 @@ export default function AnalyticsIndexPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-bold text-rose-700">
-                      {formatMoney(debtor.balance)} ₸
+                      {formatMoney(Math.abs(debtor.balance))} ₸
                     </div>
                   </div>
                 </Link>
