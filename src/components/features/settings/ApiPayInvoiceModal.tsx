@@ -92,7 +92,11 @@ export const ApiPayInvoiceModal = ({
     []
   );
 
-  const students = useMemo(() => studentsPage?.content ?? [], [studentsPage]);
+  // Soft-deleted students are not offered for new invoices (unless pre-selected).
+  const students = useMemo(
+    () => (studentsPage?.content ?? []).filter((s) => !s.deleted || s.id === initialStudentId),
+    [studentsPage, initialStudentId]
+  );
 
   // Pre-fill modal fields when opened from "Выставить счет" action
   useEffect(() => {

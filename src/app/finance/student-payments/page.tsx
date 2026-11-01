@@ -312,6 +312,18 @@ export default function StudentPaymentsPage() {
       .sort((left, right) => right.debt - left.debt || right.expected - left.expected);
   }, [monthlyOverview, search, statusFilter, studentMap, subscriptionMetaMap]);
 
+  // Soft-deleted students (card kept): flagged by the debtors API or the student list.
+  const softDeletedStudentIds = useMemo(() => {
+    const ids = new Set<string>();
+    (studentsPage?.content ?? []).forEach((student) => {
+      if (student.deleted) ids.add(student.id);
+    });
+    (debtorsData ?? []).forEach((debtor) => {
+      if (debtor.deleted) ids.add(debtor.studentId);
+    });
+    return ids;
+  }, [studentsPage, debtorsData]);
+
   const debtorRows = useMemo(() => {
     const query = search.trim().toLowerCase();
 
@@ -462,13 +474,17 @@ export default function StudentPaymentsPage() {
     },
     [subscriptionMetaMap, subscriptionsPage]
   );
+  // Payment picker: soft-deleted students are hidden unless the modal is opened
+  // for that student (e.g. from the debtors list — past debt can still be paid).
   const studentOptions = useMemo(
     () =>
-      (studentsPage?.content ?? []).map((student) => ({
-        id: student.id,
-        name: getStudentFullName(student) || student.email || student.phone || 'Без имени',
-      })),
-    [studentsPage]
+      (studentsPage?.content ?? [])
+        .filter((student) => !student.deleted || student.id === paymentModalState.studentId)
+        .map((student) => ({
+          id: student.id,
+          name: getStudentFullName(student) || student.email || student.phone || 'Без имени',
+        })),
+    [studentsPage, paymentModalState.studentId]
   );
   const overviewStats = useMemo(
     () => [
@@ -777,12 +793,21 @@ export default function StudentPaymentsPage() {
                                   </span>
                                 </span>
                               ) : (
-                                <Link
-                                  href={`/students/${item.studentId}`}
-                                  className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#3568eb] hover:underline"
-                                >
-                                  {item.studentName}
-                                </Link>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Link
+                                    href={`/students/${item.studentId}`}
+                                    className={`text-sm font-semibold transition-colors hover:text-[#3568eb] hover:underline ${
+                                      softDeletedStudentIds.has(item.studentId) ? 'text-gray-500 line-through' : 'text-[#202938]'
+                                    }`}
+                                  >
+                                    {item.studentName}
+                                  </Link>
+                                  {softDeletedStudentIds.has(item.studentId) ? (
+                                    <span className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">
+                                      Удалён
+                                    </span>
+                                  ) : null}
+                                </span>
                               )}
                               <div className="text-xs text-[#8690a0]">
                                 {item.courseNames.join(', ')}
@@ -885,12 +910,21 @@ export default function StudentPaymentsPage() {
                                   </span>
                                 </span>
                               ) : (
-                                <Link
-                                  href={`/students/${item.studentId}`}
-                                  className="text-sm font-semibold text-[#202938] transition-colors hover:text-[#3568eb] hover:underline"
-                                >
-                                  {item.studentName}
-                                </Link>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Link
+                                    href={`/students/${item.studentId}`}
+                                    className={`text-sm font-semibold transition-colors hover:text-[#3568eb] hover:underline ${
+                                      softDeletedStudentIds.has(item.studentId) ? 'text-gray-500 line-through' : 'text-[#202938]'
+                                    }`}
+                                  >
+                                    {item.studentName}
+                                  </Link>
+                                  {softDeletedStudentIds.has(item.studentId) ? (
+                                    <span className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">
+                                      Удалён
+                                    </span>
+                                  ) : null}
+                                </span>
                               )}
                               <div className="text-xs text-[#8690a0]">
                                 {item.courseNames.join(', ')}

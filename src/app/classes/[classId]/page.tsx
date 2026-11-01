@@ -310,7 +310,7 @@ export default function ClassDetailsPage() {
     const query = addSearch.trim().toLowerCase();
 
     return allStudents
-      .filter((student) => !existingIds.has(student.id))
+      .filter((student) => !student.deleted && !existingIds.has(student.id))
       .filter((student) => {
         if (!query) {
           return true;

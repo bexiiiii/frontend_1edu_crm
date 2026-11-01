@@ -291,9 +291,10 @@ export default function Classes() {
     () => (roomsData?.content ?? []).map((room) => ({ id: room.id, name: room.name })),
     [roomsData]
   );
+  // Picker for enrolling students: soft-deleted students cannot be added.
   const studentOptions = useMemo(
     () =>
-      (studentsData?.content ?? []).map((student) => ({
+      (studentsData?.content ?? []).filter((student) => !student.deleted).map((student) => ({
         id: student.id,
         name: getStudentFullName(student) || student.fullName || 'Без имени',
       })),

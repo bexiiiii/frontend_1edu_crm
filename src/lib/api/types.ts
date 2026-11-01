@@ -176,6 +176,12 @@ export interface StudentDto {
   createdByName?: string | null;
   updatedBy?: string | null;
   updatedByName?: string | null;
+  /** Soft delete: the card stays with all history, the student is closed everywhere. */
+  deleted?: boolean;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+  deletedByName?: string | null;
+  deletedReason?: string | null;
 }
 
 export interface CreateStudentRequest {
@@ -1483,6 +1489,8 @@ export interface StudentDebtDto {
   fullName?: string | null;
   grossDebt?: number | null;
   advanceApplied?: number | null;
+  /** The student is soft-deleted but still owes for past months. */
+  deleted?: boolean;
 }
 
 export interface SalaryPaymentDto {

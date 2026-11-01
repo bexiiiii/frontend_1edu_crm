@@ -31,6 +31,9 @@ export interface StudentListItem {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Soft-deleted: shown greyed with an «Удалён» badge. */
+  deleted?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface StudentFormValues {

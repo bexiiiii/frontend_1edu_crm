@@ -137,6 +137,10 @@ export default function Finance() {
   );
 
   const studentMap = useMemo(() => new Map(studentOptions.map((student) => [student.id, student.name])), [studentOptions]);
+  const deletedStudentIds = useMemo(
+    () => new Set((studentsPage?.content ?? []).filter((student) => student.deleted).map((student) => student.id)),
+    [studentsPage]
+  );
 
   const { data: transactionsPage, loading, error, refetch } = useApi(() => {
     const params = { page: 0, size: 1000 };
@@ -644,7 +648,9 @@ export default function Finance() {
           onClose={closeModal}
           onSave={handleSaveTransaction}
           initialValues={modalState.initialValues}
-          students={studentOptions}
+          students={studentOptions.filter(
+            (student) => !deletedStudentIds.has(student.id) || student.id === modalState.initialValues?.studentId
+          )}
           isSubmitting={createMutation.loading || updateMutation.loading}
           title={
             modalState.type === 'INCOME'
@@ -666,7 +672,9 @@ export default function Finance() {
           onClose={closeModal}
           onSave={handleSaveTransaction}
           initialValues={modalState.initialValues}
-          students={studentOptions}
+          students={studentOptions.filter(
+            (student) => !deletedStudentIds.has(student.id) || student.id === modalState.initialValues?.studentId
+          )}
           isSubmitting={createMutation.loading || updateMutation.loading}
           title={modalState.transactionId ? 'Редактировать расход' : 'Добавить расход'}
         />

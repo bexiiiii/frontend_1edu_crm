@@ -540,6 +540,8 @@ export default function StudentProfilePage() {
     studentsService.update(id, data)
   );
   const deleteStudentMutation = useMutation((id: string) => studentsService.delete(id));
+  const restoreStudentMutation = useMutation((id: string) => studentsService.restore(id));
+  const isTenantAdmin = Boolean(currentUser?.roles?.includes('TENANT_ADMIN'));
   const transferStudentMutation = useMutation(({ id, branchId }: { id: string; branchId: string }) =>
     studentsService.transferToBranch(id, branchId)
   );
@@ -1034,12 +1036,25 @@ export default function StudentProfilePage() {
   };
 
   const handleDeleteStudent = async () => {
-    if (!studentId || !confirm('Вы уверены, что хотите удалить ученика?')) {
+    if (!studentId || !confirm('Ученик будет помечен как удалённый: история оплат и посещений сохранится. Продолжить?')) {
       return;
     }
 
     await deleteStudentMutation.mutate(studentId);
     router.push('/students');
+  };
+
+  const handleRestoreStudent = async () => {
+    if (!studentId || !confirm('Восстановить ученика? В группы и курсы он не вернётся — его нужно будет записать заново.')) {
+      return;
+    }
+    try {
+      await restoreStudentMutation.mutate(studentId);
+      pushToast({ message: 'Ученик восстановлен. Запишите его в группы и курсы заново.', tone: 'success' });
+      await refetch();
+    } catch (err) {
+      pushToast({ message: getErrorMessage(err, 'Не удалось восстановить ученика'), tone: 'error' });
+    }
   };
 
   const handleTransferStudent = async () => {
@@ -1319,7 +1334,34 @@ export default function StudentProfilePage() {
         Назад к ученикам
       </Button>
 
-      <div className="crm-surface p-5">
+      {data.student.deleted ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div>
+            <span className="font-semibold">
+              Ученик удалён {formatDateTime(data.student.deletedAt)}
+              {' '}({data.student.deletedByName || data.student.deletedBy || 'Администратор'})
+            </span>
+            {data.student.deletedReason ? (
+              <span className="text-red-600"> · Причина: {data.student.deletedReason}</span>
+            ) : null}
+            <div className="mt-0.5 text-xs text-red-600">
+              История оплат, посещений и абонементов сохранена. Новые оплаты, записи и переводы недоступны.
+            </div>
+          </div>
+          {isTenantAdmin ? (
+            <Button
+              variant="secondary"
+              icon={RotateCcw}
+              onClick={() => void handleRestoreStudent()}
+              disabled={restoreStudentMutation.loading}
+            >
+              {restoreStudentMutation.loading ? 'Восстанавливаем...' : 'Восстановить'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className={`crm-surface p-5 ${data.student.deleted ? 'opacity-80' : ''}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-4">
             {photoUrl ? (
@@ -1332,7 +1374,18 @@ export default function StudentProfilePage() {
 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="truncate text-2xl font-semibold text-[#1f2530]">{displayName}</h1>
+                <h1
+                  className={`truncate text-2xl font-semibold ${
+                    data.student.deleted ? 'text-gray-500 line-through' : 'text-[#1f2530]'
+                  }`}
+                >
+                  {displayName}
+                </h1>
+                {data.student.deleted ? (
+                  <span className="inline-flex shrink-0 items-center rounded-lg border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">
+                    Удалён
+                  </span>
+                ) : null}
 
                 {whatsappUrl ? (
                   <a
@@ -1456,7 +1509,7 @@ export default function StudentProfilePage() {
           >
             Редактировать
           </Button>
-          {transferBranches.length > 0 ? (
+          {!data.student.deleted && transferBranches.length > 0 ? (
             <Button
               variant="secondary"
               onClick={() => setIsTransferBranchModalOpen(true)}
@@ -1465,7 +1518,7 @@ export default function StudentProfilePage() {
               Перевести в филиал
             </Button>
           ) : null}
-          {addableBranches.length > 0 ? (
+          {!data.student.deleted && addableBranches.length > 0 ? (
             <Button
               variant="secondary"
               icon={Building2}
@@ -1475,14 +1528,16 @@ export default function StudentProfilePage() {
               Добавить в филиал
             </Button>
           ) : null}
-          <Button
-            variant="secondary"
-            icon={PlusCircle}
-            onClick={openPaymentModal}
-            disabled={createPaymentMutation.loading || data.subscriptions.length === 0}
-          >
-            Добавить оплату
-          </Button>
+          {!data.student.deleted ? (
+            <Button
+              variant="secondary"
+              icon={PlusCircle}
+              onClick={openPaymentModal}
+              disabled={createPaymentMutation.loading || data.subscriptions.length === 0}
+            >
+              Добавить оплату
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             icon={Undo2}
@@ -1500,15 +1555,17 @@ export default function StudentProfilePage() {
           >
             Добавить звонок
           </Button>
-          <Button
-            variant="ghost"
-            icon={Trash2}
-            onClick={() => void handleDeleteStudent()}
-            disabled={deleteStudentMutation.loading}
-          >
-            {deleteStudentMutation.loading ? 'Удаляем...' : 'Удалить'}
-          </Button>
-          {data.subscriptions.length === 0 ? (
+          {!data.student.deleted ? (
+            <Button
+              variant="ghost"
+              icon={Trash2}
+              onClick={() => void handleDeleteStudent()}
+              disabled={deleteStudentMutation.loading}
+            >
+              {deleteStudentMutation.loading ? 'Удаляем...' : 'Удалить'}
+            </Button>
+          ) : null}
+          {!data.student.deleted && data.subscriptions.length === 0 ? (
             <span className="text-xs text-[#8a93a3]">Оплата недоступна: у студента нет абонементов</span>
           ) : null}
         </div>
@@ -1702,7 +1759,7 @@ export default function StudentProfilePage() {
                           {(() => {
                             // Group = schedule when the subscription has one, otherwise the course itself.
                             const returnGroupId = subscription.groupId || subscription.courseId;
-                            if (!returnGroupId) return null;
+                            if (!returnGroupId || data.student.deleted) return null;
                             const isWithdrawn =
                               (enrollment ? WITHDRAWN_ENROLLMENT_STATUSES.has(enrollment.enrollmentStatus) : false) ||
                               (subscription.status === 'EXPIRED' && Boolean(subscription.courseId));

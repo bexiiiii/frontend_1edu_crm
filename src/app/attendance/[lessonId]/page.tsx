@@ -276,7 +276,9 @@ export default function AttendanceLessonPage() {
     const eligibleCurrentStudentIds = new Set((attendanceResponse.data ?? []).map((record) => record.studentId));
     students = students.filter((student) => eligibleCurrentStudentIds.has(student.id));
     const currentLessonStudentIds = new Set(students.map((student) => student.id));
-    availableStudents = availableStudents.filter((student) => !currentLessonStudentIds.has(student.id));
+    availableStudents = availableStudents.filter(
+      (student) => !student.deleted && !currentLessonStudentIds.has(student.id)
+    );
 
     let monthlyStudents = students;
     let monthlyLessons: LessonDto[] = [];

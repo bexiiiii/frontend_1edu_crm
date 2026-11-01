@@ -18,7 +18,7 @@ import type {
 
 export const studentsService = {
   /** Get paginated list of students */
-  async getAll(params?: PaginationParams & { status?: StudentStatus }) {
+  async getAll(params?: PaginationParams & { status?: StudentStatus; includeDeleted?: boolean }) {
     const response = await api.get<ApiResponse<PageResponse<StudentDto>>>('/api/v1/students', { params });
     return response.data;
   },
@@ -50,9 +50,17 @@ export const studentsService = {
     return response.data;
   },
 
-  /** Delete a student */
-  async delete(id: string) {
-    const response = await api.delete<ApiResponse<void>>(`/api/v1/students/${id}`);
+  /** Mark a student as deleted (soft delete: card, payments and attendance are kept) */
+  async delete(id: string, reason?: string) {
+    const response = await api.delete<ApiResponse<void>>(`/api/v1/students/${id}`, {
+      params: reason ? { reason } : undefined,
+    });
+    return response.data;
+  },
+
+  /** Restore a soft-deleted student (status ACTIVE; groups/courses are not restored) */
+  async restore(id: string) {
+    const response = await api.post<ApiResponse<StudentDto>>(`/api/v1/students/${id}/restore`);
     return response.data;
   },
 
@@ -63,7 +71,7 @@ export const studentsService = {
   },
 
   /** Search students */
-  async search(params: PaginationParams & { query: string }) {
+  async search(params: PaginationParams & { query: string; includeDeleted?: boolean }) {
     const response = await api.get<ApiResponse<PageResponse<StudentDto>>>('/api/v1/students/search', {
       params,
     });

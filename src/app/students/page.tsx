@@ -246,9 +246,13 @@ export default function Students() {
           notes: student.notes || '',
           createdAt: student.createdAt || '',
           updatedAt: student.updatedAt || '',
+          deleted: Boolean(student.deleted),
+          deletedAt: student.deletedAt ?? null,
         }))
         .filter((student) => (filters.status === 'all' ? true : student.status === filters.status))
-        .sort((left, right) => getStudentSortKey(left).localeCompare(getStudentSortKey(right), 'ru-RU')),
+        .sort((left, right) =>
+          Number(Boolean(left.deleted)) - Number(Boolean(right.deleted))
+          || getStudentSortKey(left).localeCompare(getStudentSortKey(right), 'ru-RU')),
     [filters.status, studentItems]
   );
 
@@ -305,7 +309,7 @@ export default function Students() {
   };
 
   const handleDeleteStudent = async (student: StudentListItem) => {
-    if (!confirm('Вы уверены, что хотите удалить ученика?')) {
+    if (!confirm('Ученик будет помечен как удалённый: история оплат и посещений сохранится. Продолжить?')) {
       return;
     }
 
@@ -399,7 +403,7 @@ export default function Students() {
                     return (
                     <tr
                       key={student.id}
-                      className="crm-table-row cursor-pointer"
+                      className={`crm-table-row cursor-pointer ${student.deleted ? 'bg-gray-50 opacity-60' : ''}`}
                       onClick={(event) => {
                         if ((event.target as HTMLElement).closest('a, button, input, select, textarea')) return;
                         router.push(`/students/${student.id}`);
@@ -412,10 +416,17 @@ export default function Students() {
                       <td className="crm-table-cell">
                         <Link
                           href={`/students/${student.id}`}
-                          className="text-sm font-medium text-gray-900 transition-colors hover:text-[#3568eb] hover:underline"
+                          className={`text-sm font-medium transition-colors hover:text-[#3568eb] hover:underline ${
+                            student.deleted ? 'text-gray-500 line-through' : 'text-gray-900'
+                          }`}
                         >
                           {getDisplayName(student)}
                         </Link>
+                        {student.deleted ? (
+                          <span className="ml-2 inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">
+                            Удалён
+                          </span>
+                        ) : null}
                         <div className="text-xs text-gray-500">
                           {student.gender ? STUDENT_GENDER_LABELS[student.gender] : 'Пол не указан'}
                           {student.birthDate ? ` • ${formatDate(student.birthDate)}` : ''}
@@ -491,13 +502,15 @@ export default function Students() {
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
-                          <button
-                            onClick={() => void handleDeleteStudent(student)}
-                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                            title="Удалить"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!student.deleted ? (
+                            <button
+                              onClick={() => void handleDeleteStudent(student)}
+                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                              title="Удалить"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
