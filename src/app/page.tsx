@@ -259,7 +259,7 @@ export default function Dashboard() {
                       <div className="text-xs text-[#7d8795]">ID: {debtor.studentId.slice(0, 8)}...</div>
                     </div>
                     <div className="text-sm font-bold text-rose-700">
-                      {formatMoney(debtor.balance)} ₸
+                      {formatMoney(Math.abs(debtor.balance))} ₸
                     </div>
                   </Link>
                 ))}
