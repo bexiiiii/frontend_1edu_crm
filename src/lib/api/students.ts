@@ -12,9 +12,18 @@ import type {
   AddStudentToBranchRequest,
   StudentBranchDto,
   SimilarStudentDto,
+  StudentMembershipDto,
 } from './types';
 
 // ─── Students Service ───────────────────────────────────────────
+
+export interface StudentRestoreOptionsDto {
+  /** Deletion day (YYYY-MM-DD). */
+  deletedOn: string;
+  /** Earliest allowed return date: the day after the deletion. */
+  earliestReturnDate: string;
+  groups: { groupId: string; groupName: string; courseName: string }[];
+}
 
 export const studentsService = {
   /** Get paginated list of students */
@@ -58,9 +67,24 @@ export const studentsService = {
     return response.data;
   },
 
-  /** Restore a soft-deleted student (status ACTIVE; groups/courses are not restored) */
-  async restore(id: string) {
-    const response = await api.post<ApiResponse<StudentDto>>(`/api/v1/students/${id}/restore`);
+  /** All group memberships of the student in every branch, labelled with the branch. */
+  async getMemberships(id: string) {
+    const response = await api.get<ApiResponse<StudentMembershipDto[]>>(`/api/v1/students/${id}/memberships`);
+    return response.data;
+  },
+
+  /** Deleted student: deletion day and the groups the deletion closed (choices for «Восстановить»). */
+  async restoreOptions(id: string) {
+    const response = await api.get<ApiResponse<StudentRestoreOptionsDto>>(`/api/v1/students/${id}/restore-options`);
+    return response.data;
+  },
+
+  /**
+   * Restore a soft-deleted student (status ACTIVE). Each of groupIds is returned like
+   * «Вернуть в группу с даты» from fromDate (new period); empty = card only.
+   */
+  async restore(id: string, body: { groupIds: string[]; fromDate?: string } = { groupIds: [] }) {
+    const response = await api.post<ApiResponse<StudentDto>>(`/api/v1/students/${id}/restore`, body);
     return response.data;
   },
 
@@ -79,6 +103,15 @@ export const studentsService = {
   },
 
   /** Get students by group */
+  /** Students of several groups at once: { [groupId]: same page as getByGroup }. 2026-11-04. */
+  async getByGroups(groupIds: string[], params?: PaginationParams) {
+    const response = await api.get<ApiResponse<Record<string, PageResponse<StudentDto>>>>(
+      '/api/v1/students/group-batch',
+      { params: { ...params, ids: groupIds.join(',') } }
+    );
+    return response.data;
+  },
+
   async getByGroup(groupId: string, params?: PaginationParams) {
     const response = await api.get<ApiResponse<PageResponse<StudentDto>>>(
       `/api/v1/students/group/${groupId}`, { params }
@@ -124,6 +157,16 @@ export const studentsService = {
       params: excludeId ? { phone, excludeId } : { phone },
       skipErrorToast: true,
     });
+    return response.data;
+  },
+
+  /** «Добавить в мой филиал»: links a student of another branch (matched by phone) to the current branch. */
+  async linkToCurrentBranch(studentId: string, phone: string) {
+    const response = await api.post<ApiResponse<SimilarStudentDto>>(
+      `/api/v1/students/${studentId}/link-current-branch`,
+      null,
+      { params: { phone } },
+    );
     return response.data;
   },
 };

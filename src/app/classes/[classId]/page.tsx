@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRightLeft, Calendar, Edit2, FileText, Loader2, PauseCircle, PlayCircle, PlusCircle, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { useBackNavigation, useUrlState } from '@/hooks/useUrlState';
 import { AddClassModal } from '@/components/features/classes/AddClassModal';
 import { notifyCourseLifecycle, useCourseLifecycle } from '@/components/features/classes/CourseLifecycle';
 import { Button } from '@/components/ui/Button';
@@ -32,7 +33,7 @@ import { studentPaymentsService } from '@/lib/api/finance';
 import {
   formatScheduleDays,
   formatSchedulePeriod,
-  formatScheduleTimeRange,
+  formatScheduleTime,
 } from '@/lib/scheduleUtils';
 import { COURSE_FORMATS, COURSE_STATUSES, COURSE_TYPES } from '@/constants/class';
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
@@ -132,6 +133,7 @@ function toEditFormValues(course: CourseDto): CourseFormValues {
 
 export default function ClassDetailsPage() {
   const router = useRouter();
+  const goBack = useBackNavigation('/classes');
   const { roles, setBranchId } = useAuthStore();
   const isTeacher = roles.includes('TEACHER');
   const params = useParams();
@@ -145,7 +147,9 @@ export default function ClassDetailsPage() {
   const [studentDiscount, setStudentDiscount] = useState<number>(0);
   const [enrollmentStartDate, setEnrollmentStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [studentsPage, setStudentsPage] = useState(1);
-  const [activeTab, setActiveTab] = useState<ClassDetailsTab>('students');
+  // ?tab= keeps the open tab on reload and «Назад».
+  const [activeTabRaw, setActiveTab] = useUrlState('tab', 'students');
+  const activeTab = activeTabRaw as ClassDetailsTab;
   const [enrollmentDateModal, setEnrollmentDateModal] = useState<{
     student: StudentDto;
     startDate: string;
@@ -349,7 +353,7 @@ export default function ClassDetailsPage() {
             ? roomMap.get(schedule.roomId) || '—'
             : room?.name || '—',
           daysText: formatScheduleDays(schedule.daysOfWeek),
-          timeText: formatScheduleTimeRange(schedule.startTime, schedule.endTime),
+          timeText: formatScheduleTime(schedule),
           periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
           status: schedule.status,
         })),
@@ -359,7 +363,7 @@ export default function ClassDetailsPage() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/classes')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к курсам
         </Button>
         <div className="crm-surface flex items-center justify-center py-12">
@@ -372,7 +376,7 @@ export default function ClassDetailsPage() {
   if (error || !data) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/classes')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к курсам
         </Button>
         <div className="crm-surface p-6 text-sm text-[#7f8794]">
@@ -481,7 +485,7 @@ export default function ClassDetailsPage() {
 
   return (
     <div className="space-y-4">
-      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/classes')}>
+      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
         Назад к курсам
       </Button>
 
@@ -694,7 +698,7 @@ export default function ClassDetailsPage() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-1.5">
-                          <Link
+                          <Link prefetch={false}
                             href={`/students/${student.id}`}
                             className="inline-flex rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
                             title="Карточка ученика"

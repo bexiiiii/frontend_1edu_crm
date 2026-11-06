@@ -7,10 +7,14 @@ RUN npm install
 
 # Stage 2: builder
 FROM node:20-alpine AS builder
+ARG BACKEND_URL
+ARG NEXT_PUBLIC_KEYCLOAK_URL
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV BACKEND_URL=$BACKEND_URL
+ENV NEXT_PUBLIC_KEYCLOAK_URL=$NEXT_PUBLIC_KEYCLOAK_URL
 RUN npx next build --webpack
 
 # Stage 3: runner
@@ -18,6 +22,8 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV BACKEND_URL=$BACKEND_URL
+ENV NEXT_PUBLIC_KEYCLOAK_URL=$NEXT_PUBLIC_KEYCLOAK_URL
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs

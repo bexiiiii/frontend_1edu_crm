@@ -2,12 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Download, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Loader2 } from 'lucide-react';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildSubscriptionsSheets } from '@/components/analytics/excel-reports';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -31,7 +30,6 @@ export default function SubscriptionsReportPage() {
   const [periodPreset, setPeriodPreset] = useState<PresetState>('month');
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: subsData, loading } = useApi(
     () => analyticsService.getSubscriptions({ from: fromDate || undefined, to: toDate || undefined }),
@@ -84,22 +82,6 @@ export default function SubscriptionsReportPage() {
     setToDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportSubscriptions({
-        from: fromDate || undefined,
-        to: toDate || undefined,
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
@@ -145,14 +127,12 @@ export default function SubscriptionsReportPage() {
           <p className="text-lg font-semibold text-[#1f2530]">
             Итого: <span className="text-[#138f86]">{toMoney(totalAmount)}</span>
           </p>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="subscriptions"
+            reportTitle="Отчет по абонементам"
+            defaultRange={{ from: fromDate, to: toDate }}
+            buildSheets={buildSubscriptionsSheets}
+          />
         </div>
       </div>
 
@@ -174,7 +154,7 @@ export default function SubscriptionsReportPage() {
                 <tr key={row.id} className="crm-table-row">
                   <td className="crm-table-cell font-medium text-[#273142]">
                     {row.studentId ? (
-                      <Link href={`/students/${row.studentId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                      <Link prefetch={false} href={`/students/${row.studentId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
                         {row.client}
                       </Link>
                     ) : (

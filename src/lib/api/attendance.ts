@@ -43,6 +43,18 @@ export const attendanceService = {
   },
 
   /** Get attendance list for a lesson */
+  /**
+   * Lessons of a day plus each lesson's attendance in one request (same data as
+   * GET /lessons?date= + GET /lessons/{id}/attendance per lesson). 2026-11-04.
+   */
+  async getDay(date: string, params?: PaginationParams) {
+    const response = await api.get<ApiResponse<{
+      lessons: PageResponse<import('./types').LessonDto>;
+      attendanceByLessonId: Record<string, AttendanceDto[]>;
+    }>>('/api/v1/lessons/attendance-day', { params: { date, ...params } });
+    return response.data;
+  },
+
   async getByLesson(lessonId: string) {
     const response = await api.get<ApiResponse<AttendanceDto[]>>(
       `/api/v1/lessons/${lessonId}/attendance`

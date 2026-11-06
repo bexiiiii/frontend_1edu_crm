@@ -178,7 +178,7 @@ export function AttendanceMonthlyTable({
                   }`}
                   title={col.substituteTeacherName ? `Замена: ${col.substituteTeacherName}` : undefined}
                 >
-                  <Link
+                  <Link prefetch={false}
                     href={`/attendance/${col.lessonId}`}
                     className="flex flex-col items-center gap-1 transition-colors hover:text-[#467aff]"
                     title="Перейти к уроку"
@@ -213,7 +213,7 @@ export function AttendanceMonthlyTable({
                 <tr key={row.studentId} className="crm-table-row">
                   <td className="crm-table-cell sticky left-0 z-10 bg-[#fbfcfd] border border-[#e4eaf0]">
                     <div className="flex min-w-[180px] flex-col items-start gap-1">
-                      <Link
+                      <Link prefetch={false}
                         href={`/students/${row.studentId}`}
                         className="font-semibold leading-5 text-[#467aff] hover:underline"
                       >
@@ -233,7 +233,7 @@ export function AttendanceMonthlyTable({
                           onClick={() => onRedListAction(row)}
                           title={row.openRedList ? `В редлисте с ${formatRedListDate(row.openRedList.fromDate)}` : undefined}
                         >
-                          {row.openRedList ? 'Вывести из редлиста' : 'В редлист с даты'}
+                          {row.openRedList ? 'Вывести из редлиста' : 'Добавить в редлист'}
                         </button>
                       ) : null}
                     </div>

@@ -15,6 +15,8 @@ interface EventDetailModalProps {
   isDeleting?: boolean;
   readOnly?: boolean;
   lessonBonus?: boolean;
+  /** The lesson has real attendance marks: cancel / bonus are not offered (history stays). */
+  lessonHasMarks?: boolean;
   onToggleBonus?: () => void;
   onCancelLesson?: () => void;
   isLessonSaving?: boolean;
@@ -43,6 +45,7 @@ export const EventDetailModal = ({
   isDeleting = false,
   readOnly = false,
   lessonBonus = false,
+  lessonHasMarks = false,
   onToggleBonus,
   onCancelLesson,
   isLessonSaving = false,
@@ -101,6 +104,12 @@ export const EventDetailModal = ({
       }
     >
       <div className="space-y-4">
+        {lessonHasMarks && !readOnly ? (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            В этом занятии уже есть отметки посещаемости — отменить его или сделать бонусным нельзя.
+            Если это нужно, сначала снимите отметки в посещаемости.
+          </div>
+        ) : null}
         {lessonBonus ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Бонусный урок: он отображается в расписании, но не участвует в оплате студентов и зарплате преподавателя.
@@ -119,7 +128,7 @@ export const EventDetailModal = ({
               Курс
             </label>
             {schedule.courseId ? (
-              <Link
+              <Link prefetch={false}
                 href={`/classes/${schedule.courseId}`}
                 className="text-base font-semibold text-[#467aff] hover:underline"
                 onClick={onClose}
@@ -144,7 +153,7 @@ export const EventDetailModal = ({
               Преподаватель
             </label>
             {schedule.teacherId ? (
-              <Link
+              <Link prefetch={false}
                 href={`/staff/${schedule.teacherId}`}
                 className="text-base font-semibold text-[#467aff] hover:underline"
                 onClick={onClose}
@@ -175,9 +184,7 @@ export const EventDetailModal = ({
             <label className="mb-1 block text-xs font-medium text-gray-500">
               Время
             </label>
-            <p className="text-base text-gray-900">
-              {schedule.startTime.slice(0, 5)} - {schedule.endTime.slice(0, 5)}
-            </p>
+            <p className="text-base text-gray-900">{schedule.timeLabel}</p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">

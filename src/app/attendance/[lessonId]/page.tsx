@@ -4,7 +4,7 @@ import { AttendanceTotals } from '@/components/features/attendance/AttendanceTot
 import Link from 'next/link';
 
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, Save, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, Save, UserPlus, Users } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import type { AxiosRequestConfig } from 'axios';
 import { AttendanceMonthlyTable } from '@/components/features/attendance/AttendanceMonthlyTable';
@@ -46,6 +46,7 @@ import {
 import { STUDENT_STATUS_COLORS, STUDENT_STATUS_LABELS } from '@/constants/student';
 import type { AttendanceDto, AttendanceStatus, LessonDto, RedListDto, StudentDto } from '@/lib/api/types';
 import { formatFullName } from '@/lib/utils';
+import { useBackNavigation, useUrlState } from '@/hooks/useUrlState';
 
 type AttendanceViewMode = 'lesson' | 'month';
 
@@ -213,9 +214,14 @@ export default function AttendanceLessonPage() {
     lessonId: string | undefined;
     mode: AttendanceViewMode;
   }>({
-    lessonId,
+    // Not chosen yet: «Месяц» opens by itself when the URL has ?month=.
+    lessonId: undefined,
     mode: 'lesson',
   });
+  // Month shown in «Месяц» (?month=YYYY-MM); default is the lesson's month.
+  const [monthParamRaw, setMonthParam] = useUrlState('month');
+  const monthParam = /^\d{4}-\d{2}$/.test(monthParamRaw) ? monthParamRaw : '';
+  const monthBaseDate = (lessonDate: string) => (monthParam ? `${monthParam}-01` : lessonDate);
   const [draftState, setDraftState] = useState<LessonDraftState>(() =>
     createDraftState(lessonId ? `pending:${lessonId}` : 'empty', null)
   );
@@ -299,7 +305,7 @@ export default function AttendanceLessonPage() {
     let monthlyError: string | null = null;
 
     if (lesson.groupId) {
-      const monthRange = getMonthRange(lesson.lessonDate);
+      const monthRange = getMonthRange(monthBaseDate(lesson.lessonDate));
 
       try {
         const monthlyLessonsResponse = await lessonsService.getByGroup(lesson.groupId, {
@@ -454,7 +460,7 @@ export default function AttendanceLessonPage() {
         openRedListByStudentId,
       },
     };
-  }, [lessonId]);
+  }, [lessonId, monthParam]);
 
   const roles = useAuthStore((s) => s.roles);
   const canEditRedList = canManageRedList(roles);
@@ -528,7 +534,16 @@ export default function AttendanceLessonPage() {
 
   const activeDraftState = draftState.key === draftStateKey ? draftState : resolvedDraftState;
   const attendanceView =
-    attendanceViewState.lessonId === lessonId ? attendanceViewState.mode : 'lesson';
+    attendanceViewState.lessonId === lessonId ? attendanceViewState.mode : monthParam ? 'month' : 'lesson';
+  const shiftMonth = (delta: number) => {
+    if (!data) return;
+    const current = monthParam || data.lesson.lessonDate.slice(0, 7);
+    const [year, month] = current.split('-').map(Number);
+    const next = new Date(year, month - 1 + delta, 1);
+    const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    setAttendanceViewState({ lessonId, mode: 'month' });
+    setMonthParam(nextKey === data.lesson.lessonDate.slice(0, 7) ? '' : nextKey);
+  };
   const topic = activeDraftState.topic;
   const homework = activeDraftState.homework;
   const notes = activeDraftState.notes;
@@ -572,7 +587,7 @@ export default function AttendanceLessonPage() {
       return null;
     }
 
-    const monthRange = getMonthRange(data.lesson.lessonDate);
+    const monthRange = getMonthRange(monthBaseDate(data.lesson.lessonDate));
     const lessonsByDate = new Map<string, LessonDto[]>();
 
     for (const monthlyLesson of data.monthlyLessons) {
@@ -799,7 +814,7 @@ export default function AttendanceLessonPage() {
       lessonColumns,
       rows: studentRows,
     };
-  }, [data, lessonId, monthlyAttendanceOverrides]);
+  }, [data, lessonId, monthlyAttendanceOverrides, monthParam]);
 
   const originalStatusMap = useMemo(
     () => new Map((data?.attendanceRecords ?? []).map((record) => [record.studentId, record.status])),
@@ -832,9 +847,11 @@ export default function AttendanceLessonPage() {
   const isSavingAttendance = saveAttendanceMutation.loading || markAllMutation.loading;
   const isAddingStudent = addToGroupMutation.loading || createStudentMutation.loading;
 
-  const goBack = () => {
-    router.push('/attendance');
-  };
+  // Back to the previous page (the attendance day the lesson was opened from);
+  // opened by a direct link: the attendance page of the lesson's day.
+  const goBack = useBackNavigation(
+    data?.lesson.lessonDate ? `/attendance?date=${data.lesson.lessonDate.slice(0, 10)}` : '/attendance'
+  );
 
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
     updateDraftState((previous) => ({
@@ -1154,7 +1171,7 @@ export default function AttendanceLessonPage() {
               Преподаватель
             </p>
             {data.lesson.teacherId ? (
-              <Link
+              <Link prefetch={false}
                 href={`/staff/${data.lesson.teacherId}`}
                 className="mt-1 block text-sm font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
               >
@@ -1167,7 +1184,7 @@ export default function AttendanceLessonPage() {
               <p className="mt-1 text-xs text-[#7f8794]">
                 Замена:{' '}
                 {data.lesson.substituteTeacherId ? (
-                  <Link
+                  <Link prefetch={false}
                     href={`/staff/${data.lesson.substituteTeacherId}`}
                     className="text-[#467aff] hover:underline"
                   >
@@ -1189,7 +1206,7 @@ export default function AttendanceLessonPage() {
           <div className="crm-surface-soft p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-[#8a93a3]">Группа</p>
             {data.courseId || data.lesson.groupId ? (
-              <Link
+              <Link prefetch={false}
                 href={`/classes/${data.courseId || data.lesson.groupId}`}
                 className="mt-1 block text-sm font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
               >
@@ -1239,6 +1256,20 @@ export default function AttendanceLessonPage() {
                   aria-label="Режим отображения посещаемости"
                 />
               </div>
+
+              {attendanceView === 'month' && data.lesson.groupId ? (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" icon={ChevronLeft} onClick={() => shiftMonth(-1)} disabled={loading}>
+                    Назад
+                  </Button>
+                  <span className="min-w-[9rem] text-center text-sm font-semibold capitalize text-[#1f2530]">
+                    {getMonthRange(monthBaseDate(data.lesson.lessonDate)).monthLabel}
+                  </span>
+                  <Button size="sm" variant="secondary" icon={ChevronRight} onClick={() => shiftMonth(1)} disabled={loading}>
+                    Вперёд
+                  </Button>
+                </div>
+              ) : null}
 
               {attendanceView === 'lesson' ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -1357,7 +1388,7 @@ export default function AttendanceLessonPage() {
                         {index + 1}
                       </td>
                       <td className="crm-table-cell">
-                        <Link
+                        <Link prefetch={false}
                           href={`/students/${student.id}`}
                           className="font-semibold text-[#467aff] hover:underline"
                         >
@@ -1421,10 +1452,10 @@ export default function AttendanceLessonPage() {
                           ) : (
                             <button
                               type="button"
-                              className="rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+                              className="rounded-lg border border-[#e2e6ee] bg-white px-2 py-1 text-xs font-medium text-[#8a93a3] transition-colors hover:border-red-200 hover:text-red-600"
                               onClick={() => openRedListAction(student.id, student.fullName)}
                             >
-                              В редлист с даты
+                              Добавить в редлист
                             </button>
                           )}
                         </td>

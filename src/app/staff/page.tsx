@@ -17,7 +17,11 @@ import {
 import { staffService, type CreateStaffRequest, type StaffDto, type UpdateStaffRequest } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters, joinBranchNames, loadBranchNames } from '@/lib/excel-crm';
 import type { StaffFilters, StaffFormValues, StaffListItem } from '@/types/employee';
+import { useUrlFilters, useUrlNumber } from '@/hooks/useUrlState';
 
 const PAGE_SIZE = 20;
 
@@ -61,7 +65,7 @@ function toFormValues(employee: StaffListItem): StaffFormValues {
 export default function Employees() {
   const roles = useAuthStore((state) => state.roles);
   const isManager = roles.includes('MANAGER') && !roles.some((role) => role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN');
-  const [filters, setFilters] = useState<StaffFilters>({
+  const [filters, setFilters] = useUrlFilters<StaffFilters>({
     search: '',
     role: 'all',
     status: 'all',
@@ -77,7 +81,7 @@ export default function Employees() {
     isOpen: false,
     employeeId: null,
   });
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useUrlNumber('page', 0);
 
   const searchQuery = filters.search.trim();
   const { data: staffPage, loading, error, refetch } = useApi(() => {
@@ -216,9 +220,87 @@ export default function Employees() {
     await refetch();
   };
 
+  // «Скачать в Excel»: all staff matching the current search/role/status.
+  const buildStaffExcel = async (): Promise<ExcelSheet[]> => {
+    const [items, branchNames] = await Promise.all([
+      fetchAllPages((pageNum, size) =>
+        searchQuery
+          ? staffService.search({ query: searchQuery, page: pageNum, size })
+          : staffService.getAll({
+            page: pageNum,
+            size,
+            role: filters.role !== 'all' ? filters.role : undefined,
+            status: filters.status !== 'all' ? filters.status : undefined,
+          })
+      ),
+      loadBranchNames(),
+    ]);
+
+    const rows = items
+      .filter((staff) => (filters.role === 'all' || staff.role === filters.role)
+        && (filters.status === 'all' || staff.status === filters.status))
+      .map((staff) => ({ staff, name: getStaffDisplayName(staff) }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'ru-RU'));
+
+    return [{
+      name: 'Сотрудники',
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'ФИО' },
+          { header: 'Телефон' },
+          { header: 'Email' },
+          { header: 'Роль' },
+          { header: 'Кастомный статус' },
+          { header: 'Должность' },
+          ...(isManager ? [] : [
+            { header: 'Тип оплаты' },
+            { header: 'Оклад, ₸', type: 'money' as const },
+            { header: 'Процент, %', type: 'percent' as const },
+          ]),
+          { header: 'Филиалы' },
+          { header: 'Дата рождения', type: 'date' },
+          { header: 'Дата найма', type: 'date' },
+          { header: 'Статус' },
+          { header: 'Заметки' },
+        ],
+        rows: rows.map(({ staff, name }, index) => [
+          index + 1,
+          name,
+          staff.phone || '',
+          staff.email || '',
+          STAFF_ROLE_LABELS[staff.role] ?? staff.role,
+          staff.customStatus || '',
+          staff.position || '',
+          ...(isManager ? [] : [
+            STAFF_SALARY_TYPE_LABELS[staff.salaryType] ?? staff.salaryType,
+            staff.salaryType === 'FIXED' ? staff.salary : null,
+            staff.salaryType === 'FIXED' ? null : staff.individualSalaryPercentage ?? staff.salaryPercentage,
+          ]),
+          joinBranchNames(staff.branchIds, branchNames),
+          staff.birthdate || '',
+          staff.hireDate || '',
+          STAFF_STATUS_LABELS[staff.status] ?? staff.status,
+          staff.notes || '',
+        ]),
+      }],
+    }];
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page="staff"
+          filePrefix=""
+          reportTitle="Сотрудники"
+          note={describeFilters([
+            filters.role !== 'all' && `роль «${STAFF_ROLE_LABELS[filters.role]}»`,
+            filters.status !== 'all' && `статус «${STAFF_STATUS_LABELS[filters.status]}»`,
+            searchQuery && `поиск «${searchQuery}»`,
+          ])}
+          buildSnapshot={buildStaffExcel}
+        />
         <Button icon={Plus} onClick={openCreateModal}>
           Добавить сотрудника
         </Button>
@@ -328,7 +410,7 @@ export default function Employees() {
                     <tr key={employee.id} className="crm-table-row">
                       <td className="crm-table-cell">{currentPage * PAGE_SIZE + index + 1}</td>
                       <td className="crm-table-cell">
-                        <Link
+                        <Link prefetch={false}
                           href={`/staff/${employee.id}`}
                           className="text-sm font-medium text-[#467aff] hover:underline"
                         >
@@ -363,7 +445,7 @@ export default function Employees() {
                       </td>
                       <td className="crm-table-cell">
                         <div className="flex items-center gap-2">
-                          <Link
+                          <Link prefetch={false}
                             href={`/staff/${employee.id}`}
                             className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
                             title="Карточка сотрудника"

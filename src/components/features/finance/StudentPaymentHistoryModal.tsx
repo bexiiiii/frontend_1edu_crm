@@ -1,3 +1,4 @@
+import { formatKzPhone } from '@/lib/phone-kz';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -161,7 +162,10 @@ export const StudentPaymentHistoryModal = ({
                                   <p className="text-sm font-semibold text-[#1f2530]">{formatMoney(payment.amount)}</p>
                                   <div className="flex flex-wrap gap-3 text-xs text-[#7f8897]">
                                     <span>{formatDate(payment.paidAt)}</span>
-                                    <span>{PAYMENT_METHOD_LABELS[payment.method]}</span>
+                                    <span>
+                                      {PAYMENT_METHOD_LABELS[payment.method]}
+                                      {payment.method === 'TRANSFER' && payment.transferPhone ? ` · ${formatKzPhone(payment.transferPhone)}` : ''}
+                                    </span>
                                     <span>Месяц: {payment.paymentMonth}</span>
                                     <span>
                                       Причина: {payment.amountChangeReasonCode

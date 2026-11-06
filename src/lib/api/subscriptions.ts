@@ -17,7 +17,7 @@ export const subscriptionsService = {
   },
 
   /** Get subscriptions by student */
-  async getByStudent(studentId: string, params?: PaginationParams & { status?: SubscriptionStatus }) {
+  async getByStudent(studentId: string, params?: PaginationParams & { status?: SubscriptionStatus; allBranches?: boolean }) {
     const response = await api.get<ApiResponse<PageResponse<SubscriptionDto>>>(
       `/api/v1/subscriptions/student/${studentId}`, { params }
     );

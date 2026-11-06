@@ -8,6 +8,8 @@ import { TaskDetailModal } from '@/components/features/tasks/TaskDetailModal';
 import { KanbanColumn } from '@/components/features/tasks/KanbanColumn';
 import {
   TASK_PRIORITY_COLUMNS,
+  TASK_PRIORITY_LABELS,
+  TASK_STATUS_LABELS,
   TASK_STATUS_OPTIONS,
   getTaskPriorityFromDueDate,
 } from '@/constants/task';
@@ -21,6 +23,10 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { formatFullName } from '@/lib/utils';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
+import { useUrlFilters } from '@/hooks/useUrlState';
 
 function getStaffFullName(staff: {
   fullName?: string | null;
@@ -61,7 +67,7 @@ function buildUpdatePayload(values: TaskFormValues): UpdateTaskRequest {
 }
 
 export default function Tasks() {
-  const [filters, setFilters] = useState<TaskFilters>({
+  const [filters, setFilters] = useUrlFilters<TaskFilters>({
     search: '',
     status: 'all',
     assignedTo: 'all',
@@ -258,9 +264,74 @@ export default function Tasks() {
     [filteredTasks]
   );
 
+  // «Скачать в Excel»: all tasks matching the current filters (search, status, assignee, due dates).
+  const buildTasksExcel = async (): Promise<ExcelSheet[]> => {
+    const status = filters.status !== 'all' ? filters.status : undefined;
+    const query = filters.search.trim();
+    const assigneeId = filters.assignedTo !== 'all' ? filters.assignedTo : undefined;
+    const items = await fetchAllPages((pageNum, size) => {
+      const params = { page: pageNum, size };
+      if (query && !assigneeId) return tasksService.search({ ...params, query });
+      if (!query && assigneeId) return tasksService.getByAssignee(assigneeId, { ...params, status });
+      return tasksService.getAll({ ...params, status });
+    });
+    const lowerQuery = query.toLowerCase();
+    const rows = items
+      .map((task) => ({ task, assigneeName: task.assignedTo ? staffMap.get(task.assignedTo) || '' : '' }))
+      .filter(({ task, assigneeName }) => {
+        if (lowerQuery && ![task.title, task.description, task.notes, assigneeName].join(' ').toLowerCase().includes(lowerQuery)) return false;
+        if (filters.status !== 'all' && task.status !== filters.status) return false;
+        if (filters.assignedTo !== 'all' && task.assignedTo !== filters.assignedTo) return false;
+        if (filters.dueDateFrom && (!task.dueDate || task.dueDate < filters.dueDateFrom)) return false;
+        if (filters.dueDateTo && (!task.dueDate || task.dueDate > filters.dueDateTo)) return false;
+        return true;
+      })
+      .sort((left, right) => (left.task.dueDate || '9999').localeCompare(right.task.dueDate || '9999'));
+
+    return [{
+      name: 'Задачи',
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'Задача' },
+          { header: 'Описание' },
+          { header: 'Статус' },
+          { header: 'Приоритет' },
+          { header: 'Исполнитель' },
+          { header: 'Срок', type: 'date' },
+          { header: 'Заметки' },
+          { header: 'Создана', type: 'date' },
+        ],
+        rows: rows.map(({ task, assigneeName }, index) => [
+          index + 1,
+          task.title || '',
+          task.description || '',
+          TASK_STATUS_LABELS[task.status] ?? task.status,
+          TASK_PRIORITY_LABELS[task.priority] ?? task.priority,
+          assigneeName,
+          task.dueDate || '',
+          task.notes || '',
+          task.createdAt || '',
+        ]),
+      }],
+    }];
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page="tasks"
+          filePrefix=""
+          reportTitle="Задачи"
+          note={describeFilters([
+            filters.status !== 'all' && `статус «${TASK_STATUS_LABELS[filters.status]}»`,
+            filters.assignedTo !== 'all' && `исполнитель «${staffMap.get(filters.assignedTo) ?? ''}»`,
+            (filters.dueDateFrom || filters.dueDateTo) && `срок ${filters.dueDateFrom || '…'} — ${filters.dueDateTo || '…'}`,
+            filters.search.trim() && `поиск «${filters.search.trim()}»`,
+          ])}
+          buildSnapshot={buildTasksExcel}
+        />
         <Button icon={Plus} onClick={openCreateModal}>
           Добавить задачу
         </Button>

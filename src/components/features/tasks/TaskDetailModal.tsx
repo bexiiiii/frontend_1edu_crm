@@ -98,7 +98,7 @@ export const TaskDetailModal = ({
             <div className="flex items-center gap-2 text-base text-gray-900">
               <User className="h-4 w-4 text-gray-400" />
               {task.assignedTo ? (
-                <Link
+                <Link prefetch={false}
                   href={`/staff/${task.assignedTo}`}
                   className="text-[#467aff] hover:underline"
                 >

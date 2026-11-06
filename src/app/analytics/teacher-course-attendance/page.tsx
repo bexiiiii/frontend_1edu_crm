@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { useApi } from '@/hooks/useApi';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildTeacherCourseAttendanceSheets } from '@/components/analytics/excel-reports';
 import { analyticsService, staffService } from '@/lib/api';
 import { formatFullName } from '@/lib/utils';
 import { ATTENDANCE_STATUS_COLORS, ATTENDANCE_STATUS_LABELS } from '@/constants/attendance';
@@ -15,6 +17,14 @@ import type {
   TeacherCourseAttendanceResponse,
   TeacherCourseAttendanceStudentRowDto,
 } from '@/lib/api/types';
+
+function getMonthRange(monthValue: string): { from: string; to: string } {
+  const [year, month] = monthValue.split('-').map(Number);
+  if (!year || !month) return { from: '', to: '' };
+  const lastDay = new Date(year, month, 0).getDate();
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
+}
 
 function toCurrentMonth(): string {
   const now = new Date();
@@ -138,6 +148,16 @@ export default function TeacherCourseAttendancePage() {
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5 lg:p-6">
+        <div className="mb-4 flex justify-end">
+          <ExportExcelButton
+            page="teacher-course-attendance"
+            reportTitle="Посещаемость курса преподавателя"
+            defaultRange={getMonthRange(selectedMonth)}
+            buildSheets={(period) => buildTeacherCourseAttendanceSheets(period, { teacherId, courseId })}
+            hint="Сводка выгружается по полным месяцам, отметки — только за выбранные даты."
+            disabled={!teacherId || !courseId}
+          />
+        </div>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#7a8391]">Преподаватель</p>
@@ -202,7 +222,7 @@ export default function TeacherCourseAttendancePage() {
                   {lessonDays.map((lessonDay) => (
                     <th key={lessonDay.lessonId} className="crm-table-th min-w-24 border border-[#e4eaf0] text-center">
                       <div className="flex flex-col items-center gap-0.5 px-1">
-                        <Link href={`/attendance/${lessonDay.lessonId}`} className="text-xs font-bold text-[#657287] hover:text-[#467aff] transition-colors">{formatLessonDay(lessonDay.date)}</Link>
+                        <Link prefetch={false} href={`/attendance/${lessonDay.lessonId}`} className="text-xs font-bold text-[#657287] hover:text-[#467aff] transition-colors">{formatLessonDay(lessonDay.date)}</Link>
                         <span className="text-[10px] uppercase tracking-[0.06em] text-[#627084]">
                           {formatLessonWeekday(lessonDay.date)}
                         </span>
@@ -220,7 +240,7 @@ export default function TeacherCourseAttendancePage() {
                     <tr key={row.studentId} className="crm-table-row">
                       <td className="crm-table-cell sticky left-0 z-10 border border-[#e4eaf0] bg-[#fbfcfd]">
                         <div>
-                          <Link href={`/students/${row.studentId}`} className="font-semibold text-[#273142] hover:text-[#467aff] hover:underline transition-colors">{row.studentName}</Link>
+                          <Link prefetch={false} href={`/students/${row.studentId}`} className="font-semibold text-[#273142] hover:text-[#467aff] hover:underline transition-colors">{row.studentName}</Link>
                           <span
                             className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${STUDENT_STATUS_COLORS[row.studentStatus as StudentStatus]}`}
                           >

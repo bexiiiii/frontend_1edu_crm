@@ -21,6 +21,19 @@
     color: var(--crm-text-main);
     background: var(--crm-bg);
   }
+
+  /* Native dropdown lists: always an opaque light list. Without an explicit
+     colour scheme and option background some browsers (dark OS theme, modal
+     with backdrop blur) drew the open list transparent over the fields below. */
+  select {
+    color-scheme: light;
+  }
+
+  select option,
+  select optgroup {
+    background-color: #ffffff;
+    color: #1f2530;
+  }
 }
 
 @layer components {

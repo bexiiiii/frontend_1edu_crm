@@ -4,7 +4,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { PAYMENT_METHOD_LABELS } from '@/constants/finance';
+import { PaymentMethodField, paymentMethodError } from '@/components/features/finance/PaymentMethodField';
+import { formatKzPhone, normalizeKzPhone } from '@/lib/phone-kz';
 import { studentPaymentsService } from '@/lib/api/finance';
 import type {
   CreateStudentPaymentRequest,
@@ -79,7 +80,9 @@ export const AddStudentPaymentModal = ({
   const [amount, setAmount] = useState(initialValues?.amount != null ? String(initialValues.amount) : '');
   const [paidAt, setPaidAt] = useState(initialValues?.paidAt || getTodayDate());
   const [paymentMonth, setPaymentMonth] = useState(initialValues?.paymentMonth || getCurrentMonth());
-  const [method, setMethod] = useState<PaymentMethod>(initialValues?.method || 'CARD');
+  const [method, setMethod] = useState<PaymentMethod | ''>(initialValues?.method || '');
+  const [transferPhone, setTransferPhone] = useState(initialValues?.transferPhone ? formatKzPhone(initialValues.transferPhone) : '');
+  const [triedSave, setTriedSave] = useState(false);
   const [notes, setNotes] = useState(initialValues?.notes || '');
   const [error, setError] = useState<string | null>(null);
 
@@ -151,6 +154,13 @@ export const AddStudentPaymentModal = ({
       return;
     }
 
+    setTriedSave(true);
+    const methodError = paymentMethodError(method, transferPhone);
+    if (methodError || !method) {
+      setError(methodError);
+      return;
+    }
+
     try {
       await onSave({
         studentId,
@@ -159,6 +169,7 @@ export const AddStudentPaymentModal = ({
         paidAt,
         paymentMonth,
         method,
+        transferPhone: method === 'TRANSFER' ? normalizeKzPhone(transferPhone) ?? undefined : undefined,
         notes: notes.trim() || undefined,
       });
     } catch (submitError) {
@@ -235,14 +246,15 @@ export const AddStudentPaymentModal = ({
               )}
             </label>
           </div>
-          <Select label="Метод оплаты" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>
-            {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
         </div>
+
+        <PaymentMethodField
+          method={method}
+          transferPhone={transferPhone}
+          showErrors={triedSave}
+          onMethodChange={setMethod}
+          onTransferPhoneChange={setTransferPhone}
+        />
 
         {partialResult && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">

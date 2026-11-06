@@ -49,6 +49,41 @@ export interface CashShiftDto {
   handoverAcceptedBy?: string | null;
 }
 
+export interface StudentPaymentsPageRow {
+  studentId: string;
+  studentName: string;
+  deleted: boolean;
+  /** WhatsApp-ready digits or empty. */
+  phone: string;
+  studentDiscountPercent: number | null;
+  courseNames: string[];
+  subscriptionIds: string[];
+  expected?: number;
+  paid?: number;
+  debt?: number;
+  status?: 'PAID' | 'PARTIAL' | 'UNPAID';
+  totalDebt?: number;
+  debtMonths?: number;
+  monthlyExpected?: number;
+  discountPercent?: number | null;
+}
+
+export interface StudentPaymentsPageDto {
+  month: string | null;
+  page: number;
+  size: number;
+  totalPages: number;
+  filteredStudents: number;
+  totalStudents?: number | null;
+  totalExpected?: number | null;
+  totalCollected?: number | null;
+  totalDebt?: number | null;
+  debtorsTotalDebt?: number | null;
+  debtorsAverageDebt?: number | null;
+  debtorsCritical?: number | null;
+  rows: StudentPaymentsPageRow[];
+}
+
 export interface CashOperationDto {
   id: string;
   shiftId: string;
@@ -58,6 +93,8 @@ export interface CashOperationDto {
   category?: string | null;
   reason?: string | null;
   paymentMethod?: string | null;
+  /** «Перевод»: phone number of the transfer, +7XXXXXXXXXX. */
+  transferPhone?: string | null;
   studentId?: string | null;
   studentName?: string | null;
   paymentMonth?: string | null;
@@ -127,9 +164,9 @@ export const financeService = {
     return response.data;
   },
 
-  /** Delete transaction */
-  async deleteTransaction(id: string) {
-    const response = await api.delete<ApiResponse<void>>(`/api/v1/finance/transactions/${id}`);
+  /** Delete transaction (kept as cancelled; the reason is required) */
+  async deleteTransaction(id: string, reason: string) {
+    const response = await api.delete<ApiResponse<void>>(`/api/v1/finance/transactions/${id}`, { params: { reason } });
     return response.data;
   },
 
@@ -240,6 +277,59 @@ export const cashierService = {
 
 // ─── Student Payments Service ───────────────────────────────────
 
+export interface DiscountHistoryPeriod {
+  fromMonth: string;
+  toMonth: string | null;
+  percent: number;
+  amount: number | null;
+  label: string;
+}
+
+export interface DiscountHistory {
+  periods: DiscountHistoryPeriod[];
+  /** Months that received money of their own (automatic balance allocations do not count): locked. */
+  paidMonths: string[];
+  /** null — every billed month of an ended subscription is paid. */
+  defaultStartMonth: string | null;
+  /** Ended subscription: suggested last month of the discount (end of the first unpaid run). */
+  defaultEndMonth?: string | null;
+  /** Expired / the student left: bills only billedFromMonth..billedToMonth. */
+  ended?: boolean;
+  billedFromMonth?: string | null;
+  billedToMonth?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+
+export interface DiscountPreviewMonth {
+  month: string;
+  expectedBefore: number;
+  expectedAfter: number;
+  paid: number;
+  debtBefore: number;
+  debtAfter: number;
+  locked: boolean;
+}
+
+export interface DiscountPreview {
+  subscriptionId: string;
+  fromMonth: string | null;
+  toMonth: string | null;
+  debtBefore: number;
+  debtAfter: number;
+  /** Money already on the discounted months that goes back to the student's balance. */
+  returnedToBalance: number;
+  months: DiscountPreviewMonth[];
+}
+
+export interface SubscriptionDiscountParams {
+  discountPercent: number;
+  discountAmount?: number;
+  salaryDiscountMode?: 'FULL_PRICE' | 'DISCOUNTED_PRICE';
+  fromMonth?: string | null;
+  toMonth?: string | null;
+}
+
 export const studentPaymentsService = {
   /** Get student payment history */
   async getByStudent(studentId: string) {
@@ -279,9 +369,49 @@ export const studentPaymentsService = {
     return response.data;
   },
 
-  /** Delete student payment */
-  async delete(id: string) {
-    const response = await api.delete<ApiResponse<void>>(`/api/v1/payments/student-payments/${id}`);
+  /** Delete student payment (the reason is required and kept in history) */
+  async delete(id: string, reason: string) {
+    const response = await api.delete<ApiResponse<void>>(`/api/v1/payments/student-payments/${id}`, { params: { reason } });
+    return response.data;
+  },
+
+  /** Discount timeline of a subscription, month by month as billing applies it. */
+  async getDiscountHistory(subscriptionId: string) {
+    const response = await api.get<ApiResponse<DiscountHistory>>(`/api/v1/subscriptions/${subscriptionId}/discount-history`);
+    return response.data;
+  },
+
+  /** What a discount change would do to one subscription's months (nothing is saved). */
+  async previewSubscriptionDiscountById(subscriptionId: string, p: SubscriptionDiscountParams) {
+    const response = await api.get<ApiResponse<DiscountPreview>>(
+      `/api/v1/subscriptions/${subscriptionId}/discount-preview`,
+      { params: {
+        discountPercent: p.discountPercent,
+        discountAmount: p.discountAmount,
+        discountFromMonth: p.fromMonth || undefined,
+        discountToMonth: p.toMonth || undefined,
+      } }
+    );
+    return response.data;
+  },
+
+  /**
+   * Discount of exactly this subscription — also an expired one or one the
+   * student left (the server limits it to the months it billed and re-splits
+   * the student's balance afterwards).
+   */
+  async updateSubscriptionDiscountById(subscriptionId: string, p: SubscriptionDiscountParams) {
+    const response = await api.put<ApiResponse<any>>(
+      `/api/v1/subscriptions/${subscriptionId}/discount`,
+      null,
+      { params: {
+        discountPercent: p.discountPercent,
+        discountAmount: p.discountAmount,
+        salaryDiscountMode: p.salaryDiscountMode,
+        discountFromMonth: p.fromMonth || '',
+        discountToMonth: p.toMonth || '',
+      } }
+    );
     return response.data;
   },
 
@@ -322,6 +452,18 @@ export const studentPaymentsService = {
   /** Get debtors list */
   async getDebtors(params?: { month?: string; fromDate?: string; toDate?: string }) {
     const response = await api.get<ApiResponse<StudentDebtDto[]>>('/api/v1/payments/student-payments/debtors', { params });
+    return response.data;
+  },
+
+  /** «Платежи студентов» one page: one row per student, search/status filter, month totals. */
+  async getOverviewPage(params: { month?: string; page?: number; size?: number; search?: string; status?: string }) {
+    const response = await api.get<ApiResponse<StudentPaymentsPageDto>>('/api/v1/payments/student-payments/overview/page', { params });
+    return response.data;
+  },
+
+  /** «Должники» one page: one row per student, search/stage filter, totals of the filtered list. */
+  async getDebtorsPage(params: { month?: string; fromDate?: string; toDate?: string; page?: number; size?: number; search?: string; stage?: string }) {
+    const response = await api.get<ApiResponse<StudentPaymentsPageDto>>('/api/v1/payments/student-payments/debtors/page', { params });
     return response.data;
   },
 

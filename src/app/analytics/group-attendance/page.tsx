@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Download, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Loader2 } from 'lucide-react';
 import { analyticsService, schedulesService, type GroupAttendanceResponse } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildGroupAttendanceSheets } from '@/components/analytics/excel-reports';
 
 type Horizon = 6 | 12;
 
@@ -47,7 +46,6 @@ function getRangeByMonths(months: Horizon): { from: string; to: string } {
 export default function GroupAttendanceAnalyticsPage() {
   const [horizon, setHorizon] = useState<Horizon>(6);
   const [groupId, setGroupId] = useState('');
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const dateRange = useMemo(() => getRangeByMonths(horizon), [horizon]);
 
@@ -107,41 +105,18 @@ export default function GroupAttendanceAnalyticsPage() {
     return `${first} — ${last}`;
   }, [chartData]);
 
-  const handleDownloadReport = async () => {
-    if (!groupId) {
-      return;
-    }
-
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportGroupAttendance({
-        groupId,
-        months: horizon,
-        from: dateRange.from,
-        to: dateRange.to,
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="text-2xl font-semibold text-[#202938]">Посещаемость групп</h2>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading || !groupId}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="group-attendance"
+            reportTitle="Посещаемость групп"
+            defaultRange={dateRange}
+            buildSheets={(period) => buildGroupAttendanceSheets(period, { id: groupId, name: selectedGroup?.label ?? '' })}
+            disabled={!groupId}
+          />
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">

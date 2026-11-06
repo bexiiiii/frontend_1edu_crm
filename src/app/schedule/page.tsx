@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Plus } from 'lucide-react';
 import FullCalendar from '@fullcalendar/react';
-import type { DateSelectArg, EventClickArg } from '@fullcalendar/core';
+import type { DateSelectArg, EventClickArg, EventInput } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ruLocale from '@fullcalendar/core/locales/ru';
@@ -15,6 +15,7 @@ import { EventDetailModal } from '@/components/features/schedule/EventDetailModa
 import { AssignSubstituteModal } from '@/components/features/schedule/AssignSubstituteModal';
 import { ScheduleFilters } from '@/components/features/schedule/ScheduleFilters';
 import {
+  attendanceService,
   coursesService,
   lessonsService,
   roomsService,
@@ -29,6 +30,8 @@ import { useApi, useMutation } from '@/hooks/useApi';
 import type { ScheduleCalendarItem, ScheduleFormValues } from '@/types/schedule';
 import { useAuthStore } from '@/store/authStore';
 import { formatFullName } from '@/lib/utils';
+import { formatScheduleTime, resolveScheduleDayTimes } from '@/lib/scheduleUtils';
+import { useUrlState } from '@/hooks/useUrlState';
 
 const EVENT_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#ec4899', '#467aff'];
 
@@ -126,6 +129,11 @@ function toFormValues(schedule: ScheduleCalendarItem): ScheduleFormValues {
     daysOfWeek: schedule.daysOfWeek,
     startTime: toInputTime(schedule.startTime),
     endTime: toInputTime(schedule.endTime),
+    dayTimes: schedule.dayTimes.map((item) => ({
+      day: item.day,
+      startTime: toInputTime(item.startTime),
+      endTime: toInputTime(item.endTime),
+    })),
     startDate: schedule.startDate,
     endDate: schedule.endDate || '',
   };
@@ -149,13 +157,23 @@ function buildSelectionDefaults(selection: DateSelectArg): ScheduleFormValues {
 
 export default function Schedule() {
   const router = useRouter();
-  const [teacherFilter, setTeacherFilter] = useState('');
-  const [courseFilter, setCourseFilter] = useState('');
-  const [roomFilter, setRoomFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [teacherFilter, setTeacherFilter] = useUrlState('teacher');
+  const [courseFilter, setCourseFilter] = useUrlState('course');
+  const [roomFilter, setRoomFilter] = useUrlState('room');
+  const [statusFilter, setStatusFilter] = useUrlState('status');
+  // Calendar week/month and view survive «Назад» from a lesson or a group.
+  const [calendarDate, setCalendarDate] = useUrlState('date');
+  const [calendarView, setCalendarView] = useUrlState('view', 'timeGridWeek');
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduleCalendarItem | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [selectedLesson, setSelectedLesson] = useState<{ id: string; bonus: boolean; date: string; substituteTeacherId: string | null } | null>(null);
+  const [selectedLesson, setSelectedLesson] = useState<{
+    id: string;
+    bonus: boolean;
+    date: string;
+    substituteTeacherId: string | null;
+    /** The lesson already has real marks: it cannot be cancelled or made bonus (history stays). */
+    hasMarks: boolean;
+  } | null>(null);
   const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
   const [scheduleModalState, setScheduleModalState] = useState<{
     key: number;
@@ -291,6 +309,8 @@ export default function Schedule() {
               : 'По дате начала',
           startTime: schedule.startTime,
           endTime: schedule.endTime,
+          dayTimes: resolveScheduleDayTimes(schedule),
+          timeLabel: formatScheduleTime(schedule),
           startDate: schedule.startDate,
           endDate: schedule.endDate,
           maxStudents: schedule.maxStudents,
@@ -314,7 +334,7 @@ export default function Schedule() {
 
   const events = useMemo(
     () =>
-      scheduleItems.map((schedule) => {
+      scheduleItems.flatMap((schedule): EventInput | EventInput[] => {
         const baseEvent = {
           id: schedule.id,
           title: schedule.name,
@@ -331,14 +351,22 @@ export default function Schedule() {
         }
 
         if (hasOccurrenceInRange(schedule.startDate, schedule.endDate, schedule.daysOfWeek)) {
-          return {
+          // У дней может быть своё время: одно повторяющееся событие на каждую группу дней с одинаковым временем.
+          const daysByTime = new Map<string, { startTime: string; endTime: string; days: DayOfWeek[] }>();
+          schedule.dayTimes.forEach((item) => {
+            const key = `${item.startTime}-${item.endTime}`;
+            const group = daysByTime.get(key) ?? { startTime: item.startTime, endTime: item.endTime, days: [] };
+            group.days.push(item.day);
+            daysByTime.set(key, group);
+          });
+          return Array.from(daysByTime.values()).map((group) => ({
             ...baseEvent,
-            daysOfWeek: schedule.daysOfWeek.map((day) => DAY_INDEXES[day]),
-            startTime: schedule.startTime,
-            endTime: schedule.endTime,
+            daysOfWeek: group.days.map((day) => DAY_INDEXES[day]),
+            startTime: group.startTime,
+            endTime: group.endTime,
             startRecur: schedule.startDate,
             endRecur: schedule.endDate ? addOneDay(schedule.endDate) : undefined,
-          };
+          }));
         }
 
         return {
@@ -361,7 +389,11 @@ export default function Schedule() {
     [coursesData]
   );
   const teacherOptions = useMemo(
-    () => (teachersData?.content ?? []).map((teacher) => ({ id: teacher.id, name: formatFullName(teacher) })),
+    () =>
+      (teachersData?.content ?? [])
+        .map((teacher) => ({ id: teacher.id, name: formatFullName(teacher) }))
+        // Alphabetical by the name as shown (surname first).
+        .sort((left, right) => left.name.localeCompare(right.name, 'ru', { sensitivity: 'base' })),
     [teachersData]
   );
   const roomOptions = useMemo(
@@ -409,12 +441,19 @@ export default function Schedule() {
       try {
         const response = await lessonsService.getByGroup(schedule.id, { page: 0, size: 20, from: eventDate, to: eventDate });
         const lesson = response.data.content.find((item) => item.lessonDate === eventDate);
-        if (lesson) setSelectedLesson({
-          id: lesson.id,
-          bonus: lesson.bonus,
-          date: lesson.lessonDate,
-          substituteTeacherId: lesson.substituteTeacherId ?? null,
-        });
+        if (lesson) {
+          // Saved rows other than PLANNED are real marks (rows without id are only the roster preview).
+          const hasMarks = await attendanceService.getByLesson(lesson.id)
+            .then((attendance) => (attendance.data ?? []).some((record) => Boolean(record.id) && record.status !== 'PLANNED'))
+            .catch(() => false);
+          setSelectedLesson({
+            id: lesson.id,
+            bonus: lesson.bonus,
+            date: lesson.lessonDate,
+            substituteTeacherId: lesson.substituteTeacherId ?? null,
+            hasMarks,
+          });
+        }
       } catch {
         // The modal remains useful even if a lesson was not generated yet.
       }
@@ -423,13 +462,23 @@ export default function Schedule() {
 
   const handleToggleBonus = async () => {
     if (!selectedLesson) return;
-    await bonusMutation.mutate({ id: selectedLesson.id, bonus: !selectedLesson.bonus });
+    try {
+      await bonusMutation.mutate({ id: selectedLesson.id, bonus: !selectedLesson.bonus });
+    } catch {
+      // The API client already showed the server message (e.g. the lesson has marks).
+      return;
+    }
     setSelectedLesson((current) => current ? { ...current, bonus: !current.bonus } : current);
   };
 
   const handleCancelLesson = async () => {
     if (!selectedLesson || !confirm('Отменить только это занятие? Оно не будет учитываться в оплате и зарплате.')) return;
-    await cancelLessonMutation.mutate(selectedLesson.id);
+    try {
+      await cancelLessonMutation.mutate(selectedLesson.id);
+    } catch {
+      // The API client already showed the server message (e.g. the lesson has marks).
+      return;
+    }
     setIsDetailModalOpen(false);
   };
 
@@ -480,6 +529,21 @@ export default function Schedule() {
 
   const handleSave = async (data: ScheduleSavePayload) => {
     if (scheduleModalState.scheduleId) {
+      // Moving the start earlier creates the missing past lessons: ask first.
+      const preview = await schedulesService
+        .previewUpdate(scheduleModalState.scheduleId, data)
+        .then((response) => response.data)
+        .catch(() => null);
+      if (preview && preview.count > 0 && preview.from && preview.to) {
+        const formatDay = (value: string) => value.slice(0, 10).split('-').reverse().join('.');
+        const lines = [`Будут созданы ${preview.count} прошедших уроков с ${formatDay(preview.from)} по ${formatDay(preview.to)}.`];
+        if (preview.courseType === 'GROUP') {
+          lines.push('Неотмеченные групповые уроки начисляются ученикам.');
+        }
+        if (!window.confirm(`${lines.join('\n\n')}\n\nСохранить изменения?`)) {
+          return;
+        }
+      }
       await updateMutation.mutate({
         id: scheduleModalState.scheduleId,
         data,
@@ -492,6 +556,7 @@ export default function Schedule() {
         daysOfWeek: data.daysOfWeek,
         startTime: data.startTime,
         endTime: data.endTime,
+        dayTimes: data.dayTimes,
         startDate: data.startDate,
         endDate: data.endDate,
       };
@@ -558,7 +623,15 @@ export default function Schedule() {
         ) : (
           <FullCalendar
             plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-            initialView="timeGridWeek"
+            initialView={calendarView}
+            initialDate={calendarDate || undefined}
+            datesSet={(info) => {
+              setCalendarView(info.view.type);
+              const start = info.view.currentStart;
+              setCalendarDate(
+                `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+              );
+            }}
             locale={ruLocale}
             headerToolbar={{
               left: 'prev,next today',
@@ -612,8 +685,9 @@ export default function Schedule() {
         onDelete={handleDelete}
         onOpenAttendance={handleOpenAttendance}
         lessonBonus={selectedLesson?.bonus}
-        onToggleBonus={selectedLesson ? handleToggleBonus : undefined}
-        onCancelLesson={selectedLesson ? handleCancelLesson : undefined}
+        lessonHasMarks={selectedLesson?.hasMarks}
+        onToggleBonus={selectedLesson && !selectedLesson.hasMarks ? handleToggleBonus : undefined}
+        onCancelLesson={selectedLesson && !selectedLesson.hasMarks ? handleCancelLesson : undefined}
         onAssignSubstitute={selectedLesson && !isTeacher ? () => setIsSubstituteModalOpen(true) : undefined}
         substituteTeacherName={
           selectedLesson?.substituteTeacherId

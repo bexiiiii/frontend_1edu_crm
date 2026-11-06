@@ -7,7 +7,6 @@ import {
   Activity,
   CheckCircle2,
   Crown,
-  Download,
   DollarSign,
   Loader2,
   TrendingDown,
@@ -31,11 +30,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildDashboardSheets } from '@/components/analytics/excel-reports';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -76,7 +74,6 @@ export default function ExecutiveDashboardPage() {
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
   const [classFilter, setClassFilter] = useState('all');
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: execData, loading } = useApi(
     () => analyticsService.getDashboard({ from: fromDate, to: toDate }),
@@ -164,36 +161,17 @@ export default function ExecutiveDashboardPage() {
     setToDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportDashboard({
-        from: fromDate,
-        to: toDate,
-        lessonType: 'ALL',
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="text-2xl font-semibold text-[#202938]">Дашборд руководителя</h2>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="dashboard"
+            reportTitle="Дашборд руководителя"
+            defaultRange={{ from: fromDate, to: toDate }}
+            buildSheets={buildDashboardSheets}
+          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -433,7 +411,7 @@ export default function ExecutiveDashboardPage() {
                   className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2 transition-colors hover:border-[#467aff]"
                 >
                   {student.studentId ? (
-                    <Link
+                    <Link prefetch={false}
                       href={`/students/${student.studentId}`}
                       className="text-sm font-semibold text-[#273142] hover:text-[#467aff] hover:underline"
                     >
@@ -443,7 +421,7 @@ export default function ExecutiveDashboardPage() {
                     <span className="text-sm text-[#273142]">{student.fullName}</span>
                   )}
                   {student.studentId ? (
-                    <Link
+                    <Link prefetch={false}
                       href={`/students/${student.studentId}`}
                       className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0] hover:text-[#467aff]"
                     >
@@ -472,7 +450,7 @@ export default function ExecutiveDashboardPage() {
                   className="flex items-center justify-between rounded-lg border border-[#e2e8ee] bg-white px-3 py-2 transition-colors hover:border-[#467aff]"
                 >
                   {student.studentId ? (
-                    <Link
+                    <Link prefetch={false}
                       href={`/students/${student.studentId}`}
                       className="text-sm font-semibold text-[#273142] hover:text-[#467aff] hover:underline"
                     >
@@ -482,7 +460,7 @@ export default function ExecutiveDashboardPage() {
                     <span className="text-sm text-[#273142]">{student.fullName}</span>
                   )}
                   {student.studentId ? (
-                    <Link
+                    <Link prefetch={false}
                       href={`/students/${student.studentId}`}
                       className="rounded-md bg-[#eef3f7] px-2 py-1 text-xs font-semibold text-[#566273] transition-colors hover:bg-[#dde7f0] hover:text-[#467aff]"
                     >

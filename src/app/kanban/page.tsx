@@ -19,6 +19,15 @@ import {
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { LeadDto, LeadStage } from '@/lib/api/types';
 import { useAuthStore } from '@/store/authStore';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import {
+  fetchAllPages,
+  isDateInRange,
+  todayIsoDate,
+  type ExcelExportPeriod,
+  type ExcelSheet,
+} from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
 
 type LeadFormValues = {
   firstName: string;
@@ -374,7 +383,7 @@ function LeadCardItem({
           <dt className="text-[#8a93a3]">Ответственный</dt>
           <dd className="text-right font-medium">
             {lead.assignedTo ? (
-              <Link
+              <Link prefetch={false}
                 href={`/staff/${lead.assignedTo}`}
                 onClick={(e) => e.stopPropagation()}
                 className="text-[#467aff] hover:underline"
@@ -1087,6 +1096,60 @@ export default function KanbanPage() {
     return () => observer.disconnect();
   }, [columns.length, loading]);
 
+  // «Скачать в Excel»: leads created in the chosen period (all stages), with the current search.
+  const buildLeadsExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const items = await fetchAllPages((pageNum, size) =>
+      debouncedSearch
+        ? leadsService.search(debouncedSearch, { page: pageNum, size })
+        : leadsService.getAll({ page: pageNum, size }));
+    const stageTitles = new Map(allColumns.map((column) => [column.stage, column.title]));
+    const rows = items
+      .filter((lead) => isDateInRange(lead.createdAt, period))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+    return [{
+      name: 'Лиды',
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'ФИО' },
+          { header: 'Телефон' },
+          { header: 'Email' },
+          { header: 'Этап' },
+          { header: 'Источник' },
+          { header: 'Интерес к курсу' },
+          { header: 'Форма' },
+          { header: 'Тест, баллы', type: 'number' },
+          { header: 'Тест, макс.', type: 'number' },
+          { header: 'Уровень' },
+          { header: 'Ответственный' },
+          { header: 'Заметки' },
+          { header: 'Конвертирован в ученика' },
+          { header: 'Создан', type: 'date' },
+          { header: 'Обновлён', type: 'date' },
+        ],
+        rows: rows.map((lead, index) => [
+          index + 1,
+          getLeadFullName(lead),
+          lead.phone || '',
+          lead.email || '',
+          stageTitles.get(lead.stage) ?? lead.stage,
+          lead.source || '',
+          lead.courseInterest || '',
+          lead.formTitle || '',
+          lead.testScore,
+          lead.testMaxScore,
+          lead.testLevel || '',
+          lead.assignedTo ? staffMap.get(lead.assignedTo) || '' : '',
+          lead.notes || '',
+          lead.studentId ? 'Да' : '',
+          lead.createdAt,
+          lead.updatedAt,
+        ]),
+      }],
+    }];
+  };
+
   const syncTopScroll = () => {
     const top = topScrollRef.current;
     const board = boardScrollRef.current;
@@ -1317,6 +1380,14 @@ export default function KanbanPage() {
                 Колонки
               </Button>
             ) : null}
+            <ExportExcelButton
+              page="leads"
+              filePrefix=""
+              reportTitle="Лиды"
+              note={describeFilters([debouncedSearch && `поиск «${debouncedSearch}»`])}
+              defaultRange={{ from: `${todayIsoDate().slice(0, 7)}-01`, to: todayIsoDate() }}
+              buildSheets={buildLeadsExcel}
+            />
             <Button icon={Plus} onClick={() => openCreateModal()} className="w-full sm:w-auto">
               Добавить лид
             </Button>

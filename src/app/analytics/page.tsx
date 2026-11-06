@@ -139,7 +139,7 @@ export default function AnalyticsIndexPage() {
           ) : debtors.length > 0 ? (
             <div className="space-y-2">
               {debtors.map((debtor) => (
-                <Link
+                <Link prefetch={false}
                   key={debtor.studentId}
                   href={`/students/${debtor.studentId}`}
                   className="flex items-center justify-between rounded-xl border border-[#dbe2e8] bg-white p-3 transition-colors hover:bg-[#f8fbfd]"
@@ -186,7 +186,7 @@ export default function AnalyticsIndexPage() {
           ) : upcomingBirthdays.length > 0 ? (
             <div className="space-y-2">
               {upcomingBirthdays.map((birthday) => (
-                <Link
+                <Link prefetch={false}
                   key={birthday.studentId}
                   href={`/students/${birthday.studentId}`}
                   className="flex items-center justify-between rounded-xl border border-[#dbe2e8] bg-white p-3 transition-colors hover:bg-[#f8fbfd]"

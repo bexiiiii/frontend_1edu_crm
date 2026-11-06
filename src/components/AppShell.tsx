@@ -2,6 +2,7 @@
 
 import { useAuthStore } from '@/store/authStore';
 import { usePathname, useRouter } from 'next/navigation';
+import { useNavigationTracker } from '@/hooks/useUrlState';
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
@@ -22,6 +23,7 @@ function isSubscriptionExpired(tenant: TenantDto | null): boolean {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hydrate, tenantId, roles, permissions } = useAuthStore();
   const pathname = usePathname();
+  useNavigationTracker();
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
   const [tenantData, setTenantData] = useState<TenantDto | null>(null);

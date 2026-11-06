@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { BarChart3, DollarSign, Download, Loader2, Users } from 'lucide-react';
+import { BarChart3, DollarSign, Loader2, Users } from 'lucide-react';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildBranchSheets } from '@/components/analytics/excel-reports';
 
 function formatMoney(value: number): string {
   return `${value.toLocaleString('ru-RU')} ₸`;
@@ -35,24 +37,6 @@ export default function BranchAnalyticsPage() {
     [dateRange.from, dateRange.to]
   );
 
-  const handleExport = async () => {
-    try {
-      const { blob, filename } = await analyticsService.exportBranches({
-        from: dateRange.from,
-        to: dateRange.to,
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Export failed:', err);
-    }
-  };
 
   const branches = useMemo(() => data?.branches ?? [], [data]);
   const totalRevenue = data?.totalRevenue ?? 0;
@@ -65,14 +49,12 @@ export default function BranchAnalyticsPage() {
     <div className="space-y-6">
       {/* Export */}
       <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={handleExport}
-          className="inline-flex items-center gap-2 rounded-lg border border-[#dbe2e8] bg-white px-4 py-2 text-sm font-medium text-[#273142] transition-colors hover:bg-[#f8fafc]"
-        >
-          <Download className="h-4 w-4" />
-          Экспорт
-        </button>
+        <ExportExcelButton
+          page="branches"
+          reportTitle="Аналитика по филиалам"
+          defaultRange={dateRange}
+          buildSheets={buildBranchSheets}
+        />
       </div>
 
       {/* Month Selector */}

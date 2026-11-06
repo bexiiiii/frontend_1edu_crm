@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Plus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { AxiosRequestConfig } from 'axios';
 import Link from 'next/link';
@@ -19,6 +19,13 @@ import {
 } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatFullName } from '@/lib/utils';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import {
+  fetchAllPages,
+  mapWithConcurrency,
+  type ExcelExportPeriod,
+  type ExcelSheet,
+} from '@/lib/excel-export';
 import { useAttendanceUnlock } from '@/components/features/attendance/useAttendanceUnlock';
 import {
   ATTENDANCE_STATUS_COLORS,
@@ -29,7 +36,9 @@ import {
   isPresentStatus,
   toDateInputValue,
 } from '@/constants/attendance';
-import type { AttendanceDto, AttendanceStatus, CourseDto, LessonStatus, LessonType } from '@/lib/api/types';
+import type { AttendanceDto, AttendanceStatus, CourseDto, LessonStatus, LessonType, StudentDto } from '@/lib/api/types';
+import { cachedLookup } from '@/lib/lookup-cache';
+import { useUrlState } from '@/hooks/useUrlState';
 
 type AttendanceLessonRow = {
   id: string;
@@ -49,6 +58,8 @@ type AttendanceLessonRow = {
   totalStudents: number;
   presentCount: number;
 };
+
+const ATTENDANCE_EXPORT_MAX_LESSONS = 1500;
 
 const LESSON_TYPE_LABELS: Record<LessonType, string> = {
   GROUP: 'Групповое занятие',
@@ -118,7 +129,16 @@ export default function AttendancePage() {
   const router = useRouter();
   const { roles, permissions } = useAuthStore();
   const canViewStaff = roles.includes('TENANT_ADMIN') || permissions.includes('STAFF_VIEW');
-  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+  // The chosen day lives in the URL (?date=YYYY-MM-DD): «Назад» from a lesson returns to the same day.
+  const [dateParam, setDateParam] = useUrlState('date', toDateInputValue(new Date()));
+  const selectedDate = useMemo(() => {
+    const parsed = new Date(`${dateParam}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }, [dateParam]);
+  const setSelectedDate = (next: Date | ((previous: Date) => Date)) => {
+    const value = typeof next === 'function' ? next(selectedDate) : next;
+    setDateParam(toDateInputValue(value));
+  };
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [attendanceModalState, setAttendanceModalState] = useState({
     key: 0,
@@ -127,56 +147,19 @@ export default function AttendancePage() {
   const selectedDateKey = useMemo(() => toDateInputValue(selectedDate), [selectedDate]);
 
   const { data, loading, error, refetch } = useApi(async () => {
-    const staffPromise = canViewStaff 
-      ? staffService.getAll({ page: 0, size: 500 })
+    // 2026-11-04: reference lists are cached for 2 minutes (they were reloaded on every
+    // date change), and the day comes in 2 requests instead of 1 + one per lesson + one per group.
+    const LOOKUP_TTL_MS = 120_000;
+    const staffPromise = canViewStaff
+      ? cachedLookup('attendance:staff:500', LOOKUP_TTL_MS, () => staffService.getAll({ page: 0, size: 500 }))
       : Promise.resolve({ data: { content: [], totalElements: 0, totalPages: 0, page: 0, size: 500 } });
 
-    const [lessonsResponse, schedulesResponse, coursesResponse, staffResponse, roomsResponse] = await Promise.all([
-      lessonsService.getAll({ date: selectedDateKey, page: 0, size: 100 }),
-      schedulesService.getAll({ page: 0, size: 1000 }),
-      coursesService.getAll({ page: 0, size: 500 }).catch(() => ({ data: { content: [] } })),
-      staffPromise,
-      roomsService.getAll({ page: 0, size: 300 }),
-    ]);
-
-    const lessons = lessonsResponse.data.content ?? [];
-    const schedules = schedulesResponse.data.content ?? [];
-    const scheduleCourseMap = new Map(schedules.map((s) => [s.id, s.courseId]));
-
-    const groupIds = Array.from(new Set(lessons.map((lesson) => lesson.groupId).filter((groupId): groupId is string => Boolean(groupId))));
-
-    const [groupEntries, attendanceEntries] = await Promise.all([
-      Promise.all(
-        groupIds.map(async (groupId) => {
-          try {
-            let response = await studentsService.getByGroup(groupId, { page: 0, size: 500 });
-            let content = response.data.content ?? [];
-            let total = response.data.totalElements ?? content.length;
-
-            // If empty, try resolving from courseId
-            const courseId = scheduleCourseMap.get(groupId);
-            if (content.length === 0 && courseId && courseId !== groupId) {
-              const courseStudents = await studentsService.getByGroup(courseId, { page: 0, size: 500 }).catch(() => null);
-              if (courseStudents && (courseStudents.data.content ?? []).length > 0) {
-                content = courseStudents.data.content ?? [];
-                total = courseStudents.data.totalElements ?? content.length;
-              }
-            }
-
-            return [
-              groupId,
-              {
-                count: total,
-                students: content,
-              },
-            ] as const;
-          } catch {
-            return [groupId, { count: 0, students: [] }] as const;
-          }
-        })
-      ),
-      Promise.all(
-        lessons.map(async (lesson) => {
+    // Old path (one request per lesson): used only if the batch endpoint is unavailable.
+    const loadDayPerLesson = async () => {
+      const lessonsResponse = await lessonsService.getAll({ date: selectedDateKey, page: 0, size: 100 });
+      const dayLessons = lessonsResponse.data.content ?? [];
+      const entries = await Promise.all(
+        dayLessons.map(async (lesson) => {
           try {
             const response = await attendanceService.getByLesson(lesson.id);
             return [lesson.id, response.data] as const;
@@ -184,8 +167,95 @@ export default function AttendancePage() {
             return [lesson.id, [] as AttendanceDto[]] as const;
           }
         })
-      ),
+      );
+      return { lessons: dayLessons, attendanceByLessonId: Object.fromEntries(entries) as Record<string, AttendanceDto[]> };
+    };
+
+    const dayPromise = attendanceService
+      .getDay(selectedDateKey, { page: 0, size: 100 })
+      .then((response) => ({
+        lessons: response.data.lessons.content ?? [],
+        attendanceByLessonId: response.data.attendanceByLessonId ?? {},
+      }))
+      .catch(() => loadDayPerLesson());
+
+    const [day, schedulesResponse, coursesResponse, staffResponse, roomsResponse] = await Promise.all([
+      dayPromise,
+      cachedLookup('attendance:schedules:1000', LOOKUP_TTL_MS, () => schedulesService.getAll({ page: 0, size: 1000 })),
+      cachedLookup('attendance:courses:500', LOOKUP_TTL_MS, () => coursesService.getAll({ page: 0, size: 500 }))
+        .catch(() => ({ data: { content: [] } })),
+      staffPromise,
+      cachedLookup('attendance:rooms:300', LOOKUP_TTL_MS, () => roomsService.getAll({ page: 0, size: 300 })),
     ]);
+
+    const lessons = day.lessons;
+    const schedules = schedulesResponse.data.content ?? [];
+    const scheduleCourseMap = new Map(schedules.map((s) => [s.id, s.courseId]));
+
+    const groupIds = Array.from(new Set(lessons.map((lesson) => lesson.groupId).filter((groupId): groupId is string => Boolean(groupId))));
+
+    type GroupPage = { content?: StudentDto[]; totalElements?: number };
+    const fetchGroupPages = async (ids: string[]): Promise<Record<string, GroupPage> | null> => {
+      if (ids.length === 0) return {};
+      try {
+        const response = await studentsService.getByGroups(ids, { page: 0, size: 500 });
+        return response.data ?? {};
+      } catch {
+        return null;
+      }
+    };
+
+    // Same rules as before: a group with no students falls back to its course id.
+    const loadGroupPerRequest = async (groupId: string) => {
+      try {
+        let response = await studentsService.getByGroup(groupId, { page: 0, size: 500 });
+        let content = response.data.content ?? [];
+        let total = response.data.totalElements ?? content.length;
+        const courseId = scheduleCourseMap.get(groupId);
+        if (content.length === 0 && courseId && courseId !== groupId) {
+          const courseStudents = await studentsService.getByGroup(courseId, { page: 0, size: 500 }).catch(() => null);
+          if (courseStudents && (courseStudents.data.content ?? []).length > 0) {
+            content = courseStudents.data.content ?? [];
+            total = courseStudents.data.totalElements ?? content.length;
+          }
+        }
+        return [groupId, { count: total, students: content }] as const;
+      } catch {
+        return [groupId, { count: 0, students: [] as StudentDto[] }] as const;
+      }
+    };
+
+    let groupEntries: ReadonlyArray<readonly [string, { count: number; students: StudentDto[] }]>;
+    const groupPages = await fetchGroupPages(groupIds);
+    if (groupPages === null) {
+      groupEntries = await Promise.all(groupIds.map(loadGroupPerRequest));
+    } else {
+      const fallbackCourseIds = Array.from(new Set(groupIds
+        .filter((groupId) => groupPages[groupId] && (groupPages[groupId].content ?? []).length === 0)
+        .map((groupId) => scheduleCourseMap.get(groupId))
+        .filter((courseId): courseId is string => Boolean(courseId))));
+      const coursePages = fallbackCourseIds.length > 0 ? await fetchGroupPages(fallbackCourseIds) : {};
+      groupEntries = await Promise.all(groupIds.map(async (groupId) => {
+        const page = groupPages[groupId];
+        if (!page) {
+          return [groupId, { count: 0, students: [] as StudentDto[] }] as const;
+        }
+        let content = page.content ?? [];
+        let total = page.totalElements ?? content.length;
+        const courseId = scheduleCourseMap.get(groupId);
+        if (content.length === 0 && courseId && courseId !== groupId) {
+          if (coursePages === null) {
+            return loadGroupPerRequest(groupId);
+          }
+          const coursePage = coursePages[courseId] ?? null;
+          if (coursePage && (coursePage.content ?? []).length > 0) {
+            content = coursePage.content ?? [];
+            total = coursePage.totalElements ?? content.length;
+          }
+        }
+        return [groupId, { count: total, students: content }] as const;
+      }));
+    }
 
     return {
       data: {
@@ -196,7 +266,7 @@ export default function AttendancePage() {
         rooms: roomsResponse.data.content ?? [],
         groupSizeById: Object.fromEntries(groupEntries.map(([groupId, value]) => [groupId, value.count])),
         groupStudentsById: Object.fromEntries(groupEntries.map(([groupId, value]) => [groupId, value.students])),
-        attendanceByLessonId: Object.fromEntries(attendanceEntries),
+        attendanceByLessonId: day.attendanceByLessonId,
       },
     };
   }, [selectedDateKey, canViewStaff]);
@@ -266,6 +336,37 @@ export default function AttendancePage() {
     });
   }, [data]);
 
+  // Search over the loaded day (?q=): course / group / teacher / room / student of the group.
+  const [searchParam, setSearchParam] = useUrlState('q');
+  const [searchInput, setSearchInput] = useState(searchParam);
+  const [debouncedSearch, setDebouncedSearch] = useState(searchParam.trim().toLowerCase());
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput.trim().toLowerCase());
+      setSearchParam(searchInput.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput, setSearchParam]);
+  const visibleLessons = useMemo(() => {
+    if (!debouncedSearch) return lessonsForDay;
+    const groupStudentsById = data?.groupStudentsById ?? {};
+    return lessonsForDay.filter((lesson) => {
+      const students = lesson.groupId ? groupStudentsById[lesson.groupId] ?? [] : [];
+      const haystack = [
+        lesson.title,
+        lesson.subtitle,
+        lesson.teacherName,
+        lesson.substituteTeacherName,
+        lesson.roomName,
+        ...students.map((student) =>
+          [student.lastName, student.firstName, student.middleName, student.fullName].filter(Boolean).join(' ')),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(debouncedSearch);
+    });
+  }, [data?.groupStudentsById, debouncedSearch, lessonsForDay]);
+
   const createAttendanceMutation = useMutation(
     ({
       lessonId,
@@ -308,6 +409,116 @@ export default function AttendancePage() {
 
     input.focus();
     input.click();
+  };
+
+  // «Скачать в Excel»: lessons of the chosen period + every attendance mark.
+  const buildAttendanceExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const [lessons, schedules, courses, staff, rooms, students] = await Promise.all([
+      fetchAllPages((pageNum, size) => lessonsService.getAll({ from: period.from, to: period.to, page: pageNum, size })),
+      fetchAllPages((pageNum, size) => schedulesService.getAll({ page: pageNum, size })),
+      fetchAllPages((pageNum, size) => coursesService.getAll({ page: pageNum, size })).catch(() => [] as CourseDto[]),
+      canViewStaff ? fetchAllPages((pageNum, size) => staffService.getAll({ page: pageNum, size })) : Promise.resolve([]),
+      fetchAllPages((pageNum, size) => roomsService.getAll({ page: pageNum, size })),
+      fetchAllPages((pageNum, size) => studentsService.getAll({ page: pageNum, size, includeDeleted: true })).catch(() => []),
+    ]);
+
+    const scheduleMap = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+    const courseMap = new Map(courses.map((course) => [course.id, course]));
+    const staffMap = new Map(staff.map((member) => [member.id, getStaffFullName(member) || 'Без имени']));
+    const roomMap = new Map(rooms.map((room) => [room.id, room.name]));
+    const studentMap = new Map(students.map((student) => [student.id, formatFullName(student) || student.fullName || '']));
+
+    const sortedLessons = [...lessons].sort((left, right) =>
+      left.lessonDate.localeCompare(right.lessonDate) || (left.startTime || '').localeCompare(right.startTime || ''));
+
+    const canLoadMarks = sortedLessons.length <= ATTENDANCE_EXPORT_MAX_LESSONS;
+    const marks = canLoadMarks
+      ? await mapWithConcurrency(sortedLessons, 6, async (lesson) =>
+        attendanceService.getByLesson(lesson.id).then((response) => response.data ?? []).catch(() => [] as AttendanceDto[]))
+      : [];
+
+    const describeLesson = (lesson: (typeof sortedLessons)[number]) => {
+      const schedule = lesson.groupId ? scheduleMap.get(lesson.groupId) : undefined;
+      const course = schedule?.courseId ? courseMap.get(schedule.courseId) : (lesson.groupId ? courseMap.get(lesson.groupId) : undefined);
+      const isIndividual = course?.type === 'INDIVIDUAL' || lesson.lessonType === 'INDIVIDUAL';
+      return {
+        title: course?.name || schedule?.name || lesson.topic?.trim() || LESSON_TYPE_LABELS[lesson.lessonType] || '',
+        group: schedule?.name || '',
+        type: LESSON_TYPE_LABELS[isIndividual ? 'INDIVIDUAL' : (lesson.lessonType || 'GROUP')],
+        time: formatTimeRange(lesson.startTime, lesson.endTime),
+      };
+    };
+
+    const lessonRows = sortedLessons.map((lesson, index) => {
+      const info = describeLesson(lesson);
+      const records = marks[index] ?? [];
+      return [
+        lesson.lessonDate,
+        info.time,
+        info.title,
+        info.group,
+        info.type,
+        lesson.teacherId ? staffMap.get(lesson.teacherId) || '' : '',
+        lesson.substituteTeacherId ? staffMap.get(lesson.substituteTeacherId) || '' : '',
+        lesson.roomId ? roomMap.get(lesson.roomId) || '' : '',
+        LESSON_STATUS_LABELS[lesson.status] ?? lesson.status,
+        canLoadMarks ? getMarkedCount(records) : null,
+        canLoadMarks ? getPresentCount(records) : null,
+        lesson.topic || '',
+      ];
+    });
+
+    const markRows = sortedLessons.flatMap((lesson, index) => {
+      const info = describeLesson(lesson);
+      return (marks[index] ?? []).map((record) => [
+        lesson.lessonDate,
+        info.time,
+        info.title,
+        studentMap.get(record.studentId) || record.studentId,
+        ATTENDANCE_STATUS_LABELS[record.status] ?? record.status,
+        record.notes || '',
+      ]);
+    });
+
+    return [
+      {
+        name: 'Занятия',
+        tables: [{
+          columns: [
+            { header: 'Дата', type: 'date' },
+            { header: 'Время' },
+            { header: 'Занятие' },
+            { header: 'Группа' },
+            { header: 'Тип' },
+            { header: 'Преподаватель' },
+            { header: 'Замена' },
+            { header: 'Кабинет' },
+            { header: 'Статус' },
+            { header: 'Отмечено', type: 'number' },
+            { header: 'Присутствовали', type: 'number' },
+            { header: 'Тема' },
+          ],
+          rows: lessonRows,
+        }],
+      },
+      {
+        name: 'Отметки',
+        tables: [{
+          title: canLoadMarks
+            ? undefined
+            : `Слишком много занятий (${sortedLessons.length}) — отметки выгружаются для периода до ${ATTENDANCE_EXPORT_MAX_LESSONS} занятий. Выберите период короче.`,
+          columns: [
+            { header: 'Дата', type: 'date' },
+            { header: 'Время' },
+            { header: 'Занятие' },
+            { header: 'Ученик' },
+            { header: 'Отметка' },
+            { header: 'Заметка' },
+          ],
+          rows: markRows,
+        }],
+      },
+    ];
   };
 
   const changeDay = (direction: -1 | 1) => {
@@ -386,6 +597,25 @@ export default function AttendancePage() {
             <Button variant="secondary" onClick={() => changeDay(1)} icon={ChevronRight}>
               Вперёд
             </Button>
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#96a0af]" aria-hidden="true" />
+              <input
+                type="search"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Ученик, группа, курс, преподаватель"
+                aria-label="Поиск по занятиям дня"
+                className="crm-input crm-input-with-icon w-72"
+              />
+            </label>
+            <ExportExcelButton
+              page="attendance"
+              filePrefix=""
+              reportTitle="Журнал посещаемости"
+              defaultRange={{ from: selectedDateKey, to: selectedDateKey }}
+              buildSheets={buildAttendanceExcel}
+              hint={`Отметки учеников выгружаются, если в периоде не больше ${ATTENDANCE_EXPORT_MAX_LESSONS} занятий.`}
+            />
             <Button onClick={openAttendanceModal} icon={Plus} disabled={lessonsForDay.length === 0} className="hidden">
               Добавить посещение
             </Button>
@@ -423,8 +653,8 @@ export default function AttendancePage() {
               </tr>
             </thead>
             <tbody className="crm-table-body">
-              {lessonsForDay.length > 0 ? (
-                lessonsForDay.map((lesson, index) => {
+              {visibleLessons.length > 0 ? (
+                visibleLessons.map((lesson, index) => {
                   const attendanceStatus = getDominantAttendanceStatus(
                     (data?.attendanceByLessonId ?? {})[lesson.id] ?? []
                   );
@@ -442,7 +672,7 @@ export default function AttendancePage() {
                         </div>
                       </td>
                       <td className="crm-table-cell">
-                        <Link
+                        <Link prefetch={false}
                           href={`/attendance/${lesson.id}`}
                           onClick={(e) => e.stopPropagation()}
                           className="font-semibold text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
@@ -451,7 +681,7 @@ export default function AttendancePage() {
                         </Link>
                         <p className="mt-1 text-xs text-[#667084]">
                           {lesson.courseId ? (
-                            <Link
+                            <Link prefetch={false}
                               href={`/classes/${lesson.courseId}`}
                               onClick={(e) => e.stopPropagation()}
                               className="transition-colors hover:text-[#467aff] hover:underline"
@@ -465,7 +695,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="crm-table-cell">
                         {lesson.teacherId ? (
-                          <Link
+                          <Link prefetch={false}
                             href={`/staff/${lesson.teacherId}`}
                             onClick={(e) => e.stopPropagation()}
                             className="font-medium text-[#273142] transition-colors hover:text-[#467aff] hover:underline"
@@ -479,7 +709,7 @@ export default function AttendancePage() {
                           <p className="mt-1 text-xs text-[#667084]">
                             Замена:{' '}
                             {lesson.substituteTeacherId ? (
-                              <Link
+                              <Link prefetch={false}
                                 href={`/staff/${lesson.substituteTeacherId}`}
                                 onClick={(e) => e.stopPropagation()}
                                 className="transition-colors hover:text-[#467aff] hover:underline"

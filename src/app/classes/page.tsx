@@ -28,7 +28,11 @@ import { studentPaymentsService } from '@/lib/api/finance';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
 import { formatFullName } from '@/lib/utils';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
 import type { CourseFilters, CourseFormValues, CourseListItem } from '@/types/class';
+import { useUrlFilters } from '@/hooks/useUrlState';
 
 type CourseSavePayload = CreateCourseRequest & { status?: CourseStatus };
 
@@ -153,7 +157,7 @@ export default function Classes() {
     courseId: null,
   });
 
-  const [filters, setFilters] = useState<CourseFilters>({
+  const [filters, setFilters] = useUrlFilters<CourseFilters>({
     search: '',
     type: 'all',
     format: 'all',
@@ -458,13 +462,93 @@ export default function Classes() {
     await courseLifecycle.requestDelete({ id: target.id, name: target.name });
   };
 
+  // «Скачать в Excel»: the courses/groups list with the current filters (the page already loads all of them).
+  const buildCoursesExcel = async (): Promise<ExcelSheet[]> => {
+    let studentNames = new Map<string, string>();
+    if (!isTeacher) {
+      const students = await fetchAllPages((pageNum, size) => studentsService.getAll({ page: pageNum, size })).catch(() => []);
+      studentNames = new Map(students.map((student) => [student.id, getStudentFullName(student) || student.fullName || '']));
+    }
+    const label = <T extends string>(options: { value: T; label: string }[], value: T) =>
+      options.find((option) => option.value === value)?.label ?? value;
+
+    return [
+      {
+        name: 'Курсы и группы',
+        tables: [{
+          columns: [
+            { header: '№', type: 'number' },
+            { header: 'Курс' },
+            { header: 'Описание' },
+            { header: 'Тип' },
+            { header: 'Формат' },
+            { header: 'Уровень' },
+            { header: 'Цена, ₸', type: 'money' },
+            { header: 'Занятий в абонементе', type: 'number' },
+            { header: 'Преподаватели' },
+            { header: 'Кабинет' },
+            { header: 'Учеников', type: 'number' },
+            { header: 'Лимит', type: 'number' },
+            { header: 'Статус' },
+            { header: 'Создан', type: 'date' },
+          ],
+          rows: filteredCourses.map((course, index) => [
+            index + 1,
+            course.name,
+            course.description,
+            label(COURSE_TYPES, course.type),
+            label(COURSE_FORMATS, course.format),
+            course.levelName,
+            course.basePrice,
+            course.totalLessons,
+            course.teacherNames.filter(Boolean).join(', '),
+            course.roomName,
+            course.studentIds.length,
+            course.enrollmentLimit,
+            label(COURSE_STATUSES, course.status),
+            course.createdAt,
+          ]),
+        }],
+      },
+      {
+        name: 'Состав групп',
+        tables: [{
+          columns: [{ header: 'Курс' }, { header: 'Преподаватели' }, { header: 'Ученик' }],
+          rows: filteredCourses.flatMap((course) =>
+            course.studentIds.map((studentId, index) => [
+              course.name,
+              course.teacherNames.filter(Boolean).join(', '),
+              studentNames.get(studentId) || course.studentNames[index] || studentId,
+            ])
+          ),
+        }],
+      },
+    ];
+  };
+
   return (
     <div className="space-y-6">
-      {!isTeacher ? <div className="flex justify-end">
-        <Button icon={Plus} onClick={openCreateModal}>
-          Добавить курс
-        </Button>
-      </div> : null}
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page="courses"
+          filePrefix=""
+          reportTitle="Курсы и группы"
+          note={describeFilters([
+            filters.type !== 'all' && `тип «${COURSE_TYPES.find((item) => item.value === filters.type)?.label ?? filters.type}»`,
+            filters.format !== 'all' && `формат «${COURSE_FORMATS.find((item) => item.value === filters.format)?.label ?? filters.format}»`,
+            filters.status !== 'all' && `статус «${COURSE_STATUSES.find((item) => item.value === filters.status)?.label ?? filters.status}»`,
+            filters.teacherId !== 'all' && `преподаватель «${teacherMap.get(filters.teacherId) ?? ''}»`,
+            filters.search.trim() && `поиск «${filters.search.trim()}»`,
+          ])}
+          buildSnapshot={buildCoursesExcel}
+          disabled={isLoading}
+        />
+        {!isTeacher ? (
+          <Button icon={Plus} onClick={openCreateModal}>
+            Добавить курс
+          </Button>
+        ) : null}
+      </div>
 
       <div className="crm-surface p-6">
         <div className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${isTeacher ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}>
@@ -603,7 +687,7 @@ export default function Classes() {
                       <tr key={course.id} className="crm-table-row">
                         <td className="crm-table-cell">{index + 1}</td>
                         <td className="crm-table-cell">
-                          <Link
+                          <Link prefetch={false}
                             href={`/classes/${course.id}`}
                             className="group flex items-start gap-3 transition-colors hover:text-[#467aff]"
                           >
@@ -631,7 +715,7 @@ export default function Classes() {
                               {course.teacherIds.map((teacherId, teacherIndex) => (
                                 <span key={teacherId}>
                                   {teacherIndex > 0 ? <span className="text-[#8b95a4]">, </span> : null}
-                                  <Link href={`/staff/${teacherId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                                  <Link prefetch={false} href={`/staff/${teacherId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
                                     {course.teacherNames[teacherIndex] || 'Преподаватель'}
                                   </Link>
                                 </span>
@@ -642,7 +726,7 @@ export default function Classes() {
                         <td className="crm-table-cell">{course.roomName}</td>
                         <td className="crm-table-cell">
                           {course.studentIds.length > 0 ? (
-                            <Link
+                            <Link prefetch={false}
                               href={`/classes/${course.id}`}
                               className="font-semibold text-[#467aff] hover:underline"
                             >
@@ -660,7 +744,7 @@ export default function Classes() {
                         </td>
                         <td className="crm-table-cell">
                           <div className="flex items-center gap-2">
-                            <Link
+                            <Link prefetch={false}
                               href={`/classes/${course.id}`}
                               className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
                               title="Карточка курса"

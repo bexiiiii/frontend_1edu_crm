@@ -243,6 +243,8 @@ export interface SimilarStudentDto {
   fullName: string | null;
   phone: string | null;
   branchId: string | null;
+  /** The card belongs to another branch and is not visible in the current one. */
+  otherBranch?: boolean;
 }
 
 export interface StudentStatsDto {
@@ -442,6 +444,13 @@ export interface CourseEnrollmentDto {
 export type DayOfWeek = 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
 export type ScheduleStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED';
 
+/** Время занятия в конкретный день недели (у дней одного расписания может быть разное время). */
+export interface ScheduleDayTime {
+  day: DayOfWeek;
+  startTime: string;
+  endTime: string;
+}
+
 export interface ScheduleDto {
   id: string;
   name: string;
@@ -449,8 +458,11 @@ export interface ScheduleDto {
   teacherId: string | null;
   roomId: string | null;
   daysOfWeek: DayOfWeek[];
+  /** Время первого дня недели (для старых клиентов); точное время по дням — в dayTimes. */
   startTime: string;
   endTime: string;
+  /** Время по дням недели, Пн..Вс. */
+  dayTimes?: ScheduleDayTime[];
   startDate: string;
   endDate: string | null;
   maxStudents: number | null;
@@ -470,6 +482,8 @@ export interface CreateScheduleRequest {
   daysOfWeek: DayOfWeek[];
   startTime: string;
   endTime: string;
+  /** Время каждого выбранного дня; бэкенд берёт дни и время отсюда. */
+  dayTimes?: ScheduleDayTime[];
   startDate: string;
   endDate?: string;
 }
@@ -742,6 +756,8 @@ export interface DiscountPeriod {
 
 export interface SubscriptionDto {
   id: string;
+  /** Branch the subscription (its money and debt) belongs to. */
+  branchId?: string | null;
   studentId: string;
   courseId: string | null;
   groupId: string | null;
@@ -1462,6 +1478,31 @@ export interface StudentPaymentHistoryResponse {
   subscriptions: SubscriptionPaymentSummaryDto[];
   /** Удалённые платежи — не влияют на суммы выше, показываются как "Удалено" в истории */
   deletedPayments?: StudentPaymentDto[];
+  /** Журнал автоматических движений баланса (новые сверху). Только для показа. */
+  balanceMovements?: BalanceMovementDto[];
+}
+
+export type BalanceMovementReason =
+  | 'NEW_MONTH'
+  | 'PAYMENT'
+  | 'PAYMENT_DELETED'
+  | 'DISCOUNT'
+  | 'ATTENDANCE'
+  | 'RECALCULATION';
+
+/** Автоматическое движение баланса: списано на месяц (amount < 0) или возвращено на баланс (amount > 0). */
+export interface BalanceMovementDto {
+  id: string;
+  studentId: string;
+  subscriptionId: string | null;
+  /** YYYY-MM */
+  paymentMonth: string | null;
+  amount: number;
+  reason: BalanceMovementReason | string;
+  courseName?: string | null;
+  branchId?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
 }
 
 /** Начисление за конкретное занятие: за какой урок берётся оплата и сколько. */
@@ -1720,6 +1761,8 @@ export interface StudentPaymentDto {
   paidAt: string;
   paymentMonth: string;
   method: PaymentMethod;
+  /** «Перевод»: phone number of the transfer, +7XXXXXXXXXX. */
+  transferPhone?: string | null;
   amountChangeReasonCode: PaymentAmountChangeReasonCode | null;
   amountChangeReasonOther: string | null;
   notes: string | null;
@@ -1748,6 +1791,8 @@ export interface CreateStudentPaymentRequest {
   paidAt: string;
   paymentMonth: string;
   method: PaymentMethod;
+  /** Required for TRANSFER: KZ phone number of the transfer. */
+  transferPhone?: string;
   amountChangeReasonCode?: PaymentAmountChangeReasonCode;
   amountChangeReasonOther?: string;
   notes?: string;
@@ -2015,4 +2060,24 @@ export interface BranchAnalyticsResponse {
   totalStudents: number;
   totalLeads: number;
   avgAttendance: number;
+}
+
+/** One group membership period of a student, in any branch (GET /students/{id}/memberships). */
+export interface StudentMembershipDto {
+  id: string;
+  groupId: string | null;
+  groupName: string;
+  courseId: string | null;
+  courseName: string;
+  branchId: string | null;
+  branchName: string;
+  status: 'ACTIVE' | 'DROPPED' | 'COMPLETED' | 'TRANSFERRED' | string;
+  enrolledAt: string | null;
+  completedAt: string | null;
+  /** "MONDAY 14:00-15:00,THURSDAY 16:00-17:00" */
+  days: string | null;
+  scheduleStatus: string | null;
+  scheduleStartDate: string | null;
+  scheduleEndDate: string | null;
+  teacherName: string | null;
 }

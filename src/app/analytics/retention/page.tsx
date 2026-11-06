@@ -1,8 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Loader2 } from 'lucide-react';
 import {
   type CohortBasis,
   type RetentionHorizon,
@@ -19,8 +18,8 @@ import {
 } from '@/lib/retention';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildRetentionSheets } from '@/components/analytics/excel-reports';
 
 type PresetState = RetentionPeriodPreset | 'custom';
 
@@ -43,7 +42,6 @@ export default function RetentionPage() {
   const [preset, setPreset] = useState<PresetState>('month');
   const [fromDate, setFromDate] = useState(RETENTION_DEFAULT_RANGE.from);
   const [toDate, setToDate] = useState(RETENTION_DEFAULT_RANGE.to);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const normalizedRange = useMemo(
     () => normalizeDateRange(fromDate, toDate),
@@ -87,23 +85,6 @@ export default function RetentionPage() {
     setToDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportRetention({
-        from: normalizedRange.from || undefined,
-        to: normalizedRange.to || undefined,
-        cohortType: cohortBasis === 'first_visit' ? 'FIRST_VISIT' : 'FIRST_PAYMENT',
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
@@ -113,14 +94,12 @@ export default function RetentionPage() {
             {formatDateDdMmYyyy(normalizedRange.to)})
           </h2>
 
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="retention"
+            reportTitle="Когортный анализ (удержание)"
+            defaultRange={normalizedRange}
+            buildSheets={buildRetentionSheets}
+          />
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-4">

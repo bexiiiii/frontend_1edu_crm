@@ -1,7 +1,7 @@
 'use client';
 
 import { BadgeAlert, Calendar, CalendarDays, ChevronLeft, ChevronRight, Eye, Loader2, Plus, RotateCcw, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -24,6 +24,15 @@ import {
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import {
+  listMonthsInRange,
+  mapWithConcurrency,
+  type ExcelExportPeriod,
+  type ExcelSheet,
+} from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
+import { useUrlNumber, useUrlState } from '@/hooks/useUrlState';
 
 type StudentPaymentsTab = 'OVERVIEW' | 'DEBTORS';
 type DebtorStageFilter = 'all' | 'two_plus' | 'three_plus';
@@ -154,6 +163,17 @@ function shiftMonth(value: string, delta: number): string {
   return `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+/** Every subscription (the API returns at most 2000 per page). */
+async function loadAllSubscriptions() {
+  const first = await subscriptionsService.getAll({ page: 0, size: 2000 });
+  const pages = first.data?.totalPages ?? 1;
+  if (pages <= 1) return first;
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, index) => subscriptionsService.getAll({ page: index + 1, size: 2000 })),
+  );
+  return { ...first, data: { ...first.data, content: [...(first.data?.content ?? []), ...rest.flatMap((item) => item.data?.content ?? [])] } };
+}
+
 function shortId(value: string): string {
   return value.slice(0, 8);
 }
@@ -202,13 +222,17 @@ function getDebtSeverityMeta(debtMonths: number) {
 
 export default function StudentPaymentsPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<StudentPaymentsTab>('OVERVIEW');
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StudentPaymentMonthStatus | 'all'>('all');
-  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
-  const [debtorStageFilter, setDebtorStageFilter] = useState<DebtorStageFilter>('all');
-  const [debtorFromDate, setDebtorFromDate] = useState('');
-  const [debtorToDate, setDebtorToDate] = useState('');
+  // Tab, filters and page live in the URL: «Назад» from a student returns to the same list.
+  const [activeTabRaw, setActiveTab] = useUrlState('tab', 'OVERVIEW');
+  const activeTab = activeTabRaw as StudentPaymentsTab;
+  const [search, setSearch] = useUrlState('q');
+  const [statusFilterRaw, setStatusFilter] = useUrlState('status', 'all');
+  const statusFilter = statusFilterRaw as StudentPaymentMonthStatus | 'all';
+  const [selectedMonth, setSelectedMonth] = useUrlState('month', getCurrentMonth());
+  const [debtorStageRaw, setDebtorStageFilter] = useUrlState('stage', 'all');
+  const debtorStageFilter = debtorStageRaw as DebtorStageFilter;
+  const [debtorFromDate, setDebtorFromDate] = useUrlState('from');
+  const [debtorToDate, setDebtorToDate] = useUrlState('to');
   const [paymentModalState, setPaymentModalState] = useState<PaymentModalState>({
     key: 0,
     isOpen: false,
@@ -220,46 +244,81 @@ export default function StudentPaymentsPage() {
     subscriptionId: '',
   });
 
-  const { data: studentsPage } = useApi(() => studentsService.getAll({ page: 0, size: 1000 }), []);
-  const { data: coursesPage } = useApi(() => coursesService.getAll({ page: 0, size: 1000 }), []);
-  const { data: subscriptionsPage } = useApi(() => subscriptionsService.getAll({ page: 0, size: 1000 }), []);
+  const PAGE_SIZE = 50;
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+  // The page number belongs to one set of filters: changing a filter starts again at page 1.
+  const filterKey = [activeTab, debouncedSearch, statusFilter, selectedMonth, debtorStageFilter, debtorFromDate, debtorToDate].join('|');
+  const [urlPage, setUrlPage] = useUrlNumber('page', 0);
+  const [pageState, setPageState] = useState(() => ({ key: filterKey, page: urlPage }));
+  const page = pageState.key === filterKey ? pageState.page : 0;
+  useEffect(() => {
+    setUrlPage(page);
+  }, [page, setUrlPage]);
+  const setPage = (update: (current: number) => number) =>
+    setPageState((previous) => ({ key: filterKey, page: update(previous.key === filterKey ? previous.page : 0) }));
+
+  // Every student / course / subscription is only needed by the payment form
+  // (pickers); the tables come one page at a time from the server.
+  const [lookupsWanted, setLookupsWanted] = useState(false);
+  const { data: studentsPage } = useApi(
+    () => (lookupsWanted
+      ? studentsService.getAll({ page: 0, size: 5000, includeDeleted: true })
+      : Promise.resolve({ data: null })),
+    [lookupsWanted]
+  );
+  const { data: coursesPage } = useApi(
+    () => (lookupsWanted ? coursesService.getAll({ page: 0, size: 1000 }) : Promise.resolve({ data: null })),
+    [lookupsWanted]
+  );
+  const { data: subscriptionsPage } = useApi(async () => {
+    if (!lookupsWanted) return { data: null };
+    return loadAllSubscriptions();
+  }, [lookupsWanted]);
   const {
-    data: monthlyOverview,
+    data: overviewPage,
     loading: overviewLoading,
     error: overviewError,
     refetch: refetchOverview,
-  } = useApi(() => studentPaymentsService.getMonthlyOverview({ month: selectedMonth }), [selectedMonth]);
+  } = useApi(
+    () => (activeTab === 'OVERVIEW'
+      ? studentPaymentsService.getOverviewPage({
+          month: selectedMonth,
+          page,
+          size: PAGE_SIZE,
+          search: debouncedSearch || undefined,
+          status: statusFilter === 'all' ? undefined : statusFilter,
+        })
+      : Promise.resolve({ data: null })),
+    [activeTab, selectedMonth, page, debouncedSearch, statusFilter]
+  );
+  const monthlyOverview = overviewPage;
   const {
-    data: debtorsData,
+    data: debtorsPage,
     loading: debtorsLoading,
     error: debtorsError,
     refetch: refetchDebtors,
-  } = useApi(() => studentPaymentsService.getDebtors({
-    month: selectedMonth || undefined,
-    fromDate: debtorFromDate || undefined,
-    toDate: debtorToDate || undefined,
-  }), [selectedMonth, debtorFromDate, debtorToDate]);
+  } = useApi(
+    () => (activeTab === 'DEBTORS'
+      ? studentPaymentsService.getDebtorsPage({
+          month: selectedMonth || undefined,
+          fromDate: debtorFromDate || undefined,
+          toDate: debtorToDate || undefined,
+          page,
+          size: PAGE_SIZE,
+          search: debouncedSearch || undefined,
+          stage: debtorStageFilter === 'all' ? undefined : debtorStageFilter,
+        })
+      : Promise.resolve({ data: null })),
+    [activeTab, selectedMonth, debtorFromDate, debtorToDate, page, debouncedSearch, debtorStageFilter]
+  );
+  const currentPage = activeTab === 'OVERVIEW' ? overviewPage : debtorsPage;
 
   const createPaymentMutation = useMutation((data: CreateStudentPaymentRequest) => studentPaymentsService.create(data));
 
-  const studentMap = useMemo(
-    () =>
-      new Map(
-        (studentsPage?.content ?? []).map((student) => [
-          student.id,
-          getStudentFullName(student) || student.email || student.phone || student.id,
-        ])
-      ),
-    [studentsPage]
-  );
-  const studentDiscountMap = useMemo(
-    () => new Map((studentsPage?.content ?? []).map((student) => [student.id, student.discountPercent ?? null])),
-    [studentsPage]
-  );
-  const studentWhatsAppMap = useMemo(
-    () => new Map((studentsPage?.content ?? []).map((student) => [student.id, getStudentWhatsAppPhone(student)])),
-    [studentsPage]
-  );
   const courseMap = useMemo(
     () => new Map((coursesPage?.content ?? []).map((course) => [course.id, course.name])),
     [coursesPage]
@@ -283,172 +342,47 @@ export default function StudentPaymentsPage() {
     [courseMap, subscriptionsPage]
   );
 
-  const overviewRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return (monthlyOverview?.students ?? [])
-      .filter((item) => {
-        const studentName = (item as any).fullName || studentMap.get(item.studentId) || item.studentId;
-        const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-        const haystack = [
-          studentName,
-          subscriptionMeta?.courseName || '',
-          item.subscriptionId,
-          STUDENT_PAYMENT_STATUS_LABELS[item.status],
-        ]
-          .join(' ')
-          .toLowerCase();
-
-        if (query && !haystack.includes(query)) {
-          return false;
-        }
-
-        if (statusFilter !== 'all' && item.status !== statusFilter) {
-          return false;
-        }
-
-        return true;
-      })
-      .sort((left, right) => right.debt - left.debt || right.expected - left.expected);
-  }, [monthlyOverview, search, statusFilter, studentMap, subscriptionMetaMap]);
-
-  // Soft-deleted students (card kept): flagged by the debtors API or the student list.
-  const softDeletedStudentIds = useMemo(() => {
-    const ids = new Set<string>();
-    (studentsPage?.content ?? []).forEach((student) => {
-      if (student.deleted) ids.add(student.id);
-    });
-    (debtorsData ?? []).forEach((debtor) => {
-      if (debtor.deleted) ids.add(debtor.studentId);
-    });
-    return ids;
-  }, [studentsPage, debtorsData]);
-
-  const debtorRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return (debtorsData ?? [])
-      .filter((item) => {
-        const studentName = item.fullName || studentMap.get(item.studentId) || item.studentId;
-        const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-        const haystack = [studentName, subscriptionMeta?.courseName || '', item.subscriptionId].join(' ').toLowerCase();
-
-        if (query && !haystack.includes(query)) {
-          return false;
-        }
-
-        if (debtorStageFilter === 'two_plus' && item.debtMonths < 2) {
-          return false;
-        }
-
-        if (debtorStageFilter === 'three_plus' && item.debtMonths < 3) {
-          return false;
-        }
-
-        return true;
-      })
-      .sort((left, right) => {
-        const leftName = left.fullName || studentMap.get(left.studentId) || left.studentId;
-        const rightName = right.fullName || studentMap.get(right.studentId) || right.studentId;
-        return leftName.localeCompare(rightName, 'ru');
-      });
-  }, [debtorStageFilter, debtorsData, search, studentMap, subscriptionMetaMap]);
-
-  // Карточка студента показывает общий долг по всем курсам одной суммой —
-  // сворачиваем построчные записи (по абонементу) в одну строку на ученика,
-  // чтобы список Должников/Платежей студентов совпадал с тем, что видно в профиле.
-  const groupedOverviewRows = useMemo(() => {
-    const byStudent = new Map<string, {
-      studentId: string;
-      studentName: string;
-      isDeleted: boolean;
-      expected: number;
-      paid: number;
-      debt: number;
-      status: StudentPaymentMonthStatus;
-      courseNames: string[];
-      subscriptionIds: string[];
-    }>();
-
-    for (const item of overviewRows) {
-      const studentName = (item as any).fullName || studentMap.get(item.studentId) || 'Ученик удален';
-      const isDeleted = !studentMap.has(item.studentId) && !(item as any).fullName;
-      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-      const existing = byStudent.get(item.studentId);
-      const courseName = subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`;
-
-      if (!existing) {
-        byStudent.set(item.studentId, {
-          studentId: item.studentId,
-          studentName,
-          isDeleted,
-          expected: item.expected,
-          paid: item.paid,
-          debt: item.debt,
-          status: item.status,
-          courseNames: [courseName],
-          subscriptionIds: [item.subscriptionId],
-        });
-      } else {
-        existing.expected += item.expected;
-        existing.paid += item.paid;
-        existing.debt += item.debt;
-        existing.courseNames.push(courseName);
-        existing.subscriptionIds.push(item.subscriptionId);
-        // Worst status wins: UNPAID > PARTIAL > PAID
-        if (existing.status !== 'UNPAID') {
-          if (item.status === 'UNPAID') existing.status = 'UNPAID';
-          else if (item.status === 'PARTIAL' && existing.status === 'PAID') existing.status = 'PARTIAL';
-        }
-      }
-    }
-
-    return Array.from(byStudent.values()).sort((left, right) => right.debt - left.debt || left.studentName.localeCompare(right.studentName, 'ru'));
-  }, [overviewRows, studentMap, subscriptionMetaMap]);
-
-  const groupedDebtorRows = useMemo(() => {
-    const byStudent = new Map<string, {
-      studentId: string;
-      studentName: string;
-      isDeleted: boolean;
-      totalDebt: number;
-      debtMonths: number;
-      monthlyExpected: number;
-      discountPercent: number | null;
-      courseNames: string[];
-      subscriptionIds: string[];
-    }>();
-
-    for (const item of debtorRows) {
-      const studentName = item.fullName || studentMap.get(item.studentId) || 'Ученик удален';
-      const isDeleted = !item.fullName && !studentMap.has(item.studentId);
-      const subscriptionMeta = subscriptionMetaMap.get(item.subscriptionId);
-      const existing = byStudent.get(item.studentId);
-      const courseName = subscriptionMeta?.courseName || `Абонемент #${shortId(item.subscriptionId)}`;
-
-      if (!existing) {
-        byStudent.set(item.studentId, {
-          studentId: item.studentId,
-          studentName,
-          isDeleted,
-          totalDebt: item.totalDebt,
-          debtMonths: item.debtMonths,
-          monthlyExpected: item.monthlyExpected,
-          discountPercent: item.discountPercent ?? null,
-          courseNames: [courseName],
-          subscriptionIds: [item.subscriptionId],
-        });
-      } else {
-        existing.totalDebt += item.totalDebt;
-        existing.monthlyExpected += item.monthlyExpected;
-        existing.debtMonths = Math.max(existing.debtMonths, item.debtMonths);
-        existing.courseNames.push(courseName);
-        existing.subscriptionIds.push(item.subscriptionId);
-      }
-    }
-
-    return Array.from(byStudent.values()).sort((left, right) => left.studentName.localeCompare(right.studentName, 'ru'));
-  }, [debtorRows, studentMap, subscriptionMetaMap]);
+  // Rows of the current page, folded per student on the server (same rules as before).
+  const groupedOverviewRows = useMemo(
+    () =>
+      (overviewPage?.rows ?? []).map((row) => ({
+        studentId: row.studentId,
+        studentName: row.studentName,
+        isDeleted: row.deleted,
+        expected: row.expected ?? 0,
+        paid: row.paid ?? 0,
+        debt: row.debt ?? 0,
+        status: (row.status ?? 'UNPAID') as StudentPaymentMonthStatus,
+        courseNames: row.courseNames,
+        subscriptionIds: row.subscriptionIds,
+      })),
+    [overviewPage]
+  );
+  const groupedDebtorRows = useMemo(
+    () =>
+      (debtorsPage?.rows ?? []).map((row) => ({
+        studentId: row.studentId,
+        studentName: row.studentName,
+        isDeleted: row.deleted,
+        totalDebt: row.totalDebt ?? 0,
+        debtMonths: row.debtMonths ?? 0,
+        monthlyExpected: row.monthlyExpected ?? 0,
+        discountPercent: row.discountPercent ?? null,
+        courseNames: row.courseNames,
+        subscriptionIds: row.subscriptionIds,
+      })),
+    [debtorsPage]
+  );
+  const pageRows = useMemo(() => currentPage?.rows ?? [], [currentPage]);
+  const softDeletedStudentIds = useMemo(
+    () => new Set(pageRows.filter((row) => row.deleted).map((row) => row.studentId)),
+    [pageRows]
+  );
+  const rowWhatsAppMap = useMemo(() => new Map(pageRows.map((row) => [row.studentId, row.phone])), [pageRows]);
+  const rowDiscountMap = useMemo(
+    () => new Map(pageRows.map((row) => [row.studentId, row.studentDiscountPercent ?? null])),
+    [pageRows]
+  );
 
   const paymentSubscriptionOptions = useMemo(
     () => {
@@ -519,37 +453,34 @@ export default function StudentPaymentsPage() {
     () => [
       {
         label: 'Должников',
-        value: String(groupedDebtorRows.length),
+        value: String(debtorsPage?.filteredStudents ?? 0),
         cardClass: 'border-[#dbe2e8] bg-[#f8fafc]',
         valueClass: 'text-[#1f2530]',
       },
       {
         label: 'Общий долг',
-        value: formatMoney(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0)),
+        value: formatMoney(debtorsPage?.debtorsTotalDebt ?? 0),
         cardClass: 'border-rose-100 bg-rose-50',
         valueClass: 'text-rose-700',
       },
       {
         label: 'Средний долг',
-        value: formatMoney(
-          groupedDebtorRows.length > 0
-            ? Math.round(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0) / groupedDebtorRows.length)
-            : 0
-        ),
+        value: formatMoney(debtorsPage?.debtorsAverageDebt ?? 0),
         cardClass: 'border-amber-100 bg-amber-50',
         valueClass: 'text-amber-700',
       },
       {
         label: 'Критичные кейсы',
-        value: String(groupedDebtorRows.filter((item) => item.debtMonths >= 3).length),
+        value: String(debtorsPage?.debtorsCritical ?? 0),
         cardClass: 'border-[#dbe2e8] bg-white',
         valueClass: 'text-[#1f2530]',
       },
     ],
-    [groupedDebtorRows]
+    [debtorsPage]
   );
 
   const openAddPayment = (options?: { studentId?: string; subscriptionId?: string; lockStudent?: boolean }) => {
+    setLookupsWanted(true);
     setPaymentModalState((prev) => ({
       key: prev.key + 1,
       isOpen: true,
@@ -604,9 +535,233 @@ export default function StudentPaymentsPage() {
     setDebtorToDate('');
   };
 
+  // Excel exports list every subscription: load names, phones and courses only when exporting.
+  const loadExportLookups = async () => {
+    const [studentsResponse, coursesResponse, subscriptionsResponse] = await Promise.all([
+      studentsService.getAll({ page: 0, size: 5000, includeDeleted: true }),
+      coursesService.getAll({ page: 0, size: 1000 }),
+      loadAllSubscriptions(),
+    ]);
+    const students = studentsResponse.data?.content ?? [];
+    const courseNames = new Map((coursesResponse.data?.content ?? []).map((course) => [course.id, course.name]));
+    return {
+      studentMap: new Map(students.map((student) => [
+        student.id,
+        getStudentFullName(student) || student.email || student.phone || student.id,
+      ])),
+      studentWhatsAppMap: new Map(students.map((student) => [student.id, getStudentWhatsAppPhone(student)])),
+      studentDiscountMap: new Map(students.map((student) => [student.id, student.discountPercent ?? null])),
+      deletedIds: new Set(students.filter((student) => student.deleted).map((student) => student.id)),
+      subscriptionMetaMap: new Map((subscriptionsResponse.data?.content ?? []).map((subscription) => [
+        subscription.id,
+        { courseName: subscription.courseId ? courseNames.get(subscription.courseId) || 'Без курса' : 'Без курса' },
+      ])),
+    };
+  };
+
+  // «Скачать в Excel» — «Платежи студентов»: monthly overview for every month of the chosen period.
+  const buildPaymentsExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const months = listMonthsInRange(period.from, period.to);
+    const { studentMap, subscriptionMetaMap, studentWhatsAppMap } = await loadExportLookups();
+    const overviews = await mapWithConcurrency(months, 4, (month) =>
+      studentPaymentsService.getMonthlyOverview({ month }).then((response) => response.data));
+    const query = search.trim().toLowerCase();
+
+    const firstWithData = period.allTime ? overviews.findIndex((item) => (item?.students?.length ?? 0) > 0) : 0;
+    const used = firstWithData < 0 ? [] : overviews.slice(firstWithData);
+
+    const detailRows = used.flatMap((overview) =>
+      (overview?.students ?? [])
+        .map((item) => {
+          const studentName = (item as { fullName?: string }).fullName || studentMap.get(item.studentId) || 'Ученик удален';
+          const courseName = subscriptionMetaMap.get(item.subscriptionId)?.courseName || `Абонемент #${shortId(item.subscriptionId)}`;
+          return { item, studentName, courseName };
+        })
+        .filter(({ item, studentName, courseName }) => {
+          const haystack = [studentName, courseName, item.subscriptionId, STUDENT_PAYMENT_STATUS_LABELS[item.status]]
+            .join(' ').toLowerCase();
+          if (query && !haystack.includes(query)) return false;
+          return statusFilter === 'all' || item.status === statusFilter;
+        })
+        .sort((left, right) => left.studentName.localeCompare(right.studentName, 'ru'))
+        .map(({ item, studentName, courseName }) => [
+          formatMonthLabel(overview?.month || ''),
+          studentName,
+          studentWhatsAppMap.get(item.studentId) || '',
+          courseName,
+          item.expected,
+          item.paid,
+          item.debt,
+          item.advanceApplied ?? null,
+          item.discountPercent ?? null,
+          STUDENT_PAYMENT_STATUS_LABELS[item.status] ?? item.status,
+        ]));
+
+    return [
+      {
+        name: 'Платежи студентов',
+        tables: [{
+          columns: [
+            { header: 'Месяц' },
+            { header: 'Ученик' },
+            { header: 'Телефон' },
+            { header: 'Курс / абонемент' },
+            { header: 'Ожидалось, ₸', type: 'money' },
+            { header: 'Оплачено, ₸', type: 'money' },
+            { header: 'Осталось, ₸', type: 'money' },
+            { header: 'Зачтено аванса, ₸', type: 'money' },
+            { header: 'Скидка, %', type: 'number' },
+            { header: 'Статус' },
+          ],
+          rows: detailRows,
+        }],
+      },
+      {
+        name: 'Итоги по месяцам',
+        tables: [{
+          columns: [
+            { header: 'Месяц' },
+            { header: 'Учеников', type: 'number' },
+            { header: 'Оплатили', type: 'number' },
+            { header: 'Частично', type: 'number' },
+            { header: 'Не оплатили', type: 'number' },
+            { header: 'Ожидалось, ₸', type: 'money' },
+            { header: 'Собрано, ₸', type: 'money' },
+            { header: 'Осталось, ₸', type: 'money' },
+          ],
+          rows: used.map((overview) => [
+            formatMonthLabel(overview?.month || ''),
+            overview?.totalStudents ?? 0,
+            overview?.paidCount ?? 0,
+            overview?.partialCount ?? 0,
+            overview?.unpaidCount ?? 0,
+            overview?.totalExpected ?? 0,
+            overview?.totalCollected ?? 0,
+            overview?.totalDebt ?? 0,
+          ]),
+        }],
+      },
+    ];
+  };
+
+  // «Скачать в Excel» — «Должники»: current list with the active filters.
+  const buildDebtorsExcel = async (): Promise<ExcelSheet[]> => {
+    const debtorParams = {
+      month: selectedMonth || undefined,
+      fromDate: debtorFromDate || undefined,
+      toDate: debtorToDate || undefined,
+      search: debouncedSearch || undefined,
+      stage: debtorStageFilter === 'all' ? undefined : debtorStageFilter,
+    };
+    const [lookups, firstPage, allDebtors] = await Promise.all([
+      loadExportLookups(),
+      studentPaymentsService.getDebtorsPage({ ...debtorParams, page: 0, size: 500 }),
+      studentPaymentsService.getDebtors({ month: debtorParams.month, fromDate: debtorParams.fromDate, toDate: debtorParams.toDate }),
+    ]);
+    const { studentMap, subscriptionMetaMap, studentWhatsAppMap, studentDiscountMap, deletedIds } = lookups;
+    const restPages = await Promise.all(
+      Array.from({ length: Math.max(0, (firstPage.data?.totalPages ?? 1) - 1) }, (_, index) =>
+        studentPaymentsService.getDebtorsPage({ ...debtorParams, page: index + 1, size: 500 })),
+    );
+    const allGroupedRows = [firstPage, ...restPages].flatMap((response) => response.data?.rows ?? []);
+    const query = debouncedSearch.toLowerCase();
+    const debtorRows = (allDebtors.data ?? []).filter((item) => {
+      const studentName = item.fullName || studentMap.get(item.studentId) || item.studentId;
+      const haystack = [studentName, subscriptionMetaMap.get(item.subscriptionId)?.courseName || '', item.subscriptionId].join(' ').toLowerCase();
+      if (query && !haystack.includes(query)) return false;
+      if (debtorStageFilter === 'two_plus' && item.debtMonths < 2) return false;
+      if (debtorStageFilter === 'three_plus' && item.debtMonths < 3) return false;
+      return true;
+    });
+    return [
+    {
+      name: 'Должники',
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'Ученик' },
+          { header: 'Телефон' },
+          { header: 'Курсы / абонементы' },
+          { header: 'Общий долг, ₸', type: 'money' },
+          { header: 'Глубина долга, мес.', type: 'number' },
+          { header: 'Ежемесячный платёж, ₸', type: 'money' },
+          { header: 'Скидка, %', type: 'number' },
+          { header: 'Удалён' },
+        ],
+        rows: allGroupedRows.map((row, index) => [
+          index + 1,
+          row.studentName,
+          row.phone || studentWhatsAppMap.get(row.studentId) || '',
+          row.courseNames.join(', '),
+          row.totalDebt ?? 0,
+          row.debtMonths ?? 0,
+          row.monthlyExpected ?? 0,
+          row.discountPercent ?? row.studentDiscountPercent ?? studentDiscountMap.get(row.studentId) ?? null,
+          row.deleted || deletedIds.has(row.studentId) ? 'Да' : '',
+        ]),
+      }],
+    },
+    {
+      name: 'По абонементам',
+      tables: [{
+        columns: [
+          { header: 'Ученик' },
+          { header: 'Курс / абонемент' },
+          { header: 'Долг, ₸', type: 'money' },
+          { header: 'Глубина долга, мес.', type: 'number' },
+          { header: 'Ежемесячный платёж, ₸', type: 'money' },
+          { header: 'Скидка, %', type: 'number' },
+        ],
+        rows: debtorRows.map((item) => [
+          item.fullName || studentMap.get(item.studentId) || 'Ученик удален',
+          subscriptionMetaMap.get(item.subscriptionId)?.courseName || `Абонемент #${shortId(item.subscriptionId)}`,
+          item.totalDebt,
+          item.debtMonths,
+          item.monthlyExpected,
+          item.discountPercent ?? null,
+        ]),
+      }],
+    },
+    ];
+  };
+
+  const monthStart = `${selectedMonth}-01`;
+  const monthEnd = (() => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    return year && month ? `${selectedMonth}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}` : monthStart;
+  })();
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {activeTab === 'OVERVIEW' ? (
+          <ExportExcelButton
+            page="student-payments"
+            filePrefix=""
+            reportTitle="Платежи студентов"
+            note={describeFilters([
+              statusFilter !== 'all' && `статус «${STUDENT_PAYMENT_STATUS_LABELS[statusFilter]}»`,
+              search.trim() && `поиск «${search.trim()}»`,
+            ])}
+            defaultRange={{ from: monthStart, to: monthEnd }}
+            buildSheets={buildPaymentsExcel}
+            hint="Данные выгружаются по полным месяцам."
+          />
+        ) : (
+          <ExportExcelButton
+            page="debtors"
+            filePrefix=""
+            reportTitle="Должники"
+            note={describeFilters([
+              debtorStageFilter === 'two_plus' && 'долг от 2 месяцев',
+              debtorStageFilter === 'three_plus' && 'долг от 3 месяцев',
+              (debtorFromDate || debtorToDate) && `период ${debtorFromDate || '…'} — ${debtorToDate || '…'}`,
+              search.trim() && `поиск «${search.trim()}»`,
+            ])}
+            buildSnapshot={buildDebtorsExcel}
+            disabled={debtorsLoading}
+          />
+        )}
         <Button icon={Plus} onClick={() => openAddPayment()}>
           Записать платёж
         </Button>
@@ -727,10 +882,10 @@ export default function StudentPaymentsPage() {
           ) : (
             <>
               <p className="text-sm font-medium text-gray-700">
-                Должников: <span className="font-semibold text-gray-900">{groupedDebtorRows.length}</span>
+                Должников: <span className="font-semibold text-gray-900">{debtorsPage?.filteredStudents ?? 0}</span>
               </p>
               <p className="text-sm font-medium text-gray-700">
-                Общий долг: <span className="font-semibold text-rose-700">{formatMoney(groupedDebtorRows.reduce((sum, item) => sum + item.totalDebt, 0))}</span>
+                Общий долг: <span className="font-semibold text-rose-700">{formatMoney(debtorsPage?.debtorsTotalDebt ?? 0)}</span>
               </p>
             </>
           )}
@@ -809,9 +964,6 @@ export default function StudentPaymentsPage() {
                                   ) : null}
                                 </span>
                               )}
-                              <div className="text-xs text-[#8690a0]">
-                                {item.courseNames.join(', ')}
-                              </div>
                             </div>
                           </td>
                           <td className="crm-table-cell">{formatMoney(item.expected)}</td>
@@ -841,7 +993,7 @@ export default function StudentPaymentsPage() {
                                 </Button>
                               )}
                               <WhatsAppAction
-                                phone={studentWhatsAppMap.get(item.studentId) || ''}
+                                phone={rowWhatsAppMap.get(item.studentId) || ''}
                                 studentName={item.studentName}
                               />
                               <Link
@@ -926,15 +1078,12 @@ export default function StudentPaymentsPage() {
                                   ) : null}
                                 </span>
                               )}
-                              <div className="text-xs text-[#8690a0]">
-                                {item.courseNames.join(', ')}
-                              </div>
                             </div>
                           </td>
                           <td className="crm-table-cell text-rose-700">{formatMoney(item.totalDebt)}</td>
                           <td className="crm-table-cell">
                             {(() => {
-                              const pct = item.discountPercent ?? studentDiscountMap.get(item.studentId) ?? null;
+                              const pct = item.discountPercent ?? rowDiscountMap.get(item.studentId) ?? null;
                               return pct != null && pct > 0 ? (
                                 <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
                                   {pct}%
@@ -981,7 +1130,7 @@ export default function StudentPaymentsPage() {
                                 </button>
                               ) : null}
                               <WhatsAppAction
-                                phone={studentWhatsAppMap.get(item.studentId) || ''}
+                                phone={rowWhatsAppMap.get(item.studentId) || ''}
                                 studentName={item.studentName}
                               />
                               <Link
@@ -1008,6 +1157,31 @@ export default function StudentPaymentsPage() {
             )}
           </div>
         )}
+        {currentPage && currentPage.totalPages > 1 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e6ebf0] px-5 py-3 text-sm text-[#5d6676]">
+            <span>
+              Страница {currentPage.page + 1} из {currentPage.totalPages} · учеников: {currentPage.filteredStudents}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((value) => Math.max(0, value - 1))}
+                disabled={isTableLoading || currentPage.page <= 0}
+              >
+                Назад
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((value) => Math.min(currentPage.totalPages - 1, value + 1))}
+                disabled={isTableLoading || currentPage.page >= currentPage.totalPages - 1}
+              >
+                Вперёд
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <AddStudentPaymentModal

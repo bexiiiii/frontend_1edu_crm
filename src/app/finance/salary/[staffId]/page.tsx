@@ -5,6 +5,7 @@ import { SalaryBalance } from '@/components/features/salary/SalaryBalance';
 import { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Edit2, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { useBackNavigation } from '@/hooks/useUrlState';
 import Link from 'next/link';
 import { AmountChangeReasonModal } from '@/components/features/finance/AmountChangeReasonModal';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
@@ -75,6 +76,7 @@ function formatDate(value: string): string {
 
 export default function StaffSalaryHistoryPage() {
   const router = useRouter();
+  const goBack = useBackNavigation('/finance/salary');
   const params = useParams();
   const staffIdParam = params.staffId;
   const staffId = Array.isArray(staffIdParam) ? staffIdParam[0] : staffIdParam;
@@ -206,7 +208,7 @@ export default function StaffSalaryHistoryPage() {
   if (!staffId) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/finance/salary')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к зарплатам
         </Button>
         <div className="crm-surface p-6 text-sm text-[#7f8794]">Не удалось определить ID сотрудника.</div>
@@ -216,7 +218,7 @@ export default function StaffSalaryHistoryPage() {
 
   return (
     <div className="space-y-6">
-      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/finance/salary')}>
+      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
         Назад к зарплатам
       </Button>
 
@@ -225,7 +227,7 @@ export default function StaffSalaryHistoryPage() {
           <div>
             <h2 className="text-xl font-semibold text-[#1f2530]">
               История зарплаты:{' '}
-              <Link
+              <Link prefetch={false}
                 href={`/staff/${staffId}`}
                 className="text-[#467aff] transition-colors hover:underline"
               >
@@ -267,7 +269,7 @@ export default function StaffSalaryHistoryPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
               <div className="rounded-xl border border-[#e2e8ee] bg-[#f8fbfd] px-4 py-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-[#8a93a3]">Сотрудник</p>
-                <Link
+                <Link prefetch={false}
                   href={`/staff/${historyData.staffId}`}
                   className="mt-1 block text-sm font-semibold text-[#467aff] hover:underline"
                 >

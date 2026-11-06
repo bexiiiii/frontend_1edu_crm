@@ -3,12 +3,11 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Crown, Download, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Crown, Loader2 } from 'lucide-react';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildTeachersSheets } from '@/components/analytics/excel-reports';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -33,7 +32,6 @@ export default function TeachersAnalyticsPage() {
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
   const [showFormula, setShowFormula] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: teacherData, loading } = useApi(
     () => analyticsService.getTeachers({ from: fromDate, to: toDate }),
@@ -95,35 +93,17 @@ export default function TeachersAnalyticsPage() {
     setToDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportTeachers({
-        from: fromDate || undefined,
-        to: toDate || undefined,
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="text-2xl font-semibold text-[#202938]">Аналитика преподавателей</h2>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="teachers"
+            reportTitle="Аналитика преподавателей"
+            defaultRange={{ from: fromDate, to: toDate }}
+            buildSheets={buildTeachersSheets}
+          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -172,7 +152,7 @@ export default function TeachersAnalyticsPage() {
               </span>
               <div>
                 {bestTeacher.staffId ? (
-                  <Link href={`/staff/${bestTeacher.staffId}`} className="text-base font-semibold text-[#202938] hover:text-[#467aff] hover:underline">
+                  <Link prefetch={false} href={`/staff/${bestTeacher.staffId}`} className="text-base font-semibold text-[#202938] hover:text-[#467aff] hover:underline">
                     {bestTeacher.name}
                   </Link>
                 ) : (
@@ -252,7 +232,7 @@ export default function TeachersAnalyticsPage() {
                 <tr key={row.name} className="crm-table-row">
                   <td className="crm-table-cell font-medium text-[#273142]">
                     {row.staffId ? (
-                      <Link href={`/staff/${row.staffId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
+                      <Link prefetch={false} href={`/staff/${row.staffId}`} className="text-[#273142] hover:text-[#467aff] hover:underline">
                         {row.name}
                       </Link>
                     ) : (

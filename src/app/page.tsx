@@ -249,7 +249,7 @@ export default function Dashboard() {
             {debtors.length > 0 ? (
               <div className="space-y-2">
                 {debtors.slice(0, 3).map((debtor) => (
-                  <Link
+                  <Link prefetch={false}
                     key={debtor.studentId}
                     href={`/students/${debtor.studentId}`}
                     className="flex items-center justify-between rounded-lg border border-[#e6ebf0] bg-white p-3 transition-colors hover:border-[#467aff] hover:bg-[#f8fbfd]"

@@ -19,6 +19,16 @@ import {
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
 import type { SalaryFilters, SalaryReportItem } from '@/types/salary';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import {
+  listMonthsInRange,
+  mapWithConcurrency,
+  type ExcelExportPeriod,
+  type ExcelSheet,
+} from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
+import { TRANSACTION_STATUS_LABELS } from '@/constants/finance';
+import { useUrlFilters } from '@/hooks/useUrlState';
 
 function getCurrentMonth(): string {
   const now = new Date();
@@ -51,7 +61,7 @@ function formatMoney(value: number | null | undefined, currency = 'KZT'): string
 }
 
 export default function SalaryPage() {
-  const [filters, setFilters] = useState<SalaryFilters>({
+  const [filters, setFilters] = useUrlFilters<SalaryFilters>({
     searchEmployee: '',
     position: 'all',
     month: getCurrentMonth(),
@@ -197,9 +207,105 @@ export default function SalaryPage() {
     await refetch();
   };
 
+  // «Скачать в Excel»: salary overview for every month of the chosen period, same search/position filters.
+  const buildSalaryExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const months = listMonthsInRange(period.from, period.to);
+    const overviews = await mapWithConcurrency(months, 4, (month) =>
+      salaryService.getSalaryOverview({ month }).then((response) => ({ month, data: response.data })));
+    const query = filters.searchEmployee.trim().toLowerCase();
+
+    const entries = overviews.flatMap(({ month, data }) =>
+      (data?.entries ?? [])
+        .map((entry) => ({ month: data?.month || month, entry, position: staffMetaMap.get(entry.staffId)?.position || '—' }))
+        .filter(({ entry, position }) => {
+          if (query) {
+            const roleLabel = STAFF_ROLE_LABELS[entry.role] || entry.role || '';
+            if (![entry.fullName, position, roleLabel].join(' ').toLowerCase().includes(query)) return false;
+          }
+          return filters.position === 'all' || position === filters.position;
+        }));
+    const visible = period.allTime
+      ? entries.filter(({ entry }) => (entry.dueAmount ?? 0) !== 0 || (entry.paidAmount ?? 0) !== 0)
+      : entries;
+
+    return [
+      {
+        name: 'Зарплаты',
+        tables: [{
+          columns: [
+            { header: 'Месяц' },
+            { header: 'Сотрудник' },
+            { header: 'Роль' },
+            { header: 'Должность' },
+            { header: 'Модель оплаты' },
+            { header: 'Оклад, ₸', type: 'money' },
+            { header: 'Процент, %', type: 'percent' },
+            { header: 'Активных учеников', type: 'number' },
+            { header: 'База для процента, ₸', type: 'money' },
+            { header: 'Начислено, ₸', type: 'money' },
+            { header: 'Выплачено, ₸', type: 'money' },
+            { header: 'Остаток, ₸', type: 'money' },
+          ],
+          rows: visible.map(({ month, entry, position }) => [
+            formatMonthLabel(month),
+            entry.fullName || 'Без имени',
+            STAFF_ROLE_LABELS[entry.role] || entry.role || '',
+            position,
+            STAFF_SALARY_TYPE_LABELS[entry.salaryType] || entry.salaryType || '',
+            entry.salaryType === 'FIXED' ? entry.fixedSalary ?? 0 : null,
+            entry.salaryType === 'FIXED' ? null : entry.salaryPercentage,
+            entry.activeStudentCount ?? 0,
+            entry.percentageBaseAmount ?? 0,
+            entry.dueAmount ?? 0,
+            entry.paidAmount ?? 0,
+            entry.outstandingAmount ?? 0,
+          ]),
+        }],
+      },
+      {
+        name: 'Выплаты',
+        tables: [{
+          columns: [
+            { header: 'Дата выплаты', type: 'date' },
+            { header: 'За месяц' },
+            { header: 'Сотрудник' },
+            { header: 'Сумма, ₸', type: 'money' },
+            { header: 'Статус' },
+            { header: 'Заметки' },
+          ],
+          rows: visible.flatMap(({ entry }) => (entry.payments ?? []).map((payment) => [
+            payment.paymentDate,
+            formatMonthLabel(payment.salaryMonth),
+            entry.fullName || 'Без имени',
+            payment.amount,
+            TRANSACTION_STATUS_LABELS[payment.status] ?? payment.status,
+            payment.notes || '',
+          ])),
+        }],
+      },
+    ];
+  };
+
+  const salaryMonthEnd = (() => {
+    const [year, month] = filters.month.split('-').map(Number);
+    return year && month ? `${filters.month}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}` : '';
+  })();
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page="salary"
+          filePrefix=""
+          reportTitle="Зарплаты"
+          note={describeFilters([
+            filters.position !== 'all' && `должность «${filters.position}»`,
+            filters.searchEmployee.trim() && `поиск «${filters.searchEmployee.trim()}»`,
+          ])}
+          defaultRange={{ from: filters.month ? `${filters.month}-01` : '', to: salaryMonthEnd }}
+          buildSheets={buildSalaryExcel}
+          hint="Данные выгружаются по полным месяцам."
+        />
         <Button icon={Plus} onClick={() => openPaymentModal()}>
           Зафиксировать выплату
         </Button>
@@ -302,7 +408,7 @@ export default function SalaryPage() {
                     <tr key={salary.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
-                        <Link
+                        <Link prefetch={false}
                           href={`/staff/${salary.staffId}`}
                           className="text-sm font-medium text-[#467aff] hover:underline"
                         >

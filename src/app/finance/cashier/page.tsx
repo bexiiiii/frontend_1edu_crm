@@ -1,5 +1,6 @@
 'use client';
 
+import { formatKzPhone } from '@/lib/phone-kz';
 import Link from 'next/link';
 
 import { useMemo, useState } from 'react';
@@ -28,6 +29,9 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import type { ExcelExportPeriod, ExcelSheet } from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
 import { Modal } from '@/components/ui/Modal';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import {
@@ -220,6 +224,59 @@ export default function CashierPage() {
       return true;
     });
   }, [operations, operationTypeFilter, paymentMethodFilter, searchQuery]);
+
+  // «Скачать в Excel»: cashier operations of the chosen period, same type/channel/search filters as the table.
+  const buildOperationsExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const response = await cashierService.getHistory({ from: period.from, to: period.to });
+    const q = searchQuery.trim().toLowerCase();
+    const rows = (response.data ?? [])
+      .filter((op) => {
+        if (operationTypeFilter !== 'all' && op.type !== operationTypeFilter) return false;
+        if (paymentMethodFilter !== 'all' && op.paymentMethod !== paymentMethodFilter) return false;
+        if (q && ![op.studentName, op.reason, op.receiptNumber, op.cashierName || op.cashierUserId, op.paymentMethod]
+          .some((value) => (value || '').toLowerCase().includes(q))) return false;
+        return true;
+      })
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+
+    return [{
+      name: 'Операции кассы',
+      tables: [{
+        columns: [
+          { header: 'Дата', type: 'date' },
+          { header: 'Время' },
+          { header: 'Тип' },
+          { header: 'Канал / способ' },
+          { header: 'Номер для перевода' },
+          { header: 'Студент' },
+          { header: 'Курсы' },
+          { header: 'За месяц' },
+          { header: 'Назначение' },
+          { header: 'Статья' },
+          { header: 'Чек' },
+          { header: 'Кассир' },
+          { header: 'Сумма, ₸', type: 'money' },
+          { header: 'Удалена' },
+        ],
+        rows: rows.map((op) => [
+          op.occurredAt,
+          formatTimeOnly(op.occurredAt),
+          CASH_OPERATION_TYPE_LABELS[op.type] ?? op.type,
+          op.paymentMethod ? CASH_PAYMENT_METHOD_LABELS[op.paymentMethod] ?? op.paymentMethod : '',
+          op.transferPhone ? formatKzPhone(op.transferPhone) : '',
+          op.studentName || '',
+          op.courseNames || '',
+          op.paymentMonth || '',
+          op.reason || '',
+          op.category || '',
+          op.receiptNumber || '',
+          getUserDisplayName(op.cashierUserId, op.cashierName),
+          op.type === 'PAYMENT' || op.type === 'DEPOSIT' ? op.amount : -op.amount,
+          op.deleted ? 'Да' : '',
+        ]),
+      }],
+    }];
+  };
 
   // Filtered shifts
   const filteredShifts = useMemo(() => {
@@ -579,8 +636,22 @@ export default function CashierPage() {
                 </select>
               </div>
 
-              <div className="text-xs text-[#8491a0]">
-                Найдено: <strong className="text-[#27303c]">{filteredOperations.length}</strong> операций
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-xs text-[#8491a0]">
+                  Найдено: <strong className="text-[#27303c]">{filteredOperations.length}</strong> операций
+                </div>
+                <ExportExcelButton
+                  page="cashier"
+                  filePrefix=""
+                  reportTitle="Операции кассы"
+                  note={describeFilters([
+                    operationTypeFilter !== 'all' && `тип «${CASH_OPERATION_TYPE_LABELS[operationTypeFilter] ?? operationTypeFilter}»`,
+                    paymentMethodFilter !== 'all' && `канал «${CASH_PAYMENT_METHOD_LABELS[paymentMethodFilter] ?? paymentMethodFilter}»`,
+                    searchQuery.trim() && `поиск «${searchQuery.trim()}»`,
+                  ])}
+                  defaultRange={{ from: date, to: date }}
+                  buildSheets={buildOperationsExcel}
+                />
               </div>
             </div>
 
@@ -619,6 +690,9 @@ export default function CashierPage() {
                         {/* Payment Method / Channel */}
                         <td className="px-5 py-4 whitespace-nowrap">
                           <PaymentMethodBadge method={op.paymentMethod} />
+                          {op.transferPhone ? (
+                            <div className="mt-1 text-xs text-[#667085] tabular-nums">{formatKzPhone(op.transferPhone)}</div>
+                          ) : null}
                         </td>
 
                         {/* Student / Description */}
@@ -626,7 +700,7 @@ export default function CashierPage() {
                           {op.type === 'PAYMENT' && op.studentName ? (
                             <div>
                               {op.studentId && !op.deleted ? (
-                                <Link
+                                <Link prefetch={false}
                                   href={`/students/${op.studentId}`}
                                   className="font-semibold text-[#467aff] hover:underline"
                                 >
@@ -1293,11 +1367,14 @@ export default function CashierPage() {
                         </td>
                         <td className="p-2.5 whitespace-nowrap">
                           <PaymentMethodBadge method={op.paymentMethod} />
+                          {op.transferPhone ? (
+                            <div className="mt-1 text-xs text-[#667085] tabular-nums">{formatKzPhone(op.transferPhone)}</div>
+                          ) : null}
                         </td>
                         <td className="p-2.5 max-w-[220px]">
                           <span className={`font-medium block truncate ${op.deleted ? 'text-slate-400 line-through' : 'text-[#27303c]'}`}>
                             {op.studentId && op.studentName && !op.deleted ? (
-                              <Link href={`/students/${op.studentId}`} className="text-[#467aff] hover:underline">
+                              <Link prefetch={false} href={`/students/${op.studentId}`} className="text-[#467aff] hover:underline">
                                 {op.studentName}
                               </Link>
                             ) : (
@@ -1436,6 +1513,21 @@ function SummaryCard({
     </div>
   );
 }
+
+const CASH_OPERATION_TYPE_LABELS: Record<string, string> = {
+  PAYMENT: 'Оплата',
+  EXPENSE: 'Расход',
+  SALARY: 'Зарплата',
+  DEPOSIT: 'Внесение',
+  WITHDRAWAL: 'Изъятие',
+};
+
+const CASH_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  KASPI_POS: 'Kaspi POS',
+  KASPI_QR: 'Kaspi QR',
+  KASPI_TRANSFER: 'Kaspi Перевод',
+  CASH: 'Наличные',
+};
 
 function OperationTypeBadge({ type }: { type: string }) {
   switch (type) {

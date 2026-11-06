@@ -48,7 +48,7 @@ export const TaskCard = ({ task, onClick, onComplete, onEdit, onDelete }: TaskCa
         <div className="flex items-center gap-2">
           <User className="h-4 w-4 text-[#8a93a3]" />
           {task.assignedTo ? (
-            <Link
+            <Link prefetch={false}
               href={`/staff/${task.assignedTo}`}
               onClick={(e) => e.stopPropagation()}
               className="text-[#4f5b6b] hover:text-[#467aff] hover:underline"

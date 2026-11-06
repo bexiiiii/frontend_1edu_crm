@@ -2,12 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Download, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Loader2 } from 'lucide-react';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildGroupLoadSheets } from '@/components/analytics/excel-reports';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -48,7 +47,6 @@ export default function GroupLoadAnalyticsPage() {
   const [periodPreset, setPeriodPreset] = useState<PresetState>('month');
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: groupLoadData, loading } = useApi(
     () => analyticsService.getGroupLoad({ from: fromDate, to: toDate }),
@@ -108,34 +106,17 @@ export default function GroupLoadAnalyticsPage() {
     setToDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportGroupLoad({
-        from: fromDate || undefined,
-        to: toDate || undefined,
-      });
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="text-2xl font-semibold text-[#202938]">Загрузка групп</h2>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="group-load"
+            reportTitle="Загрузка групп"
+            defaultRange={{ from: fromDate, to: toDate }}
+            buildSheets={buildGroupLoadSheets}
+          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">

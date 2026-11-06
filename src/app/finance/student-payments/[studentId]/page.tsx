@@ -3,12 +3,14 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Edit2, Loader2, MessageCircle, Phone, Plus, Send, Trash2 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { useBackNavigation, useUrlState } from '@/hooks/useUrlState';
 import Link from 'next/link';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { Modal } from '@/components/ui/Modal';
 import { AddStudentPaymentModal } from '@/components/features/finance/AddStudentPaymentModal';
+import { formatKzPhone } from '@/lib/phone-kz';
 import { PaymentAmountChangeReasonModal } from '@/components/features/finance/PaymentAmountChangeReasonModal';
 import {
   PAYMENT_AMOUNT_CHANGE_REASON_LABELS,
@@ -45,6 +47,7 @@ interface PaymentRow {
   paymentMonth: string;
   amount: number;
   method: StudentPaymentDto['method'];
+  transferPhone?: string | null;
   amountChangeReasonCode: StudentPaymentDto['amountChangeReasonCode'];
   amountChangeReasonOther: StudentPaymentDto['amountChangeReasonOther'];
   notes: string | null;
@@ -150,6 +153,7 @@ function formatMonth(value: string): string {
 
 export default function StudentPaymentHistoryPage() {
   const router = useRouter();
+  const goBack = useBackNavigation('/finance/student-payments');
   const params = useParams();
   const studentIdParam = params.studentId;
   const studentId = Array.isArray(studentIdParam) ? studentIdParam[0] : studentIdParam;
@@ -169,7 +173,9 @@ export default function StudentPaymentHistoryPage() {
     paymentId: null,
     payload: null,
   });
-  const [activeTab, setActiveTab] = useState<PaymentHistoryTab>('SUBSCRIPTIONS');
+  // ?tab= keeps the open tab on reload and «Назад».
+  const [activeTabRaw, setActiveTab] = useUrlState('tab', 'SUBSCRIPTIONS');
+  const activeTab = activeTabRaw as PaymentHistoryTab;
   const [isCallLogModalOpen, setIsCallLogModalOpen] = useState(false);
   const [isCallLogReasonModalOpen, setIsCallLogReasonModalOpen] = useState(false);
   const [pendingCallLogUpdate, setPendingCallLogUpdate] = useState<null | { id: string; data: SaveStudentCallLogRequest }>(null);
@@ -248,7 +254,8 @@ export default function StudentPaymentHistoryPage() {
   const updatePaymentMutation = useMutation(({ id, data }: { id: string; data: CreateStudentPaymentRequest }) =>
     studentPaymentsService.update(id, data)
   );
-  const deletePaymentMutation = useMutation((id: string) => studentPaymentsService.delete(id));
+  const deletePaymentMutation = useMutation(({ id, reason }: { id: string; reason: string }) =>
+    studentPaymentsService.delete(id, reason));
   const createCallLogMutation = useMutation((data: SaveStudentCallLogRequest) => studentCallLogsService.create(data));
   const updateCallLogMutation = useMutation(({ id, data }: { id: string; data: SaveStudentCallLogRequest }) =>
     studentCallLogsService.update(id, data)
@@ -347,6 +354,7 @@ export default function StudentPaymentHistoryPage() {
             paymentMonth: payment.paymentMonth,
             amount: payment.amount,
             method: payment.method,
+            transferPhone: payment.transferPhone ?? null,
             amountChangeReasonCode: payment.amountChangeReasonCode,
             amountChangeReasonOther: payment.amountChangeReasonOther,
             notes: payment.notes,
@@ -430,8 +438,13 @@ export default function StudentPaymentHistoryPage() {
       const initialAmount = Number(paymentModalState.editingPayment.amount);
       const nextAmount = Number(data.amount);
       const isAmountChanged = Number.isFinite(nextAmount) && nextAmount !== initialAmount;
+      // Moving a payment to another month or subscription rewrites that month's
+      // paid/debt figures, so it needs a reason too (the server refuses without one).
+      const editing = paymentModalState.editingPayment;
+      const isMoved = (data.paymentMonth && data.paymentMonth !== editing.paymentMonth)
+        || (data.subscriptionId ?? '') !== (editing.subscriptionId ?? '');
 
-      if (isAmountChanged) {
+      if (isAmountChanged || isMoved) {
         setReasonModalState({
           isOpen: true,
           paymentId: paymentModalState.editingPayment.id,
@@ -476,11 +489,12 @@ export default function StudentPaymentHistoryPage() {
   };
 
   const handleDeletePayment = async (paymentId: string) => {
-    if (!confirm('Удалить этот платёж?')) {
+    const reason = window.prompt('Удалить этот платёж? Укажите причину — она останется в истории.')?.trim();
+    if (!reason) {
       return;
     }
 
-    await deletePaymentMutation.mutate(paymentId);
+    await deletePaymentMutation.mutate({ id: paymentId, reason });
     await refetchHistory();
   };
 
@@ -551,7 +565,7 @@ export default function StudentPaymentHistoryPage() {
   if (!studentId) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/finance/student-payments')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к платежам студентов
         </Button>
         <div className="crm-surface p-6 text-sm text-[#7f8794]">Не удалось определить ID ученика.</div>
@@ -561,7 +575,7 @@ export default function StudentPaymentHistoryPage() {
 
   return (
     <div className="space-y-6">
-      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/finance/student-payments')}>
+      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
         Назад к платежам студентов
       </Button>
 
@@ -783,7 +797,12 @@ export default function StudentPaymentHistoryPage() {
                             <div className="mt-0.5 text-xs text-[#8690a0]">{payment.subscriptionId}</div>
                           </td>
                           <td className="crm-table-cell">{formatMoney(payment.amount)}</td>
-                          <td className="crm-table-cell">{PAYMENT_METHOD_LABELS[payment.method]}</td>
+                          <td className="crm-table-cell">
+                            {PAYMENT_METHOD_LABELS[payment.method]}
+                            {payment.method === 'TRANSFER' && payment.transferPhone ? (
+                              <div className="text-xs text-[#667085] tabular-nums">{formatKzPhone(payment.transferPhone)}</div>
+                            ) : null}
+                          </td>
                           <td className="crm-table-cell">
                             {payment.amountChangeReasonCode
                               ? `${PAYMENT_AMOUNT_CHANGE_REASON_LABELS[payment.amountChangeReasonCode]}${
@@ -1026,6 +1045,7 @@ export default function StudentPaymentHistoryPage() {
           paidAt: paymentModalState.editingPayment.paidAt,
           paymentMonth: paymentModalState.editingPayment.paymentMonth,
           method: paymentModalState.editingPayment.method,
+          transferPhone: paymentModalState.editingPayment.transferPhone || undefined,
           notes: paymentModalState.editingPayment.notes || undefined,
         } : undefined}
         title={paymentModalState.editingPayment ? 'Редактировать платёж студента' : 'Записать платёж студента'}

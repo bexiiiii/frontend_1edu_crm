@@ -1,4 +1,4 @@
-import type { DayOfWeek, ScheduleStatus } from '@/lib/api';
+import type { DayOfWeek, ScheduleDayTime, ScheduleStatus } from '@/lib/api';
 
 export interface ScheduleCalendarItem {
   id: string;
@@ -13,6 +13,10 @@ export interface ScheduleCalendarItem {
   daysLabel: string;
   startTime: string;
   endTime: string;
+  /** Время по дням (Пн..Вс); у дней может быть разное время. */
+  dayTimes: ScheduleDayTime[];
+  /** «14:00 - 15:30» или «Пн 14:00–15:30, Чт 16:00–17:30». */
+  timeLabel: string;
   startDate: string;
   endDate: string | null;
   maxStudents: number | null;
@@ -73,6 +77,8 @@ export interface ScheduleFormValues {
   daysOfWeek: DayOfWeek[];
   startTime: string;
   endTime: string;
+  /** Время по дням (HH:mm); если у дней разное время — включается «Разное время по дням». */
+  dayTimes?: ScheduleDayTime[];
   startDate: string;
   endDate: string;
 }

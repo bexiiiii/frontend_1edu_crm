@@ -22,7 +22,11 @@ import {
   type TransactionDto,
 } from '@/lib/api';
 import { useApi, useMutation } from '@/hooks/useApi';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, isDateInRange, type ExcelExportPeriod, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
 import type { FinanceFilters, FinanceTab, FinanceTransactionItem, TransactionFormValues } from '@/types/finance';
+import { useUrlFilters, useUrlState } from '@/hooks/useUrlState';
 
 function getStudentFullName(student: {
   fullName?: string | null;
@@ -91,8 +95,9 @@ function shiftDays(date: string, delta: number): string {
 }
 
 export default function Finance() {
-  const [activeTab, setActiveTab] = useState<FinanceTab>('INCOME');
-  const [filters, setFilters] = useState<FinanceFilters>({
+  const [activeTabRaw, setActiveTab] = useUrlState('tab', 'INCOME');
+  const activeTab = activeTabRaw as FinanceTab;
+  const [filters, setFilters] = useUrlFilters<FinanceFilters>({
     search: '',
     status: 'all',
     studentId: 'all',
@@ -163,7 +168,8 @@ export default function Finance() {
   const updateMutation = useMutation(({ id, data }: { id: string; data: Partial<CreateTransactionRequest> }) =>
     financeService.updateTransaction(id, data)
   );
-  const deleteMutation = useMutation((id: string) => financeService.deleteTransaction(id));
+  const deleteMutation = useMutation(({ id, reason }: { id: string; reason: string }) =>
+    financeService.deleteTransaction(id, reason));
 
   const transactions = useMemo<FinanceTransactionItem[]>(
     () =>
@@ -321,11 +327,12 @@ export default function Finance() {
   };
 
   const handleDeleteTransaction = async (transaction: FinanceTransactionItem) => {
-    if (!confirm('Вы уверены, что хотите удалить транзакцию?')) {
+    const reason = window.prompt('Удалить операцию? Укажите причину — операция останется в истории как отменённая.')?.trim();
+    if (!reason) {
       return;
     }
 
-    await deleteMutation.mutate(transaction.id);
+    await deleteMutation.mutate({ id: transaction.id, reason });
     await refetch();
   };
 
@@ -381,9 +388,89 @@ export default function Finance() {
     });
   };
 
+  // «Скачать в Excel»: transactions of the active tab for the chosen period, with the same search/status/student filters.
+  const buildTransactionsExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const [items, students] = await Promise.all([
+      fetchAllPages((pageNum, size) => financeService.getByDate({ from: period.from, to: period.to, page: pageNum, size })),
+      fetchAllPages((pageNum, size) => studentsService.getAll({ page: pageNum, size, includeDeleted: true })).catch(() => []),
+    ]);
+    const names = new Map(studentMap);
+    students.forEach((student) => names.set(student.id, getStudentFullName(student) || student.email || student.phone || 'Без имени'));
+    const query = filters.search.trim().toLowerCase();
+
+    const rows = items
+      .filter((transaction) => {
+        if (transaction.type !== activeTab || !isDateInRange(transaction.transactionDate, period)) return false;
+        if (activeTab === 'INCOME') {
+          const desc = (transaction.description || '').toLowerCase();
+          const cat = (transaction.category || '').toLowerCase();
+          if (desc.startsWith('оплата обучения') || cat === 'education_payment' || cat === 'оплата за обучение') return false;
+        }
+        return true;
+      })
+      .map((transaction) => toListItem(transaction, names))
+      .filter((transaction) => {
+        if (query && ![transaction.category, transaction.description, transaction.notes, transaction.studentName]
+          .join(' ').toLowerCase().includes(query)) return false;
+        if (filters.status !== 'all' && transaction.status !== filters.status) return false;
+        if (filters.studentId !== 'all' && transaction.studentId !== filters.studentId) return false;
+        return true;
+      })
+      .sort((left, right) => left.transactionDate.localeCompare(right.transactionDate));
+
+    return [{
+      name: FINANCE_TAB_LABELS[activeTab],
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'Дата', type: 'date' },
+          { header: 'Категория' },
+          { header: 'Сумма, ₸', type: 'money' },
+          { header: 'Статус' },
+          { header: 'Студент' },
+          { header: 'Описание' },
+          { header: 'Причина изменения суммы' },
+          { header: 'Заметки' },
+        ],
+        rows: [
+          ...rows.map((transaction, index) => [
+            index + 1,
+            transaction.transactionDate,
+            transaction.category,
+            transaction.amount,
+            TRANSACTION_STATUS_LABELS[transaction.status] ?? transaction.status,
+            transaction.studentName,
+            transaction.description,
+            transaction.amountChangeReasonCode
+              ? `${FINANCE_AMOUNT_CHANGE_REASON_LABELS[transaction.amountChangeReasonCode]}${
+                transaction.amountChangeReasonCode === 'OTHER' && transaction.amountChangeReasonOther
+                  ? `: ${transaction.amountChangeReasonOther}` : ''}`
+              : '',
+            transaction.notes,
+          ]),
+          [null, null, 'Итого', rows.reduce((sum, transaction) => sum + transaction.amount, 0)],
+        ],
+      }],
+    }];
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page={`finance-${activeTab.toLowerCase()}`}
+          filePrefix=""
+          reportTitle={`Финансы: ${FINANCE_TAB_LABELS[activeTab]}`}
+          note={describeFilters([
+            filters.status !== 'all' && `статус «${TRANSACTION_STATUS_LABELS[filters.status]}»`,
+            filters.studentId !== 'all' && `студент «${studentMap.get(filters.studentId) ?? ''}»`,
+            filters.search.trim() && `поиск «${filters.search.trim()}»`,
+          ])}
+          defaultRange={canUsePeriodRange
+            ? { from: filters.periodStart, to: filters.periodEnd }
+            : { from: shiftDays(getTodayDate(), -29), to: getTodayDate() }}
+          buildSheets={buildTransactionsExcel}
+        />
         <Button icon={Plus} onClick={openCreateModal}>
           {activeTab === 'INCOME' ? 'Добавить доход' : activeTab === 'EXPENSE' ? 'Добавить расход' : 'Добавить возврат'}
         </Button>
@@ -587,7 +674,7 @@ export default function Finance() {
                       </td>
                       <td className="crm-table-cell">
                         {transaction.studentId && transaction.studentName ? (
-                          <Link
+                          <Link prefetch={false}
                             href={`/students/${transaction.studentId}`}
                             className="font-medium text-[#467aff] hover:underline"
                           >

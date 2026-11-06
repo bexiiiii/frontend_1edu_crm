@@ -8,6 +8,12 @@ import { Tabs } from '@/components/ui/vercel-tabs';
 import { auditService, type SystemAuditLog, type TenantAuditLog } from '@/lib/api';
 import { usePaginatedApi } from '@/hooks/useApi';
 import { useAuthStore } from '@/store/authStore';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, type ExcelExportPeriod, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters } from '@/lib/excel-crm';
+
+/** Audit logs can be large: the export stops after this many rows. */
+const LOGS_EXPORT_MAX_PAGES = 40;
 
 const TABLE_PAGE_SIZE = 20;
 
@@ -178,6 +184,68 @@ export default function LogsPage() {
     [filteredLogs, totalElements]
   );
 
+  // «Скачать в Excel»: log rows for the chosen period with the same action/actor/category/target filters and search.
+  const buildLogsExcel = async (period: ExcelExportPeriod): Promise<ExcelSheet[]> => {
+    const commonParams = {
+      action: filters.action.trim() || undefined,
+      actorId: filters.actorId.trim() || undefined,
+      from: new Date(period.from).toISOString(),
+      to: new Date(`${period.to}T23:59:59`).toISOString(),
+    };
+    const items: AuditLogRow[] = await fetchAllPages<AuditLogRow>(
+      (pageNum, size) => (activeSource === 'system' && isSuperAdmin
+        ? auditService.getSystemLog({ ...commonParams, page: pageNum, size, targetId: filters.targetId.trim() || undefined })
+        : auditService.getTenantLog({ ...commonParams, page: pageNum, size, category: filters.category.trim() || undefined })),
+      500,
+      LOGS_EXPORT_MAX_PAGES,
+    );
+    const query = filters.search.trim().toLowerCase();
+
+    const rows = items.filter((log) => {
+      if (!query) return true;
+      const category = 'category' in log ? log.category : '';
+      const actorName = 'actorName' in log ? log.actorName || '' : '';
+      const targetType = 'targetType' in log ? log.targetType : '';
+      const targetName = 'targetName' in log ? log.targetName || '' : '';
+      return [category, log.action, log.actorId, actorName, targetType, log.targetId, targetName, stringifyDetails(log.details)]
+        .join(' ').toLowerCase().includes(query);
+    });
+
+    return [{
+      name: 'Логи',
+      tables: [{
+        columns: [
+          { header: 'Время' },
+          { header: 'Уровень' },
+          { header: 'Категория' },
+          { header: 'Действие' },
+          { header: 'Кто' },
+          { header: 'ID пользователя' },
+          { header: 'Тип объекта' },
+          { header: 'Объект' },
+          { header: 'ID объекта' },
+          { header: 'Детали' },
+        ],
+        rows: rows.map((log) => {
+          const category = 'category' in log ? log.category : log.targetType;
+          const actorName = 'actorName' in log ? log.actorName : null;
+          return [
+            formatDateTime(log.timestamp),
+            categoryToLevel(category, log.action),
+            category || '',
+            log.action,
+            actorName?.trim() || (log.actorId ? 'Система' : ''),
+            log.actorId || '',
+            'targetType' in log ? log.targetType : '',
+            'targetName' in log ? log.targetName || '' : '',
+            log.targetId || '',
+            stringifyDetails(log.details),
+          ];
+        }),
+      }],
+    }];
+  };
+
   const rangeStart = totalElements === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
   const rangeEnd = Math.min((page + 1) * TABLE_PAGE_SIZE, totalElements);
 
@@ -185,8 +253,23 @@ export default function LogsPage() {
     <div className="space-y-6">
       <div className="crm-surface p-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div>
+          <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-lg font-semibold text-[#202938]">Audit Logs</h2>
+            <ExportExcelButton
+              page={activeSource === 'system' ? 'system-logs' : 'logs'}
+              filePrefix=""
+              reportTitle={activeSource === 'system' ? 'Системный журнал' : 'Журнал действий'}
+              note={describeFilters([
+                filters.category.trim() && `категория «${filters.category.trim()}»`,
+                filters.action.trim() && `действие «${filters.action.trim()}»`,
+                filters.actorId.trim() && `пользователь «${filters.actorId.trim()}»`,
+                activeSource === 'system' && filters.targetId.trim() && `объект «${filters.targetId.trim()}»`,
+                filters.search.trim() && `поиск «${filters.search.trim()}»`,
+              ])}
+              defaultRange={{ from: filters.from || getTodayDateInputValue(), to: filters.to || getTodayDateInputValue() }}
+              buildSheets={buildLogsExcel}
+              hint={`Выгружается не больше ${(LOGS_EXPORT_MAX_PAGES * 500).toLocaleString('ru-RU')} записей.`}
+            />
           </div>
           {isSuperAdmin ? (
             <Tabs

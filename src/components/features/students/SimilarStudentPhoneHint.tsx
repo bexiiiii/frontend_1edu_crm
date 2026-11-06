@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Info } from 'lucide-react';
 import { studentsService, type SimilarStudentDto } from '@/lib/api';
+import { pushToast } from '@/lib/toast';
 
 const MIN_PHONE_DIGITS = 10;
 const DEBOUNCE_MS = 500;
@@ -53,8 +54,28 @@ export const SimilarStudentPhoneHint = ({ phone, excludeStudentId }: SimilarStud
     };
   }, [key, phone, excludeStudentId]);
 
+  const [linking, setLinking] = useState<string | null>(null);
   const matches = result.key === key ? result.students : [];
   if (!key || matches.length === 0) return null;
+
+  // A card of another branch cannot be opened here; link it to this branch
+  // instead of creating a duplicate, then open it.
+  const linkToBranch = async (student: SimilarStudentDto) => {
+    setLinking(student.id);
+    try {
+      await studentsService.linkToCurrentBranch(student.id, phone.trim());
+      setResult((current) => ({
+        ...current,
+        students: current.students.map((item) => (item.id === student.id ? { ...item, otherBranch: false } : item)),
+      }));
+      pushToast({ message: `${displayName(student)} добавлен(а) в ваш филиал`, tone: 'success' });
+      window.open(`/students/${student.id}`, '_blank', 'noopener,noreferrer');
+    } catch {
+      // The API layer already shows the error.
+    } finally {
+      setLinking(null);
+    }
+  };
 
   return (
     <div className="mt-1.5 space-y-1">
@@ -66,14 +87,28 @@ export const SimilarStudentPhoneHint = ({ phone, excludeStudentId }: SimilarStud
           <Info className="h-3.5 w-3.5 shrink-0" />
           <span>
             Похожий ученик:{' '}
-            <Link
-              href={`/students/${student.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium underline hover:text-amber-700"
-            >
-              {displayName(student)}
-            </Link>
+            {student.otherBranch ? (
+              <>
+                <span className="font-medium">{displayName(student)}</span> — в другом филиале.{' '}
+                <button
+                  type="button"
+                  disabled={linking === student.id}
+                  onClick={() => void linkToBranch(student)}
+                  className="font-medium underline hover:text-amber-700 disabled:opacity-60"
+                >
+                  {linking === student.id ? 'Добавляем…' : 'Добавить в мой филиал'}
+                </button>
+              </>
+            ) : (
+              <Link prefetch={false}
+                href={`/students/${student.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline hover:text-amber-700"
+              >
+                {displayName(student)}
+              </Link>
+            )}
           </span>
         </p>
       ))}

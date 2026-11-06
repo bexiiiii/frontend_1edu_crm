@@ -1,13 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Button } from '@/components/ui/Button';
 import { analyticsService } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
-import { downloadBlob } from '@/lib/download';
-import { pushToast } from '@/lib/toast';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { buildRoomLoadSheets } from '@/components/analytics/excel-reports';
 import {
   getAnalyticsPeriodOptions,
   getAnalyticsPeriodPresets,
@@ -37,7 +36,6 @@ export default function RoomLoadAnalyticsPage() {
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
   const [timelineDate, setTimelineDate] = useState(defaultRange.to);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: roomLoadData, loading } = useApi(
     () => analyticsService.getRoomLoad({ from: fromDate, to: toDate, timelineDate }),
@@ -101,36 +99,17 @@ export default function RoomLoadAnalyticsPage() {
     setTimelineDate(normalized.to);
   };
 
-  const handleDownloadReport = async () => {
-    setIsDownloading(true);
-
-    try {
-      const { blob, filename } = await analyticsService.exportRoomLoad({
-        from: fromDate || undefined,
-        to: toDate || undefined,
-        timelineDate: timelineDate || undefined,
-      });
-
-      downloadBlob(blob, filename);
-      pushToast({ message: 'Отчёт скачивается.', tone: 'success' });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="crm-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="text-2xl font-semibold text-[#202938]">Загрузка аудиторий</h2>
-          <Button
-            variant="secondary"
-            icon={Download}
-            onClick={() => void handleDownloadReport()}
-            disabled={isDownloading}
-          >
-            {isDownloading ? 'Скачиваем...' : 'Скачать отчёт'}
-          </Button>
+          <ExportExcelButton
+            page="room-load"
+            reportTitle="Загрузка аудиторий"
+            defaultRange={{ from: fromDate, to: toDate }}
+            buildSheets={buildRoomLoadSheets}
+          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">

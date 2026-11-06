@@ -100,15 +100,18 @@ export function useCourseLifecycle(onChanged: (course: CourseDto | null, deleted
   };
 
   const requestDelete = useCallback(async (course: CourseRef) => {
-    if (!confirm('Вы уверены, что хотите удалить курс?')) {
+    if (!confirm('Курс будет перенесён в архив: история посещений и оплат сохранится. Продолжить?')) {
       return;
     }
     setBusy(true);
     try {
       const result = await coursesService.delete(course.id);
       setBusy(false);
-      if (result.data) {
+      if (result.data?.lifecycle) {
         notifyCourseLifecycle(result.data);
+      } else if (result.data) {
+        // An empty course is archived too (never removed): restorable with «Возобновить».
+        pushToast({ message: 'Курс перенесён в архив. Вернуть его можно кнопкой «Возобновить».', tone: 'success' });
       } else {
         pushToast({ message: 'Курс удалён', tone: 'success' });
       }
@@ -127,6 +130,11 @@ export function useCourseLifecycle(onChanged: (course: CourseDto | null, deleted
     if (!stopTarget) return;
     if (!fromDate) {
       pushToast({ message: 'Укажите дату остановки курса', tone: 'error' });
+      return;
+    }
+    // Past lessons stay as they are: a course can be stopped from today on only.
+    if (fromDate < todayIso()) {
+      pushToast({ message: 'Дата остановки не может быть в прошлом', tone: 'error' });
       return;
     }
     const ok = await run(
@@ -173,6 +181,7 @@ export function useCourseLifecycle(onChanged: (course: CourseDto | null, deleted
           <input
             id="course-stop-date"
             type="date"
+            min={todayIso()}
             value={fromDate}
             onChange={(event) => setFromDate(event.target.value)}
             className={inputClass}

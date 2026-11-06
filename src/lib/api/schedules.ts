@@ -31,6 +31,18 @@ export const schedulesService = {
   },
 
   /** Update schedule */
+  /** Dry run of an update: past lessons it would create (nothing is saved). */
+  async previewUpdate(id: string, data: UpdateScheduleRequest) {
+    const response = await api.post<ApiResponse<{
+      count: number;
+      from: string | null;
+      to: string | null;
+      dates: string[];
+      courseType: string | null;
+    }>>(`/api/v1/schedules/${id}/preview-update`, data);
+    return response.data;
+  },
+
   async update(id: string, data: UpdateScheduleRequest) {
     const response = await api.put<ApiResponse<ScheduleDto>>(`/api/v1/schedules/${id}`, data);
     return response.data;

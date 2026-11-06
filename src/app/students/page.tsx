@@ -1,12 +1,13 @@
 'use client';
 
 /* eslint-disable @next/next/no-img-element */
-import { useMemo, useState } from 'react';
-import { Edit2, FileText, Loader2, Plus, Search, Trash2, User } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Edit2, FileText, Loader2, Plus, RotateCcw, Search, Trash2, User } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { AddStudentModal } from '@/components/features/students/AddStudentModal';
+import { RestoreStudentModal, useCanRestoreStudents } from '@/components/features/students/RestoreStudentModal';
 import {
   STUDENT_GENDER_LABELS,
   STUDENT_STATUS_COLORS,
@@ -14,9 +15,13 @@ import {
   STUDENT_STATUS_OPTIONS,
 } from '@/constants/student';
 import { useResolvedFileUrl } from '@/hooks/useResolvedFileUrl';
-import { studentsService, type CreateStudentRequest, type UpdateStudentRequest } from '@/lib/api';
+import { coursesService, studentsService, type CreateStudentRequest, type UpdateStudentRequest } from '@/lib/api';
 import { useApi, useMutation, usePaginatedApi } from '@/hooks/useApi';
+import { ExportExcelButton } from '@/components/analytics/ExportExcelButton';
+import { fetchAllPages, type ExcelSheet } from '@/lib/excel-export';
+import { describeFilters, joinBranchNames, loadBranchNames, loadDebtByStudent } from '@/lib/excel-crm';
 import type { StudentFilters, StudentFormValues, StudentListItem } from '@/types/student';
+import { useUrlFilters, useUrlNumber } from '@/hooks/useUrlState';
 
 function splitFullName(fullName: string) {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -159,7 +164,7 @@ function StudentAvatar({ studentPhoto, fullName }: { studentPhoto: string; fullN
 
 export default function Students() {
   const router = useRouter();
-  const [filters, setFilters] = useState<StudentFilters>({
+  const [filters, setFilters] = useUrlFilters<StudentFilters>({
     search: '',
     status: 'all',
   });
@@ -174,6 +179,9 @@ export default function Students() {
     studentId: null,
   });
 
+  const [urlPage, setUrlPage] = useUrlNumber('page', 0);
+  const filtersKey = `${filters.search}|${filters.status}`;
+  const mountFiltersKey = useRef(filtersKey);
   const {
     data: studentItems,
     loading,
@@ -199,10 +207,14 @@ export default function Students() {
         sort: 'lastName,asc',
       });
     },
-    0,
+    // Page from the URL on the first load (Back from a student card); a new filter starts at page 1.
+    filtersKey === mountFiltersKey.current ? urlPage : 0,
     20,
     [filters.search, filters.status]
   );
+  useEffect(() => {
+    setUrlPage(page);
+  }, [page, setUrlPage]);
 
   const { data: statsData } = useApi(() => studentsService.getStats(), []);
 
@@ -211,6 +223,8 @@ export default function Students() {
     studentsService.update(id, data)
   );
   const deleteMutation = useMutation((id: string) => studentsService.delete(id));
+  const [restoreTarget, setRestoreTarget] = useState<{ id: string; name: string } | null>(null);
+  const canRestoreStudents = useCanRestoreStudents();
 
   const students = useMemo<StudentListItem[]>(
     () =>
@@ -317,9 +331,102 @@ export default function Students() {
     await refetch();
   };
 
+  // «Скачать в Excel»: all students matching the current search/status (all pages), not only the visible page.
+  const buildStudentsExcel = async (): Promise<ExcelSheet[]> => {
+    const query = filters.search.trim();
+    const status = filters.status !== 'all' ? filters.status : undefined;
+    const [items, courses, branchNames, debts] = await Promise.all([
+      fetchAllPages((pageNum, size) =>
+        query
+          ? studentsService.search({ query, page: pageNum, size, sort: 'lastName,asc' })
+          : studentsService.getAll({ page: pageNum, size, status, sort: 'lastName,asc' })
+      ),
+      fetchAllPages((pageNum, size) => coursesService.getAll({ page: pageNum, size })).catch(() => []),
+      loadBranchNames(),
+      loadDebtByStudent(),
+    ]);
+
+    const coursesByStudent = new Map<string, string[]>();
+    courses.forEach((course) => {
+      (course.studentIds ?? []).forEach((studentId) => {
+        coursesByStudent.set(studentId, [...(coursesByStudent.get(studentId) ?? []), course.name]);
+      });
+    });
+
+    const rows = items
+      .filter((student) => (filters.status === 'all' ? true : student.status === filters.status))
+      .sort((left, right) =>
+        Number(Boolean(left.deleted)) - Number(Boolean(right.deleted))
+        || getStudentSortKey(left).localeCompare(getStudentSortKey(right), 'ru-RU'));
+
+    return [{
+      name: 'Ученики',
+      tables: [{
+        columns: [
+          { header: '№', type: 'number' },
+          { header: 'ФИО' },
+          { header: 'Телефон ученика' },
+          { header: 'Email' },
+          { header: 'Заказчик / родитель' },
+          { header: 'Телефон родителя' },
+          { header: 'Дата рождения', type: 'date' },
+          { header: 'Пол' },
+          { header: 'Филиал' },
+          { header: 'Курсы / группы' },
+          { header: 'Статус' },
+          ...(debts ? [{ header: 'Долг, ₸', type: 'money' as const }] : []),
+          { header: 'Скидка, %', type: 'number' },
+          { header: 'Школа' },
+          { header: 'Класс' },
+          { header: 'Город' },
+          { header: 'Адрес' },
+          { header: 'Лояльность' },
+          { header: 'Договор' },
+          { header: 'Комментарий' },
+          { header: 'Добавлен', type: 'date' },
+          { header: 'Удалён' },
+        ],
+        rows: rows.map((student, index) => [
+          index + 1,
+          getDisplayName(student),
+          student.studentPhone || student.phone || '',
+          student.email || '',
+          student.parentName || student.customer || '',
+          student.parentPhone || '',
+          student.birthDate || '',
+          student.gender ? STUDENT_GENDER_LABELS[student.gender as keyof typeof STUDENT_GENDER_LABELS] ?? student.gender : '',
+          joinBranchNames(student.branchIds?.length ? student.branchIds : [student.branchId], branchNames),
+          (coursesByStudent.get(student.id) ?? []).join(', '),
+          STUDENT_STATUS_LABELS[student.status] ?? student.status,
+          ...(debts ? [debts.get(student.id) ?? 0] : []),
+          student.discountPercent ?? null,
+          student.school || '',
+          student.grade || '',
+          student.city || '',
+          student.address || '',
+          student.loyalty || '',
+          student.contract || '',
+          student.comment || '',
+          student.createdAt || '',
+          student.deleted ? 'Да' : '',
+        ]),
+      }],
+    }];
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportExcelButton
+          page="students"
+          filePrefix=""
+          reportTitle="Ученики"
+          note={describeFilters([
+            filters.status !== 'all' && `статус «${STUDENT_STATUS_LABELS[filters.status]}»`,
+            filters.search.trim() && `поиск «${filters.search.trim()}»`,
+          ])}
+          buildSnapshot={buildStudentsExcel}
+        />
         <Button icon={Plus} onClick={openCreateModal}>
           Добавить ученика
         </Button>
@@ -414,7 +521,7 @@ export default function Students() {
                         <StudentAvatar studentPhoto={student.studentPhoto} fullName={student.fullName} />
                       </td>
                       <td className="crm-table-cell">
-                        <Link
+                        <Link prefetch={false}
                           href={`/students/${student.id}`}
                           className={`text-sm font-medium transition-colors hover:text-[#3568eb] hover:underline ${
                             student.deleted ? 'text-gray-500 line-through' : 'text-gray-900'
@@ -488,7 +595,7 @@ export default function Students() {
                               <img src="/logo/whatsapp.svg" alt="WhatsApp" className="h-4 w-4 shrink-0" />
                             </button>
                           )}
-                          <Link
+                          <Link prefetch={false}
                             href={`/students/${student.id}`}
                             className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-violet-50 hover:text-violet-600"
                             title="Карточка ученика"
@@ -509,6 +616,15 @@ export default function Students() {
                               title="Удалить"
                             >
                               <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : canRestoreStudents ? (
+                            <button
+                              onClick={() => setRestoreTarget({ id: student.id, name: getDisplayName(student) })}
+                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600"
+                              title="Восстановить"
+                              aria-label={`Восстановить ${getDisplayName(student)}`}
+                            >
+                              <RotateCcw className="h-4 w-4" />
                             </button>
                           ) : null}
                         </div>
@@ -552,6 +668,12 @@ export default function Students() {
           </div>
         ) : null}
       </div>
+
+      <RestoreStudentModal
+        student={restoreTarget}
+        onClose={() => setRestoreTarget(null)}
+        onRestored={() => refetch()}
+      />
 
       <AddStudentModal
         key={modalState.key}

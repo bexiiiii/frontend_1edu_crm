@@ -18,6 +18,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
+import { useBackNavigation, useUrlState } from '@/hooks/useUrlState';
 import { AddEmployeeModal } from '@/components/features/employees/AddEmployeeModal';
 import { ReplaceTeacherModal } from '@/components/features/employees/ReplaceTeacherModal';
 import { AddSalaryModal } from '@/components/features/salary/AddSalaryModal';
@@ -50,7 +51,8 @@ import {
 import {
   formatScheduleDays,
   formatSchedulePeriod,
-  formatScheduleTimeRange,
+  formatScheduleTime,
+  hasDifferentDayTimes,
 } from '@/lib/scheduleUtils';
 import type { StaffFormValues } from '@/types/employee';
 import { useAuthStore } from '@/store/authStore';
@@ -176,11 +178,14 @@ export default function StaffProfilePage() {
   const isManager = roles.includes('MANAGER') && !roles.some((role) => role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN');
   const visibleProfileTabs = isManager ? profileTabs.filter((tab) => tab.id !== 'salary') : profileTabs;
   const router = useRouter();
+  const goBack = useBackNavigation('/staff');
   const params = useParams();
   const staffIdParam = params.staffId;
   const staffId = Array.isArray(staffIdParam) ? staffIdParam[0] : staffIdParam;
 
-  const [activeTab, setActiveTab] = useState<StaffProfileTab>('profile');
+  // ?tab= keeps the open tab on reload and «Назад».
+  const [activeTabRaw, setActiveTab] = useUrlState('tab', 'profile');
+  const activeTab = activeTabRaw as StaffProfileTab;
   const [selectedSalaryMonth, setSelectedSalaryMonth] = useState(getCurrentMonth());
   const [selectedSalaryBranchId, setSelectedSalaryBranchId] = useState('all');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -328,7 +333,9 @@ export default function StaffProfilePage() {
           ? (data.coursesById[schedule.courseId]?.name || schedule.courseId)
           : 'Без курса',
         studentsCount: data.studentsByGroupId[schedule.id]?.length ?? 0,
-        scheduleText: `${formatScheduleDays(schedule.daysOfWeek)} • ${formatScheduleTimeRange(schedule.startTime, schedule.endTime)}`,
+        scheduleText: hasDifferentDayTimes(schedule)
+          ? formatScheduleTime(schedule)
+          : `${formatScheduleDays(schedule.daysOfWeek)} • ${formatScheduleTime(schedule)}`,
         periodText: formatSchedulePeriod(schedule.startDate, schedule.endDate),
         status: schedule.status,
       }));
@@ -533,7 +540,7 @@ export default function StaffProfilePage() {
   if (!staffId) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/staff')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к сотрудникам
         </Button>
         <div className="crm-surface p-6 text-sm text-[#7f8794]">Не удалось определить ID сотрудника.</div>
@@ -544,7 +551,7 @@ export default function StaffProfilePage() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/staff')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к сотрудникам
         </Button>
         <div className="crm-surface flex items-center justify-center py-16">
@@ -557,7 +564,7 @@ export default function StaffProfilePage() {
   if (error || !data || !staff) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/staff')}>
+        <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
           Назад к сотрудникам
         </Button>
         <div className="crm-surface space-y-4 p-6">
@@ -572,7 +579,7 @@ export default function StaffProfilePage() {
 
   return (
     <div className="space-y-4">
-      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={() => router.push('/staff')}>
+      <Button size="sm" variant="ghost" icon={ArrowLeft} onClick={goBack}>
         Назад к сотрудникам
       </Button>
 
@@ -759,14 +766,14 @@ export default function StaffProfilePage() {
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
                         {group.courseId ? (
-                          <Link href={`/classes/${group.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                          <Link prefetch={false} href={`/classes/${group.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
                             {group.name}
                           </Link>
                         ) : group.name}
                       </td>
                       <td className="crm-table-cell">
                         {group.courseId ? (
-                          <Link href={`/classes/${group.courseId}`} className="text-[#467aff] hover:underline">
+                          <Link prefetch={false} href={`/classes/${group.courseId}`} className="text-[#467aff] hover:underline">
                             {group.courseName}
                           </Link>
                         ) : group.courseName}
@@ -817,14 +824,14 @@ export default function StaffProfilePage() {
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
                         {schedule.courseId ? (
-                          <Link href={`/classes/${schedule.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                          <Link prefetch={false} href={`/classes/${schedule.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
                             {schedule.name}
                           </Link>
                         ) : schedule.name}
                       </td>
                       <td className="crm-table-cell">
                         {schedule.courseId ? (
-                          <Link href={`/classes/${schedule.courseId}`} className="text-[#467aff] hover:underline">
+                          <Link prefetch={false} href={`/classes/${schedule.courseId}`} className="text-[#467aff] hover:underline">
                             {schedule.courseName}
                           </Link>
                         ) : schedule.courseName}
@@ -873,7 +880,7 @@ export default function StaffProfilePage() {
                     <tr key={student.id} className="crm-table-row">
                       <td className="crm-table-cell">{index + 1}</td>
                       <td className="crm-table-cell">
-                        <Link href={`/students/${student.id}`} className="font-semibold text-[#467aff] hover:underline">
+                        <Link prefetch={false} href={`/students/${student.id}`} className="font-semibold text-[#467aff] hover:underline">
                           {student.fullName}
                         </Link>
                       </td>
@@ -1006,7 +1013,7 @@ export default function StaffProfilePage() {
                         <td className="crm-table-cell">{index + 1}</td>
                         <td className="crm-table-cell">
                           {lesson.lessonId ? (
-                            <Link href={`/attendance/${lesson.lessonId}`} className="font-medium text-[#467aff] hover:underline">
+                            <Link prefetch={false} href={`/attendance/${lesson.lessonId}`} className="font-medium text-[#467aff] hover:underline">
                               {formatDate(lesson.lessonDate)}
                             </Link>
                           ) : (
@@ -1023,7 +1030,7 @@ export default function StaffProfilePage() {
                         </td>
                         <td className="crm-table-cell">
                           {lesson.courseId ? (
-                            <Link href={`/classes/${lesson.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
+                            <Link prefetch={false} href={`/classes/${lesson.courseId}`} className="font-medium text-[#273142] hover:text-[#467aff] hover:underline">
                               {lesson.courseName || 'Без курса'}
                             </Link>
                           ) : (
@@ -1031,7 +1038,7 @@ export default function StaffProfilePage() {
                           )}
                           <div className="mt-0.5 text-xs text-[#8a93a3]">
                             {lesson.courseId ? (
-                              <Link href={`/classes/${lesson.courseId}`} className="hover:text-[#467aff] hover:underline">
+                              <Link prefetch={false} href={`/classes/${lesson.courseId}`} className="hover:text-[#467aff] hover:underline">
                                 {lesson.scheduleName || 'Без группы'}
                               </Link>
                             ) : (

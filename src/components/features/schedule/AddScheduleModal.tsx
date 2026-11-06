@@ -3,7 +3,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
-import type { CreateScheduleRequest, DayOfWeek, ScheduleStatus } from '@/lib/api';
+import type { CreateScheduleRequest, DayOfWeek, ScheduleDayTime, ScheduleStatus } from '@/lib/api';
 import type { ScheduleFormValues } from '@/types/schedule';
 
 interface SelectOption {
@@ -71,6 +71,21 @@ function getDefaultValues(): ScheduleFormValues {
   };
 }
 
+type DayTimeMap = Partial<Record<DayOfWeek, { startTime: string; endTime: string }>>;
+
+function toDayTimeMap(dayTimes: ScheduleDayTime[] | undefined): DayTimeMap {
+  const map: DayTimeMap = {};
+  (dayTimes ?? []).forEach((item) => {
+    map[item.day] = { startTime: item.startTime.slice(0, 5), endTime: item.endTime.slice(0, 5) };
+  });
+  return map;
+}
+
+function hasDifferentTimes(dayTimes: ScheduleDayTime[] | undefined): boolean {
+  const keys = new Set((dayTimes ?? []).map((item) => `${item.startTime.slice(0, 5)}-${item.endTime.slice(0, 5)}`));
+  return keys.size > 1;
+}
+
 function normalizeTime(value: string): string {
   return value.length === 5 ? `${value}:00` : value;
 }
@@ -136,6 +151,10 @@ function getErrorMessage(error: unknown): string {
       return 'Преподаватель и лимит группы теперь подставляются из курса автоматически. Измените курс, а не эти поля.';
     }
 
+    if (normalized.includes('SCHEDULE_UPDATE_BLOCKED')) {
+      return 'Изменение удалило бы будущие занятия, по которым уже есть отметки посещаемости. Оставьте эти дни в расписании или сначала уберите отметки.';
+    }
+
     if (normalized.includes('ROOM_CAPACITY_EXCEEDED')) {
       return 'Лимит курса превышает вместимость выбранной аудитории. Выберите другую аудиторию или уменьшите лимит на стороне курса.';
     }
@@ -169,6 +188,9 @@ export const AddScheduleModal = ({
   const [daysOfWeek, setDaysOfWeek] = useState<DayOfWeek[]>(defaults.daysOfWeek);
   const [startTime, setStartTime] = useState(defaults.startTime);
   const [endTime, setEndTime] = useState(defaults.endTime);
+  // «Разное время по дням»: своё время у каждого выбранного дня.
+  const [perDayTimes, setPerDayTimes] = useState(hasDifferentTimes(defaults.dayTimes));
+  const [dayTimeMap, setDayTimeMap] = useState<DayTimeMap>(() => toDayTimeMap(defaults.dayTimes));
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
   const canReopen = isEdit && currentStatus === 'COMPLETED';
@@ -194,6 +216,44 @@ export const AddScheduleModal = ({
     );
   };
 
+  /** Выбранные дни по порядку Пн..Вс с их временем (общим или своим). */
+  const selectedDayTimes = DAY_OPTIONS
+    .filter((option) => daysOfWeek.includes(option.value))
+    .map((option) => {
+      const own = dayTimeMap[option.value];
+      return {
+        day: option.value,
+        label: option.label,
+        startTime: perDayTimes && own ? own.startTime : startTime,
+        endTime: perDayTimes && own ? own.endTime : endTime,
+      };
+    });
+  const canUsePerDayTimes = daysOfWeek.length > 0;
+  const isPerDayMode = perDayTimes && canUsePerDayTimes;
+
+  const togglePerDayTimes = (enabled: boolean) => {
+    if (enabled) {
+      // Дни без своего времени начинают с общего времени.
+      setDayTimeMap((prev) => {
+        const next: DayTimeMap = { ...prev };
+        daysOfWeek.forEach((day) => {
+          if (!next[day]) {
+            next[day] = { startTime, endTime };
+          }
+        });
+        return next;
+      });
+    }
+    setPerDayTimes(enabled);
+  };
+
+  const updateDayTime = (day: DayOfWeek, field: 'startTime' | 'endTime', value: string) => {
+    setDayTimeMap((prev) => ({
+      ...prev,
+      [day]: { startTime, endTime, ...prev[day], [field]: value },
+    }));
+  };
+
   const handleSave = async () => {
     setError(null);
 
@@ -202,14 +262,27 @@ export const AddScheduleModal = ({
       return;
     }
 
-    if (!startDate || !startTime || !endTime) {
-      setError('Заполните дату начала и время занятий.');
-      return;
-    }
+    if (isPerDayMode) {
+      if (!startDate || selectedDayTimes.some((item) => !item.startTime || !item.endTime)) {
+        setError('Заполните дату начала и время занятий для каждого дня.');
+        return;
+      }
 
-    if (endTime <= startTime) {
-      setError('Время окончания должно быть позже времени начала.');
-      return;
+      const invalidDay = selectedDayTimes.find((item) => item.endTime <= item.startTime);
+      if (invalidDay) {
+        setError(`${invalidDay.label}: время окончания должно быть позже времени начала.`);
+        return;
+      }
+    } else {
+      if (!startDate || !startTime || !endTime) {
+        setError('Заполните дату начала и время занятий.');
+        return;
+      }
+
+      if (endTime <= startTime) {
+        setError('Время окончания должно быть позже времени начала.');
+        return;
+      }
     }
 
     if (endDate && endDate < startDate) {
@@ -229,14 +302,24 @@ export const AddScheduleModal = ({
       return;
     }
 
+    // Время всегда уходит по дням: так снятие «Разное время по дням» тоже сохраняется.
+    // startTime/endTime — время первого дня (для старых клиентов API).
+    const dayTimes: ScheduleDayTime[] = selectedDayTimes.map((item) => ({
+      day: item.day,
+      startTime: normalizeTime(item.startTime),
+      endTime: normalizeTime(item.endTime),
+    }));
+    const firstDayTime = dayTimes[0];
+
     try {
       await onSave({
         name: name.trim(),
         courseId: courseId || undefined,
         roomId: roomId || undefined,
-        daysOfWeek,
-        startTime: normalizeTime(startTime),
-        endTime: normalizeTime(endTime),
+        daysOfWeek: selectedDayTimes.map((item) => item.day),
+        startTime: firstDayTime?.startTime ?? normalizeTime(startTime),
+        endTime: firstDayTime?.endTime ?? normalizeTime(endTime),
+        dayTimes,
         startDate,
         endDate: endDate || undefined,
         ...(isEdit && !endDate ? { openEnded: true } : {}),
@@ -316,19 +399,61 @@ export const AddScheduleModal = ({
         </p>
       </div>
 
+      {canUsePerDayTimes && (
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={perDayTimes}
+            onChange={(event) => togglePerDayTimes(event.target.checked)}
+          />
+          <span>Разное время по дням</span>
+        </label>
+      )}
+
+      {isPerDayMode && (
+        <div className="space-y-3 rounded-xl border border-gray-200 px-4 py-3">
+          {selectedDayTimes.map((item) => (
+            <div key={item.day} className="grid grid-cols-[3rem_1fr_1fr] items-end gap-3">
+              <span className="pb-3 text-sm font-medium text-gray-700">{item.label}</span>
+              <Input
+                label="Время с"
+                type="time"
+                value={item.startTime}
+                onChange={(event) => updateDayTime(item.day, 'startTime', event.target.value)}
+              />
+              <Input
+                label="Время до"
+                type="time"
+                value={item.endTime}
+                onChange={(event) => updateDayTime(item.day, 'endTime', event.target.value)}
+              />
+            </div>
+          ))}
+          {isEdit && (
+            <p className="text-xs text-gray-500">
+              Прошедшие занятия и занятия с отметками посещаемости не меняются — новое время применится к будущим занятиям.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Input
-          label="Время с"
-          type="time"
-          value={startTime}
-          onChange={(event) => setStartTime(event.target.value)}
-        />
-        <Input
-          label="Время до"
-          type="time"
-          value={endTime}
-          onChange={(event) => setEndTime(event.target.value)}
-        />
+        {!isPerDayMode && (
+          <>
+            <Input
+              label="Время с"
+              type="time"
+              value={startTime}
+              onChange={(event) => setStartTime(event.target.value)}
+            />
+            <Input
+              label="Время до"
+              type="time"
+              value={endTime}
+              onChange={(event) => setEndTime(event.target.value)}
+            />
+          </>
+        )}
         <Input
           label="Лимит студентов"
           value={courseId ? String(selectedCourseLimit ?? 'Не задан') : ''}
